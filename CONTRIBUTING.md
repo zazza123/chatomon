@@ -141,7 +141,9 @@ layer, contract suite` — and a workflow reads the body and adds those labels.
 
 **The body is the source of truth, and the workflow only ever adds.** Removing
 a label by hand while the body still names it does not stick: the next edit of
-the issue puts it back. To change an axis, edit the answer in the body.
+the issue puts it back. To change an axis, do both: edit the answer in the body
+(which adds the new label), then remove the old label by hand — that removal
+sticks, because the body no longer names it.
 
 ### Triage
 
