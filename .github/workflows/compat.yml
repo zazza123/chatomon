@@ -1,0 +1,30 @@
+name: Compatibility
+
+# Once a week, the suite against the newest versions the declared ranges allow.
+# The frameworks chatomon plugs into release often; this finds a minor release
+# that breaks a connector before a user does. A failure is reported through
+# GitHub's usual workflow notification; no issue is opened automatically.
+on:
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  newest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.14"
+      # --upgrade ignores the pinned versions in uv.lock; --no-sync keeps
+      # `uv run` on the upgraded environment.
+      - run: uv sync --upgrade
+      - run: uv run --no-sync pytest
