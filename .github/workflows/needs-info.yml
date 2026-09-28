@@ -1,0 +1,35 @@
+name: Needs info
+
+# Closes issues that waited 30 days for information (CONTRIBUTING.md,
+# "Triage"). It acts ONLY on status:needs-info, which it uses as its "stale"
+# label and never applies itself — a maintainer does, after commenting with the
+# question. Any later comment removes the label and puts the issue back in the
+# triage queue. No other issue, and no pull request, is ever closed for
+# inactivity.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  close-silent:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/stale@v11
+        with:
+          only-labels: "status:needs-info"
+          stale-issue-label: "status:needs-info"
+          days-before-issue-stale: -1
+          days-before-issue-close: 30
+          close-issue-reason: not_planned
+          close-issue-message: >
+            Closing: this issue has been waiting for more information for 30
+            days. Comment with the missing details and it will be reopened.
+          remove-stale-when-updated: true
+          labels-to-add-when-unstale: "status:needs-triage"
+          days-before-pr-stale: -1
+          days-before-pr-close: -1

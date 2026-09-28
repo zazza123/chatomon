@@ -1,0 +1,29 @@
+name: Labels
+
+# Keeps the repository's labels equal to .github/labels.yml (R6). Labels not in
+# the file are left alone (delete-other-labels: false); GitHub's default labels
+# are deleted once, by hand, in the go-public checklist.
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/labels.yml"
+      - ".github/workflows/labels.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: EndBug/label-sync@52074158190acb45f3077f9099fea818aa43f97a # v2.3.3
+        with:
+          config-file: .github/labels.yml
+          delete-other-labels: false
