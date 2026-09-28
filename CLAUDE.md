@@ -2,12 +2,15 @@
 
 chatomon ("chat" + "atom") is a Python library to declare a chat agent — an **Atom** (instructions, knowledge, connector) — wrapped by ordered chains of **Orbitals** (input/output guardrails), and build it into a **native** agent of existing frameworks (PydanticAI, LangChain/LangGraph; Google ADK next). It is not a chatbot framework: it never runs the agent itself.
 
-The design source of truth is `docs/superpowers/specs/2026-09-27-chatomon-design.md`. Read it before changing architecture; update it when a decision changes.
+Architecture invariants are stated in this file. The maintainer keeps the design spec outside the repository; any rule a contributor must follow lives here or in `CONTRIBUTING.md`.
+
+## Contributing
+
+`CONTRIBUTING.md` is the source of truth for process — issues, labels, branches, commits, pull requests, merging and releases. This file covers how the library is built. Opening an issue, creating a branch, opening or merging a pull request, triaging and releasing follow the `contributing-workflow` skill.
 
 ## Language
 
-- Talk with the user in Italian.
-- Code, docstrings, library documentation, commit messages: English.
+- Code, docstrings, library documentation, commit messages, issues and pull requests: English.
 
 ## Architecture rules
 
@@ -35,7 +38,7 @@ The design source of truth is `docs/superpowers/specs/2026-09-27-chatomon-design
 
 ## Functional and technical documentation
 
-- Hand-written usage docs (concepts, orbitals, connectors, observability, end-to-end examples) live in `docs/public/` (the Zensical `docs_dir`; `docs/superpowers/` is internal and never published) and are always written or updated with the `writing-documentation` skill.
+- Hand-written usage docs (concepts, orbitals, connectors, observability, end-to-end examples) live in `docs/public/` (the Zensical `docs_dir`) and are always written or updated with the `writing-documentation` skill.
 - They explain how to use chatomon and link to the generated API reference for details; don't duplicate parameter tables that docstrings already cover.
 - Exception to the skill's no-code rule (approved by the user): usage pages may include short code examples when they genuinely help. They must run under `pytest-examples` (collected from `docs/public/`), or be fenced as ```` ```{.python test="skip"} ```` when they need real services.
 - Any change that alters behavior updates the affected pages in the same milestone.
@@ -49,4 +52,11 @@ The design source of truth is `docs/superpowers/specs/2026-09-27-chatomon-design
 
 ## Workflow
 
-- Commit at the end of each milestone (spec §15) with green tests, following the `git-commit-convention` skill.
+- Every commit follows the `git-commit-convention` skill; commit at the end of each step with green tests.
+- Issues, branches, pull requests, merging, triage and releases follow the `contributing-workflow` skill and `CONTRIBUTING.md`.
+
+## Skills (in `.claude/skills/`)
+
+- **git-commit-convention** — every commit.
+- **contributing-workflow** — opening an issue, creating a branch, opening or merging a pull request, triaging, releasing.
+- **writing-documentation** — every change to `docs/public/`.
