@@ -470,6 +470,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-examples" },
+    { name = "pyyaml" },
     { name = "ruff" },
 ]
 docs = [
@@ -498,6 +499,7 @@ dev = [
     { name = "pytest", specifier = ">=9" },
     { name = "pytest-asyncio", specifier = ">=1.4" },
     { name = "pytest-examples", specifier = ">=0.0.18" },
+    { name = "pyyaml", specifier = ">=6" },
     { name = "ruff", specifier = ">=0.16" },
 ]
 docs = [
