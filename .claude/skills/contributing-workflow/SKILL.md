@@ -114,9 +114,12 @@ it.
    Otherwise use `gh issue edit <n> --add-label/--remove-label`.
 3. Add `priority:`, `good first issue` or `help wanted` when they apply.
 4. Remove `status:needs-triage`.
-5. Missing information: **comment with the question first, then** add
-   `status:needs-info`. A comment made after the label counts as the answer and
-   removes it.
+5. Missing information: comment with the question and finish every other
+   label change **first**; add `status:needs-info` **last**, swapping it for
+   `status:needs-triage` in one command
+   (`gh issue edit <n> --remove-label status:needs-triage --add-label status:needs-info`).
+   Any update after the label — a comment, an edit, another label — counts as
+   the answer and removes it.
 
 ## Releasing
 

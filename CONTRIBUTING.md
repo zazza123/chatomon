@@ -151,10 +151,11 @@ New issues arrive with `status:needs-triage`. A maintainer confirms `area:` and
 `framework:`, adds `priority:`, `good first issue` or `help wanted` when they
 apply, and removes `status:needs-triage`.
 
-When more information is needed, the issue gets a question and then
-`status:needs-info`. Any answer moves it back to `status:needs-triage`; after
-30 days without one it is closed, and a comment with the missing details is
-enough to have it reopened.
+When more information is needed, the issue gets a question and then, as the
+last change, `status:needs-info`. Any later activity on the issue — an answer,
+an edit, another label — moves it back to `status:needs-triage`; after 30 days
+without any it is closed, and a comment with the missing details is enough to
+have it reopened.
 
 Response times are best effort: we aim to acknowledge bug reports within a
 week. Feature requests get an answer, without a promised date.
