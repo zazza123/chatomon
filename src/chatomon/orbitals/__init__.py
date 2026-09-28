@@ -5,5 +5,13 @@ Orbitals backed by Principled Intelligence models live in
 """
 
 from chatomon.orbitals.base import FunctionOrbital, Orbital, OrbitalFunction, orbital
+from chatomon.orbitals.judge import JudgeDecision, JudgeOrbital
 
-__all__ = ["FunctionOrbital", "Orbital", "OrbitalFunction", "orbital"]
+__all__ = [
+    "FunctionOrbital",
+    "JudgeDecision",
+    "JudgeOrbital",
+    "Orbital",
+    "OrbitalFunction",
+    "orbital",
+]
