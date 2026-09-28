@@ -33,6 +33,7 @@ dev = [
     "pytest>=9",
     "pytest-asyncio>=1.4",
     "pytest-examples>=0.0.18",
+    "pyyaml>=6",
     "opentelemetry-sdk>=1.28",
     "orbitals>=0.5,<0.6",
     "ruff>=0.16",
@@ -87,6 +88,6 @@ convention = "google"
 "tests/**" = ["D", "DOC"]
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "scripts"]
 pythonVersion = "3.10"
 typeCheckingMode = "standard"

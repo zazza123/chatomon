@@ -1,0 +1,51 @@
+name: Issue labels
+
+# Applies the area: and framework: labels an issue form collected, which the
+# form itself cannot apply: GitHub writes a dropdown's answer into the body as
+# text. The parsing is scripts/derive_issue_labels.py, tested in tests/tooling/.
+#
+# THE BODY IS THE SOURCE OF TRUTH, AND THIS ONLY EVER ADDS. Removing a label by
+# hand while the body still names it does not stick — the next edit puts it
+# back. Removing labels here would mean guessing whether an absent one is a
+# deliberate correction or an answer not yet processed.
+on:
+  issues:
+    types: [opened, edited]
+
+permissions: {}
+
+concurrency:
+  # Per issue, so a burst of edits does not race itself into a partial set.
+  group: issue-labels-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  axis-labels:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # The issue body is text chosen by its author: environment only.
+      ISSUE_BODY: ${{ github.event.issue.body }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Apply the axis labels
+        run: |
+          set -euo pipefail
+          labels="$(python3 scripts/derive_issue_labels.py)"
+          if [ -z "$labels" ]; then
+            echo "Issue #$ISSUE_NUMBER selected no axis: nothing to apply."
+            exit 0
+          fi
+          args=()
+          while IFS= read -r label; do
+            [ -n "$label" ] || continue
+            echo "  + $label"
+            args+=(--add-label "$label")
+          done <<<"$labels"
+          gh issue edit "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" "${args[@]}"
