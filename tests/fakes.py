@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Sequence
 from typing import ClassVar
 
+from chatomon.engine import Engine
 from chatomon.orbitals.base import Orbital
 from chatomon.schemas import ErrorPolicy, OrbitalContext, Side, Verdict
 
@@ -45,3 +46,15 @@ class SlowOrbital(Orbital):
     async def check(self, ctx: OrbitalContext) -> Verdict:
         await asyncio.sleep(10)
         return Verdict.allow()
+
+
+def make_engine(
+    *, inputs: Sequence[Orbital] = (), outputs: Sequence[Orbital] = (), **kwargs: object
+) -> Engine:
+    """An engine for the test atom with the given chains."""
+    return Engine(
+        atom_name="test-atom",
+        input_orbitals=inputs,
+        output_orbitals=outputs,
+        **kwargs,  # type: ignore[arg-type]
+    )
