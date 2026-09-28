@@ -13,6 +13,7 @@ framework's native hooks, in this order for every turn:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 import uuid
@@ -34,6 +35,7 @@ from chatomon.schemas import (
     Message,
     OrbitalContext,
     OrbitalResult,
+    OutputDecision,
     Side,
     TurnReport,
     Verdict,
@@ -246,6 +248,142 @@ class Engine:
         turn.final_action = "blocked"
         turn.final_reply = reply
         return InputDecision(kind="reply", reply=reply, redact_user_message=True)
+
+    async def run_output(
+        self, turn: TurnState, *, reply: str, history: Sequence[Message] = ()
+    ) -> OutputDecision:
+        """Run the output chain on a final reply of the nucleus.
+
+        Call it on every final reply until the decision is not `regenerate`.
+
+        Args:
+            turn: The turn whose input chain already ran.
+            reply: The nucleus reply.
+            history: Earlier messages including the current user message
+                (replaced by the placeholder if the input decision asked for it).
+
+        Returns:
+            What the connector must do with the reply.
+
+        Raises:
+            RuntimeError: If the input chain did not run, already produced the
+                reply, or the turn already has its final reply.
+        """
+        if turn.finished:
+            raise RuntimeError("this turn is already finished")
+        if turn.input_decision is None:
+            raise RuntimeError("call run_input before run_output")
+        if turn.input_decision.kind == "reply":
+            raise RuntimeError(
+                "the input chain already produced the reply; run_output must not be called"
+            )
+        if turn.final_action is not None:
+            raise RuntimeError("this turn already has its final reply")
+        turn.attempt += 1
+        attempt = turn.attempt
+        for orb in self._output:
+            turn.annotations.pop(orb.name, None)
+        results: list[OrbitalResult] = []
+        turn.output_results.append(results)
+        decision: OutputDecision | None = None
+        with self._tracer.start_as_current_span(
+            "chatomon.output",
+            attributes={**self._turn_attributes(turn), "chatomon.attempt": attempt},
+        ) as span:
+            for orb in self._output:
+                verdict = await self._run_orbital(
+                    orb,
+                    turn,
+                    side="output",
+                    message=reply,
+                    history=history,
+                    attempt=attempt,
+                    results=results,
+                )
+                if verdict.action == "allow":
+                    continue
+                decision = self._stop_output(turn, verdict, attempt)
+                break
+            if decision is None:
+                decision = OutputDecision(kind="accept")
+                turn.final_reply = reply
+                turn.final_action = (
+                    "guided_refusal" if turn.input_decision.kind == "guided_refusal" else "answered"
+                )
+            span.set_attribute("chatomon.decision.kind", decision.kind)
+        self._log_decision(turn, "output", decision.kind)
+        return decision
+
+    def _stop_output(self, turn: TurnState, verdict: Verdict, attempt: int) -> OutputDecision:
+        if verdict.action == "respond":
+            text = verdict.reply or self._refusal
+            turn.final_action = "orbital_response"
+            turn.final_reply = text
+            return OutputDecision(kind="replace", text=text)
+        if verdict.guidance:
+            if attempt <= self._max_retries:
+                return OutputDecision(kind="regenerate", guidance=(verdict.guidance,))
+            turn.final_action = "fallback_refusal"
+            turn.final_reply = self._refusal
+            return OutputDecision(kind="replace", text=self._refusal)
+        text = verdict.reply or self._refusal
+        turn.final_action = "blocked"
+        turn.final_reply = text
+        return OutputDecision(kind="replace", text=text)
+
+    async def finish_turn(self, turn: TurnState) -> TurnReport:
+        """Close the turn, build its report and deliver it to `on_turn`.
+
+        An exception raised by `on_turn` is logged and never propagates.
+
+        Args:
+            turn: The turn, which must have its final reply.
+
+        Returns:
+            The audit report of the turn.
+
+        Raises:
+            RuntimeError: If the turn has no final reply yet or was already finished.
+        """
+        if turn.finished:
+            raise RuntimeError("finish_turn was already called for this turn")
+        if turn.final_action is None:
+            raise RuntimeError("the turn has no final reply yet")
+        turn.finished = True
+        report = TurnReport(
+            turn_id=turn.turn_id,
+            conversation_id=turn.conversation_id,
+            atom_name=self._atom_name,
+            started_at=turn.started_at,
+            duration_ms=(time.perf_counter() - turn.started_perf) * 1000,
+            final_action=turn.final_action,
+            escalated=turn.escalated,
+            input=tuple(turn.input_results),
+            output=tuple(tuple(attempt) for attempt in turn.output_results),
+            user_message=self._content.text(turn.user_message),
+            final_reply=self._content.text(turn.final_reply),
+        )
+        fields = {
+            **self._log_fields(turn),
+            "final_action": report.final_action,
+            "escalated": report.escalated,
+        }
+        level = (
+            logging.DEBUG
+            if report.final_action == "answered" and not report.escalated
+            else logging.INFO
+        )
+        logger.log(level, "turn finished: %s", report.final_action, extra={"chatomon": fields})
+        if self._on_turn is not None:
+            try:
+                result = self._on_turn(report)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                logger.exception(
+                    "on_turn callback failed for turn %s", turn.turn_id, extra={"chatomon": fields}
+                )
+        return report
 
     async def _run_orbital(
         self,
