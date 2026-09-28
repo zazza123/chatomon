@@ -1,5 +1,45 @@
 # chatomon
 
-Declare a chat agent once — its instructions, its knowledge and the **orbitals** (input/output guardrails) around it — and build it into a native agent of the framework you already use.
+Declare a chat agent once — its instructions, its knowledge and the **orbitals** (input/output guardrails) around it — and build it into a native agent of the framework you already use: PydanticAI or LangChain/LangGraph.
 
 > Status: pre-alpha, under active development.
+
+## Install
+
+```bash
+pip install 'chatomon[pydantic-ai]'   # or 'chatomon[langchain]'
+pip install 'chatomon[principled]'    # Principled Intelligence ScopeGuard / ClaimExtractor orbitals
+```
+
+## Quickstart
+
+```python
+from pydantic_ai.models.test import TestModel
+
+from chatomon import Atom, Knowledge, OrbitalContext, Verdict, orbital
+from chatomon.connectors.pydantic_ai import PydanticAIConnector
+
+
+@orbital
+def no_refunds(ctx: OrbitalContext) -> Verdict:
+    if "refund" in ctx.message.lower():
+        return Verdict.block(guidance="Explain that refunds are handled by email.")
+    return Verdict.allow()
+
+
+atom = Atom(
+    name="speedypack",
+    instructions="You are the customer assistant of SpeedyPack, a parcel courier.",
+    knowledge=Knowledge("Opening hours: Monday to Friday, 9-18."),
+    connector=PydanticAIConnector(TestModel(custom_output_text="Refunds are handled by email.")),
+    input_orbitals=[no_refunds],
+)
+agent = atom.build()  # a native pydantic_ai.Agent
+assert agent.run_sync("I want a refund").output == "Refunds are handled by email."
+```
+
+Replace `TestModel(...)` with a real model, for example `"openai:gpt-5"`.
+
+## Documentation
+
+The documentation site is built with Zensical from `docs/public/`: run `uv run zensical serve` and open http://localhost:8000. It covers concepts, orbitals, connectors, observability and deployment, plus the API reference generated from the code.

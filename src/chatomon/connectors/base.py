@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Generic, TypeVar
 
 from pydantic import BaseModel
@@ -11,7 +12,7 @@ if TYPE_CHECKING:
     from chatomon.atom import Atom
     from chatomon.engine import Engine
 
-__all__ = ["AgentT", "Connector", "ModelT"]
+__all__ = ["AgentT", "Connector", "ModelT", "render_guidance"]
 
 AgentT = TypeVar("AgentT")
 """Type of the native agent a connector builds."""
@@ -80,3 +81,23 @@ class Connector(ABC, Generic[AgentT]):
         Returns:
             The validated answer.
         """
+
+
+def render_guidance(guidance: Sequence[str]) -> str:
+    r"""Render guidance as the section connectors add to one model call.
+
+    Args:
+        guidance: Guidance items, in order.
+
+    Returns:
+        A `<guidance>` block with one bullet per item.
+
+    Examples:
+        ```python
+        from chatomon.connectors import render_guidance
+
+        assert render_guidance(["Be brief."]) == "<guidance>\n- Be brief.\n</guidance>"
+        ```
+    """
+    items = "\n".join(f"- {item}" for item in guidance)
+    return f"<guidance>\n{items}\n</guidance>"

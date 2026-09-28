@@ -4,6 +4,6 @@ Framework connectors live in their own modules (`chatomon.connectors.pydantic_ai
 `chatomon.connectors.langchain`) and need the matching extra.
 """
 
-from chatomon.connectors.base import Connector
+from chatomon.connectors.base import Connector, render_guidance
 
-__all__ = ["Connector"]
+__all__ = ["Connector", "render_guidance"]

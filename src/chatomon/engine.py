@@ -350,6 +350,26 @@ class Engine:
         self._log_decision(turn, "output", decision.kind)
         return decision
 
+    def reopen_output(self, turn: TurnState) -> None:
+        """Allow a new reply to be checked after the turn already had one.
+
+        Connectors call it when the framework asks the model again after chatomon
+        accepted or replaced a reply (for example a PydanticAI output validator
+        raising `ModelRetry`). The next `run_output` counts as a new attempt.
+
+        Args:
+            turn: The turn to reopen.
+
+        Raises:
+            RuntimeError: If the turn is finished or its reply came from the input chain.
+        """
+        if turn.finished:
+            raise RuntimeError("this turn is already finished")
+        if turn.input_decision is None or turn.input_decision.kind == "reply":
+            raise RuntimeError("the input chain produced the reply; there is no output to reopen")
+        turn.final_action = None
+        turn.final_reply = None
+
     def _stop_output(self, turn: TurnState, verdict: Verdict, attempt: int) -> OutputDecision:
         if verdict.action == "respond":
             text = verdict.reply or self._refusal
