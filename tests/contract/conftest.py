@@ -6,7 +6,7 @@ import pytest
 
 from tests.contract.harness import Harness
 
-HARNESSES = ["pydantic_ai"]
+HARNESSES = ["pydantic_ai", "langchain"]
 
 
 @pytest.fixture(params=HARNESSES)
@@ -15,6 +15,6 @@ def harness(request: pytest.FixtureRequest) -> Harness:
         from tests.contract.harness_pydantic_ai import PydanticAIHarness
 
         return PydanticAIHarness()
-    from tests.contract.harness_langchain import LangChainHarness  # pyright: ignore[reportMissingImports]
+    from tests.contract.harness_langchain import LangChainHarness
 
     return LangChainHarness()
