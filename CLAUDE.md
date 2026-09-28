@@ -35,7 +35,7 @@ The design source of truth is `docs/superpowers/specs/2026-09-27-chatomon-design
 
 ## Functional and technical documentation
 
-- Hand-written usage docs (concepts, orbitals, connectors, observability, end-to-end examples) live in `docs/` and are always written or updated with the `writing-documentation` skill.
+- Hand-written usage docs (concepts, orbitals, connectors, observability, end-to-end examples) live in `docs/public/` (the Zensical `docs_dir`; `docs/superpowers/` is internal and never published) and are always written or updated with the `writing-documentation` skill.
 - They explain how to use chatomon and link to the generated API reference for details; don't duplicate parameter tables that docstrings already cover.
 - Any change that alters behavior updates the affected pages in the same milestone.
 
