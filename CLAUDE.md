@@ -29,7 +29,7 @@ The design source of truth is `docs/superpowers/specs/2026-09-27-chatomon-design
 - Google style on every public module, class, function and method (ruff `D`, `convention = "google"`).
 - Types go in signatures, not repeated in `Args:`.
 - Document `Raises:` for exceptions the caller should handle.
-- Public entry points get an `Examples:` section with fenced code blocks; examples must run under `pytest-examples`.
+- Public entry points get an `Examples:` section with fenced code blocks; examples must run under `pytest-examples`. An example that cannot run in tests (network, real models) is fenced as ```` ```{.python test="skip"} ```` — the brace form is the only one that both pytest-examples and the docs renderer (superfences + attr_list) understand.
 - Cross-reference with mkdocstrings syntax: `[Atom][chatomon.Atom]`.
 - Write docstrings together with the code, not afterwards.
 
