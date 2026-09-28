@@ -1,0 +1,48 @@
+# Release notes draft (CONTRIBUTING.md, "Versioning and releases").
+# The workflow keeps a draft of the next release up to date on every push to
+# main; a maintainer reviews it and publishes it, which triggers publish.yml.
+#
+# Sections come from the changelog: labels that changelog-label.yml sets from
+# the pull request title. Version: SemVer with the 0.x rule — `breaking` bumps
+# the MINOR version, everything else the patch. At 1.0, change `breaking` to
+# `major`, add `semver-increment: minor` to Features, and update CONTRIBUTING.md.
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+change-template: "- $TITLE (#$NUMBER) @$AUTHOR"
+change-title-escapes: '\<*_&'
+no-changes-template: "- No changes"
+
+categories:
+  - type: pre-exclude
+    when:
+      label: "skip-changelog"
+  - title: "💥 Breaking changes"
+    exclusive: true
+    semver-increment: minor
+    when:
+      label: "breaking"
+  - title: "✨ Features"
+    when:
+      label: "changelog:feature"
+  - title: "🐛 Fixes"
+    when:
+      label: "changelog:fix"
+  - title: "🔒 Security"
+    when:
+      label: "changelog:security"
+  - title: "📝 Documentation"
+    when:
+      label: "changelog:docs"
+  # No `when`: the bucket for everything else — changelog:maintenance,
+  # Dependabot, and any pull request that somehow has no changelog label.
+  - title: "🧹 Maintenance"
+    collapse-after: 5
+  - type: version-resolver
+    semver-increment: patch
+
+template: |
+  ## What's changed
+
+  $CHANGES
+
+  **Full changelog:** https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION
