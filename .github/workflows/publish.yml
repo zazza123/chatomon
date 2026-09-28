@@ -6,9 +6,16 @@ name: Publish
 # released commit, builds, publishes to PyPI with trusted publishing (no
 # token), and deploys the documentation for final releases.
 #
-# One-off setup (spec §13): a PyPI pending publisher for zazza123/chatomon,
-# workflow publish.yml, environment `pypi`; GitHub Pages with source "GitHub
-# Actions".
+# One-off setup, before the first release:
+#   - PyPI: a pending publisher for zazza123/chatomon, workflow publish.yml,
+#     environment `pypi`.
+#   - GitHub Pages: source "GitHub Actions".
+#   - Environment `github-pages`: add the deployment tag rule `v*`. This job runs
+#     on a release event, whose ref is the tag, and the environment usually
+#     allows the default branch only — the deploy would be rejected after PyPI
+#     has already shipped. (Recovery: fix the rule, re-run the `docs` job.)
+#   - Environment `pypi`: restrict deployments to tags `v*`, so only a release
+#     tag can reach the job that holds `id-token: write`.
 on:
   release:
     types: [published]
@@ -26,18 +33,18 @@ jobs:
       contents: read
     env:
       TAG: ${{ github.event.release.tag_name }}
+      PRERELEASE: ${{ github.event.release.prerelease }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
+      # Format, and agreement with the pre-release flag: scripts/check_release_tag.py.
       - name: Check the tag
+        run: python3 scripts/check_release_tag.py
+      - name: Check that the tag is on main
         run: |
           set -euo pipefail
-          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$ ]]; then
-            echo "::error::Tag $TAG is not v<major>.<minor>.<patch>, optionally followed by a|b|rc<N>."
-            exit 1
-          fi
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
             echo "::error::Tag $TAG points to a commit that is not on main."
             exit 1

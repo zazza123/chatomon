@@ -7,7 +7,8 @@ name: Issue labels
 # THE BODY IS THE SOURCE OF TRUTH, AND THIS ONLY EVER ADDS. Removing a label by
 # hand while the body still names it does not stick — the next edit puts it
 # back. Removing labels here would mean guessing whether an absent one is a
-# deliberate correction or an answer not yet processed.
+# deliberate correction or an answer not yet processed. So a correction takes
+# two steps: edit the answer in the body, then remove the old label by hand.
 on:
   issues:
     types: [opened, edited]

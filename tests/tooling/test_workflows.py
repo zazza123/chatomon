@@ -58,3 +58,11 @@ def test_pull_request_target_is_used_only_where_documented(path):
 def test_run_steps_never_interpolate_expressions(path):
     for step in steps(load(path)):
         assert "${{" not in step.get("run", ""), f"{path.name}: pass values to run: through env:"
+
+
+def test_dependabot_never_raises_the_declared_lower_bounds():
+    # The floors in pyproject.toml were found by bisection and are checked by the
+    # `lowest` CI job, which would keep passing on silently raised values.
+    config = load(ROOT / ".github" / "dependabot.yml")
+    uv = next(update for update in config["updates"] if update["package-ecosystem"] == "uv")
+    assert uv.get("versioning-strategy") == "widen"

@@ -141,7 +141,9 @@ layer, contract suite` — and a workflow reads the body and adds those labels.
 
 **The body is the source of truth, and the workflow only ever adds.** Removing
 a label by hand while the body still names it does not stick: the next edit of
-the issue puts it back. To change an axis, edit the answer in the body.
+the issue puts it back. To change an axis, do both: edit the answer in the body
+(which adds the new label), then remove the old label by hand — that removal
+sticks, because the body no longer names it.
 
 ### Triage
 
@@ -149,10 +151,11 @@ New issues arrive with `status:needs-triage`. A maintainer confirms `area:` and
 `framework:`, adds `priority:`, `good first issue` or `help wanted` when they
 apply, and removes `status:needs-triage`.
 
-When more information is needed, the issue gets a question and then
-`status:needs-info`. Any answer moves it back to `status:needs-triage`; after
-30 days without one it is closed, and a comment with the missing details is
-enough to have it reopened.
+When more information is needed, the issue gets a question and then, as the
+last change, `status:needs-info`. Any later activity on the issue — an answer,
+an edit, another label — moves it back to `status:needs-triage`; after 30 days
+without any it is closed, and a comment with the missing details is enough to
+have it reopened.
 
 Response times are best effort: we aim to acknowledge bug reports within a
 week. Feature requests get an answer, without a promised date.
@@ -266,6 +269,8 @@ closed.
 - **Branch in this repository → merge commit.** Its message is the pull
   request's title and description, and the individual commits stay in the
   history — which is why every one of them must follow the convention.
+  Dependabot's pull requests are no exception: their single commit is already
+  `DEP: Bump …`.
 - **Branch in a fork → squash merge.** Its message is the pull request title.
 - Rebase merging is disabled, and merged branches are deleted automatically.
 
@@ -339,6 +344,12 @@ Releasing (maintainers):
    runs the full CI, builds, publishes to PyPI and, for final releases,
    deploys the documentation. Pushing a tag on its own does nothing.
 4. Check that the pipeline is green and the PyPI page is right.
+
+**The first release** is the exception to step 2: with no previous release to
+compare against, the draft proposes `v0.0.1` and its "Full changelog" link has
+no starting tag. Set the tag and the title to `v0.1.0`, write the notes by hand
+— the pull requests merged before the changelog labels existed carry none —
+and delete the compare link.
 
 Only the latest release receives fixes.
 

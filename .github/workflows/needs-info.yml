@@ -3,9 +3,10 @@ name: Needs info
 # Closes issues that waited 30 days for information (CONTRIBUTING.md,
 # "Triage"). It acts ONLY on status:needs-info, which it uses as its "stale"
 # label and never applies itself — a maintainer does, after commenting with the
-# question. Any later comment removes the label and puts the issue back in the
-# triage queue. No other issue, and no pull request, is ever closed for
-# inactivity.
+# question. ANY later update of the issue — a comment, an edit, another label —
+# removes it and puts the issue back in the triage queue, so the label must be
+# the last change a maintainer makes. No other issue, and no pull request, is
+# ever closed for inactivity.
 on:
   schedule:
     - cron: "17 3 * * *"
@@ -17,6 +18,8 @@ jobs:
   close-silent:
     runs-on: ubuntu-latest
     permissions:
+      # actions/stale keeps its state in the Actions cache and deletes it.
+      actions: write
       issues: write
     steps:
       - uses: actions/stale@v11
