@@ -52,7 +52,7 @@ class Atom(Generic[AgentT]):
         ChatomonConfigError: If a setting is invalid.
 
     Examples:
-        ```python test="skip"
+        ```{.python test="skip"}
         from chatomon import Atom, Knowledge
         from chatomon.connectors.pydantic_ai import PydanticAIConnector
         from chatomon.orbitals import JudgeOrbital

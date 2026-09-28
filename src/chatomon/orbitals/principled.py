@@ -178,7 +178,7 @@ class ScopeGuardOrbital(Orbital):
         ChatomonConfigError: If a setting is invalid.
 
     Examples:
-        ```python test="skip"
+        ```{.python test="skip"}
         from orbitals.scope_guard_v2 import AsyncScopeGuardV2
         from orbitals.types import AIServiceDescriptionV2
 
