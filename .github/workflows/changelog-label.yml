@@ -1,0 +1,58 @@
+name: Changelog label
+
+# Sets the changelog: label release-drafter groups a pull request by, from the
+# code in its title (scripts/changelog_label.py), and removes any other
+# changelog: label: the title is the source of truth, so a renamed pull request
+# is relabelled. Written instead of release-drafter's autolabeler, which ignores
+# the `edited` event.
+#
+# pull_request_target is required to label pull requests from forks, and is
+# forbidden everywhere else in this repository. It is safe here because the job
+# checks out the BASE commit only — never the pull request's code — and the
+# title reaches the script only through the environment.
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, edited, reopened, synchronize]
+
+permissions: {}
+
+concurrency:
+  group: changelog-label-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_TITLE: ${{ github.event.pull_request.title }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - name: Apply the changelog label
+        run: |
+          set -euo pipefail
+          label="$(python3 scripts/changelog_label.py)"
+          current="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')"
+          args=()
+          while IFS= read -r existing; do
+            case "$existing" in
+              changelog:*) [ "$existing" = "$label" ] || args+=(--remove-label "$existing") ;;
+            esac
+          done <<<"$current"
+          if [ -n "$label" ] && ! grep -qxF "$label" <<<"$current"; then
+            args+=(--add-label "$label")
+          fi
+          if [ "${#args[@]}" -eq 0 ]; then
+            echo "The changelog label is already up to date."
+            exit 0
+          fi
+          echo "gh pr edit ${args[*]}"
+          gh pr edit "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" "${args[@]}"
