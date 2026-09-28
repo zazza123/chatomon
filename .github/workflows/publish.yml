@@ -6,9 +6,16 @@ name: Publish
 # released commit, builds, publishes to PyPI with trusted publishing (no
 # token), and deploys the documentation for final releases.
 #
-# One-off setup (spec §13): a PyPI pending publisher for zazza123/chatomon,
-# workflow publish.yml, environment `pypi`; GitHub Pages with source "GitHub
-# Actions".
+# One-off setup, before the first release:
+#   - PyPI: a pending publisher for zazza123/chatomon, workflow publish.yml,
+#     environment `pypi`.
+#   - GitHub Pages: source "GitHub Actions".
+#   - Environment `github-pages`: add the deployment tag rule `v*`. This job runs
+#     on a release event, whose ref is the tag, and the environment usually
+#     allows the default branch only — the deploy would be rejected after PyPI
+#     has already shipped. (Recovery: fix the rule, re-run the `docs` job.)
+#   - Environment `pypi`: restrict deployments to tags `v*`, so only a release
+#     tag can reach the job that holds `id-token: write`.
 on:
   release:
     types: [published]
