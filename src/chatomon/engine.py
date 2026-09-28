@@ -68,6 +68,9 @@ class TurnState:
     annotations: dict[str, Any] = field(default_factory=dict)
     """Annotations produced so far, by orbital name."""
 
+    output_guidance: list[str] = field(default_factory=list)
+    """Guidance of every output block with guidance so far; each regeneration gets all of it."""
+
     input_annotations: dict[str, Any] = field(default_factory=dict)
     """Annotations left by the input chain; every output attempt starts from them."""
 
@@ -115,6 +118,36 @@ class Engine:
 
     Raises:
         ChatomonConfigError: If `max_retries` is negative.
+
+    Examples:
+        Connectors drive the engine; this is the sequence they follow for one turn:
+
+        ```python
+        import asyncio
+
+        from chatomon import OrbitalContext, Verdict, orbital
+        from chatomon.engine import Engine
+
+
+        @orbital
+        def no_refunds(ctx: OrbitalContext) -> Verdict:
+            if "refund" in ctx.message.lower():
+                return Verdict.block(guidance="Explain that refunds are handled by email.")
+            return Verdict.allow()
+
+
+        async def main() -> None:
+            engine = Engine(atom_name="demo", input_orbitals=[no_refunds])
+            turn = engine.start_turn()
+            decision = await engine.run_input(turn, message="I want a refund")
+            assert decision.kind == "guided_refusal"
+            await engine.run_output(turn, reply="Refunds are handled by email: write to us.")
+            report = await engine.finish_turn(turn)
+            assert report.final_action == "guided_refusal"
+
+
+        asyncio.run(main())
+        ```
     """
 
     def __init__(
@@ -325,7 +358,8 @@ class Engine:
             return OutputDecision(kind="replace", text=text)
         if verdict.guidance:
             if attempt <= self._max_retries:
-                return OutputDecision(kind="regenerate", guidance=(verdict.guidance,))
+                turn.output_guidance.append(verdict.guidance)
+                return OutputDecision(kind="regenerate", guidance=tuple(turn.output_guidance))
             turn.final_action = "fallback_refusal"
             turn.final_reply = self._refusal
             return OutputDecision(kind="replace", text=self._refusal)
@@ -352,39 +386,79 @@ class Engine:
             raise RuntimeError("finish_turn was already called for this turn")
         if turn.final_action is None:
             raise RuntimeError("the turn has no final reply yet")
+        return await self._close(turn, turn.final_action)
+
+    async def abort_turn(self, turn: TurnState, error: BaseException) -> TurnReport:
+        """Close a turn that the nucleus or the framework could not complete.
+
+        Connectors call it when the model call or the framework raises, or the run
+        is cancelled, so every turn leaves an audit record. The exception type is
+        always recorded; its message only with `capture_content="full"`.
+
+        Args:
+            turn: The turn to close, at any stage.
+            error: The exception that ended the turn.
+
+        Returns:
+            The audit report, with `final_action="aborted"`.
+
+        Raises:
+            RuntimeError: If the turn was already finished.
+        """
+        if turn.finished:
+            raise RuntimeError("this turn was already finished")
+        turn.final_reply = None
+        return await self._close(turn, "aborted", error)
+
+    async def _close(
+        self, turn: TurnState, final_action: FinalAction, error: BaseException | None = None
+    ) -> TurnReport:
         turn.finished = True
+        turn.final_action = final_action
+        content = self._content
         report = TurnReport(
             turn_id=turn.turn_id,
             conversation_id=turn.conversation_id,
             atom_name=self._atom_name,
             started_at=turn.started_at,
             duration_ms=(time.perf_counter() - turn.started_perf) * 1000,
-            final_action=turn.final_action,
+            final_action=final_action,
             escalated=turn.escalated,
             input=tuple(turn.input_results),
             output=tuple(tuple(attempt) for attempt in turn.output_results),
-            user_message=self._content.text(turn.user_message),
-            final_reply=self._content.text(turn.final_reply),
+            user_message=content.text(turn.user_message),
+            final_reply=content.text(turn.final_reply),
+            error_type=type(error).__name__ if error is not None else None,
+            error_message=(
+                content.text(str(error)) if error is not None and content.mode == "full" else None
+            ),
         )
         fields = {
             **self._log_fields(turn),
             "final_action": report.final_action,
             "escalated": report.escalated,
+            "error_type": report.error_type,
         }
-        level = (
-            logging.DEBUG
-            if report.final_action == "answered" and not report.escalated
-            else logging.INFO
-        )
-        logger.log(level, "turn finished: %s", report.final_action, extra={"chatomon": fields})
+        if error is not None:
+            logger.warning("turn aborted by %s", report.error_type, extra={"chatomon": fields})
+        else:
+            level = (
+                logging.DEBUG
+                if report.final_action == "answered" and not report.escalated
+                else logging.INFO
+            )
+            logger.log(level, "turn finished: %s", report.final_action, extra={"chatomon": fields})
         if self._on_turn is not None:
             try:
                 result = self._on_turn(report)
                 if inspect.isawaitable(result):
                     await result
-            except Exception:
-                logger.exception(
-                    "on_turn callback failed for turn %s", turn.turn_id, extra={"chatomon": fields}
+            except Exception as exc:
+                logger.error(
+                    "on_turn callback failed for turn %s with %s",
+                    turn.turn_id,
+                    type(exc).__name__,
+                    extra={"chatomon": {**fields, "callback_error_type": type(exc).__name__}},
                 )
         return report
 

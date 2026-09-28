@@ -42,7 +42,7 @@ CaptureContent = Literal["none", "hash", "full"]
 """How much message content chatomon records in logs, traces and reports."""
 
 FinalAction = Literal[
-    "answered", "orbital_response", "blocked", "guided_refusal", "fallback_refusal"
+    "answered", "orbital_response", "blocked", "guided_refusal", "fallback_refusal", "aborted"
 ]
 """How a turn ended, as recorded in the [TurnReport][chatomon.schemas.TurnReport]."""
 
@@ -217,7 +217,10 @@ class OrbitalContext(BaseModel):
     On the output side it includes the current user message."""
 
     annotations: Mapping[str, Any] = Field(default_factory=dict)
-    """Annotations of the orbitals that already ran in this turn, by orbital name."""
+    """Annotations of the orbitals that already ran in this turn, by orbital name.
+
+    The values are the objects the producing orbitals returned, shared with later
+    orbitals and the report: treat them as read-only."""
 
     attempt: int = 1
     """On the output side, the attempt number (1 is the first reply)."""
@@ -372,3 +375,9 @@ class TurnReport(BaseModel):
 
     final_reply: str | None = None
     """The reply sent to the user, according to `capture_content`."""
+
+    error_type: str | None = None
+    """Exception class name when the turn was aborted."""
+
+    error_message: str | None = None
+    """Exception message of an aborted turn; only with `capture_content="full"`."""
