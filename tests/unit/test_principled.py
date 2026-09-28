@@ -294,3 +294,33 @@ async def test_slow_sync_headers_provider_is_cut_off_by_the_timeout():
     assert time.perf_counter() - started < 0.4
     assert turn.input_results[0].error_type == "TimeoutError"
     assert decision.kind == "reply"
+
+
+async def test_refreshed_headers_reach_the_http_request(monkeypatch):
+    """Pins the orbitals-internal detail spec §8.4 relies on: custom_headers is read per request."""
+    import aiohttp
+
+    sent: list[dict[str, str]] = []
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        async def json(self) -> dict[str, Any]:
+            return {"scope_class": "Directly Supported", "model": "scope-guard-v2"}
+
+    async def fake_post(self: Any, url: str, **kwargs: Any) -> FakeResponse:
+        sent.append(dict(kwargs["headers"]))
+        return FakeResponse()
+
+    monkeypatch.setattr(aiohttp.ClientSession, "post", fake_post)
+    tokens = iter(["token-1", "token-2"])
+    orb = ScopeGuardOrbital(
+        guard=AsyncScopeGuardV2(backend="api", api_url="http://scope-guard.test", api_key="k"),
+        description=DESCRIPTION,
+        headers=lambda: {"Authorization": f"Bearer {next(tokens)}"},
+    )
+    await orb.check(ctx())
+    await orb.check(ctx())
+    assert [headers["Authorization"] for headers in sent] == ["Bearer token-1", "Bearer token-2"]
+    assert all(headers["X-API-Key"] == "k" for headers in sent)

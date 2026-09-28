@@ -160,9 +160,20 @@ class JudgeOrbital(Orbital):
     def bind(self, connector: Connector[Any]) -> None:
         """Remember the atom's connector, used when no connector was given.
 
+        A judge can be shared by several atoms only if they use the same connector
+        (or if the judge has its own `connector`).
+
         Args:
             connector: The atom's connector.
+
+        Raises:
+            ChatomonConfigError: If the judge is already bound to a different connector.
         """
+        if self._connector is None and self._bound is not None and self._bound is not connector:
+            raise ChatomonConfigError(
+                f"judge {self.name!r} is already bound to another atom's connector; "
+                "create one judge per atom or pass connector= explicitly"
+            )
         self._bound = connector
 
     @property
@@ -226,7 +237,12 @@ class JudgeOrbital(Orbital):
 
         Returns:
             The verdict built from the model's decision.
-        """
+
+        Raises:
+            ChatomonConfigError: If the judge has no connector.
+            ValueError: If the model's decision is not a valid verdict. The engine
+                treats both as an orbital failure and applies `on_error`.
+        """  # noqa: DOC502 - raised by the connector property and to_verdict()
         decision = await self.connector.generate_structured(
             self.model,
             system=self.system_prompt(ctx.side),

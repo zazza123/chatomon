@@ -55,7 +55,11 @@ class Knowledge:
 
         Returns:
             The knowledge.
-        """
+
+        Raises:
+            OSError: If the file cannot be read.
+            ChatomonConfigError: If the file is empty.
+        """  # noqa: DOC502 - raised by open() and the constructor
         return cls(Path(path).read_text(encoding=encoding), title=title)
 
     def render(self) -> str:

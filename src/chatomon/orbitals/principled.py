@@ -8,6 +8,7 @@ service description: it is never derived from the atom.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from enum import Enum
@@ -24,8 +25,10 @@ try:
     from orbitals.scope_guard import AsyncScopeGuard, ScopeGuard, ScopeGuardOutput
     from orbitals.scope_guard_v2 import AsyncScopeGuardV2, ScopeGuardV2, ScopeGuardV2Output
     from orbitals.types import AIServiceDescription, AIServiceDescriptionV2
-except ImportError as exc:  # pragma: no cover - exercised only without the extra
-    raise MissingExtraError("principled", "orbitals") from exc
+except ImportError as exc:
+    if importlib.util.find_spec("orbitals") is None:
+        raise MissingExtraError("principled", "orbitals") from exc
+    raise
 
 __all__ = [
     "CHIT_CHAT_GUIDANCE",
@@ -162,7 +165,9 @@ class ScopeGuardOrbital(Orbital):
     Args:
         guard: A ScopeGuard client you configured (`AsyncScopeGuardV2`,
             `ScopeGuardV2`, `AsyncScopeGuard` or `ScopeGuard`). Async clients are
-            recommended; sync ones run in a worker thread.
+            recommended: sync ones run in a worker thread, and a request that
+            hangs keeps that thread busy after the timeout (the sync client sets
+            no HTTP timeout of its own).
         description: The guard's own service description (a string, or
             `AIServiceDescriptionV2` for V2 / `AIServiceDescription` for V1).
         mapping: Overrides for some classes; keys are class enums or their
@@ -310,6 +315,32 @@ class ClaimExtractorOrbital(Orbital):
 
     Raises:
         ChatomonConfigError: If a setting is invalid.
+
+    Examples:
+        ```{.python test="skip"}
+        from orbitals.claim_extractor import AsyncClaimExtractor
+
+        from chatomon import Knowledge
+        from chatomon.orbitals import JudgeOrbital
+        from chatomon.orbitals.principled import ClaimExtractorOrbital
+
+        faq = Knowledge("Opening hours: Monday to Friday, 9 to 18.")
+        output_orbitals = [
+            ClaimExtractorOrbital(
+                name="claims",
+                extractor=AsyncClaimExtractor(
+                    backend="api", api_url="https://claims.example.run.app"
+                ),
+            ),
+            JudgeOrbital(
+                name="fact_check",
+                model="openai:gpt-5-mini",
+                instructions="Block replies whose claims are not supported by the reference.",
+                context=faq,
+                reads=["claims"],
+            ),
+        ]
+        ```
     """
 
     def __init__(

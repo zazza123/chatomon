@@ -27,6 +27,28 @@ class Connector(ABC, Generic[AgentT]):
     agent and translates the engine's decisions into the framework's mechanisms.
     To support a new framework, subclass it in a new module and make it pass the
     shared contract suite.
+
+    Examples:
+        A toy connector whose "native agent" is a dictionary:
+
+        ```python
+        from typing import Any
+
+        from chatomon import Atom
+        from chatomon.connectors import Connector
+
+
+        class DictConnector(Connector[dict[str, Any]]):
+            def build(self, atom, engine):
+                return {"system_prompt": atom.system_prompt, "engine": engine}
+
+            async def generate_structured(self, model, *, system, prompt, schema):
+                raise NotImplementedError
+
+
+        agent = Atom(name="demo", instructions="Be brief.", connector=DictConnector()).build()
+        assert agent["system_prompt"] == "Be brief."
+        ```
     """
 
     @abstractmethod

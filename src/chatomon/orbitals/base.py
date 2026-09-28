@@ -150,7 +150,10 @@ class Orbital(ABC):
 class FunctionOrbital(Orbital):
     """An orbital backed by a function; create it with [orbital][chatomon.orbitals.base.orbital].
 
-    Sync functions run in a worker thread so they never block the event loop.
+    Sync functions run in a worker thread so they never block the event loop. The
+    engine's timeout stops waiting for them, but a function that never returns
+    keeps its thread busy, and the default thread pool is small: give blocking
+    calls their own timeouts.
 
     Args:
         func: Function taking an [OrbitalContext][chatomon.schemas.OrbitalContext]

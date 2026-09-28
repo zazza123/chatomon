@@ -18,10 +18,24 @@ from chatomon._version import __version__
 from chatomon.errors import ChatomonConfigError
 from chatomon.schemas import CaptureContent
 
-__all__ = ["TRACER_NAME", "ContentPolicy", "get_tracer", "sha256_text", "stable_json"]
+__all__ = [
+    "REDACTION_FAILED",
+    "TRACER_NAME",
+    "UNSERIALIZABLE",
+    "ContentPolicy",
+    "get_tracer",
+    "sha256_text",
+    "stable_json",
+]
 
 TRACER_NAME = "chatomon"
 """Instrumentation scope name of every chatomon span."""
+
+REDACTION_FAILED = "[redaction failed]"
+"""Recorded instead of a text when the redactor raises."""
+
+UNSERIALIZABLE = "[unserializable]"
+"""Recorded instead of structured data that cannot be serialized to JSON."""
 
 _MODES: tuple[CaptureContent, ...] = ("none", "hash", "full")
 
@@ -109,6 +123,9 @@ class ContentPolicy:
     def text(self, value: str | None) -> str | None:
         """Return what may be recorded for a text.
 
+        Never raises: if the redactor fails, the marker `"[redaction failed]"` is
+        recorded instead of the text.
+
         Args:
             value: The text, or `None`.
 
@@ -119,7 +136,12 @@ class ContentPolicy:
             return None
         if self._mode == "hash":
             return sha256_text(value)
-        return self._redactor(value) if self._redactor is not None else value
+        if self._redactor is None:
+            return value
+        try:
+            return self._redactor(value)
+        except Exception:
+            return REDACTION_FAILED
 
     def data(self, value: Any) -> str | None:
         """Return what may be recorded for structured data, as JSON.
@@ -128,8 +150,15 @@ class ContentPolicy:
             value: Any JSON-serializable value (strings are recorded as-is).
 
         Returns:
-            `None`, a digest or the (redacted) JSON text, depending on the mode.
+            `None`, a digest or the (redacted) JSON text, depending on the mode;
+            `"[unserializable]"` if the value cannot be serialized.
         """
-        if value is None:
+        if value is None or self._mode == "none":
             return None
-        return self.text(value if isinstance(value, str) else stable_json(value))
+        if isinstance(value, str):
+            return self.text(value)
+        try:
+            serialized = stable_json(value)
+        except Exception:
+            return UNSERIALIZABLE
+        return self.text(serialized)
