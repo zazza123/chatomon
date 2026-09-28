@@ -111,7 +111,7 @@ class Verdict(BaseModel):
         if self.action == "allow" and self.reply is not None:
             raise ValueError("an 'allow' verdict cannot carry a reply")
         if self.action == "respond":
-            if not self.reply:
+            if not self.reply or not self.reply.strip():
                 raise ValueError("a 'respond' verdict needs a non-empty reply")
             if self.guidance is not None:
                 raise ValueError("a 'respond' verdict cannot carry guidance")

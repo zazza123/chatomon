@@ -39,7 +39,8 @@ async def test_check_calls_the_model_and_returns_the_verdict():
     verdict = await judge(connector).check(ctx())
     assert verdict.action == "block"
     assert verdict.guidance == "Hours are 9-18."
-    assert verdict.reason == "wrong_hours"
+    assert verdict.reason == "judge_block"
+    assert verdict.annotations["label"] == "wrong_hours"
     call = connector.calls[0]
     assert call["model"] == "openai:gpt-5-mini"
     assert call["schema"] is JudgeDecision
@@ -96,7 +97,7 @@ def test_explanation_becomes_annotations():
     verdict = JudgeDecision(
         action="allow", reason="ok", explanation="all claims supported"
     ).to_verdict()
-    assert verdict.annotations == {"explanation": "all claims supported"}
+    assert verdict.annotations == {"label": "ok", "explanation": "all claims supported"}
 
 
 @pytest.mark.parametrize(
@@ -157,3 +158,31 @@ def test_invalid_settings_are_rejected(overrides, match):
 def test_fingerprint_changes_with_the_instructions():
     assert judge().fingerprint() == judge().fingerprint()
     assert judge().fingerprint() != judge(instructions="Something else.").fingerprint()
+
+
+async def test_model_written_reason_is_kept_out_of_the_audit_reason():
+    secret = "user shared IBAN IT60X0542811101000000123456"
+    connector = FakeConnector([{"action": "block", "reply": "No.", "reason": secret}])
+    verdict = await judge(connector).check(ctx())
+    assert verdict.reason == "judge_block"
+    assert verdict.annotations["label"] == secret
+
+
+@pytest.mark.parametrize(
+    ("decision", "expected"),
+    [
+        (
+            {"action": "block", "reply": "", "guidance": "Fix it.", "reason": "x"},
+            ("block", None, "Fix it."),
+        ),
+        ({"action": "allow", "guidance": "  ", "reason": "x"}, ("allow", None, None)),
+    ],
+)
+def test_blank_fields_from_the_model_are_ignored(decision, expected):
+    verdict = JudgeDecision.model_validate(decision).to_verdict()
+    assert (verdict.action, verdict.reply, verdict.guidance) == expected
+
+
+def test_whitespace_only_respond_is_invalid():
+    with pytest.raises(ValueError):
+        JudgeDecision(action="respond", reply="   ", reason="x").to_verdict()

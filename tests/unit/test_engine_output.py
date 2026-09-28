@@ -299,3 +299,31 @@ async def test_default_capture_keeps_content_out_of_logs_spans_and_reports(caplo
         assert all(secret not in str(value) for value in (span.attributes or {}).values())
         for event in span.events:
             assert all(secret not in str(value) for value in (event.attributes or {}).values())
+
+
+async def test_output_reader_sees_input_annotations_of_an_orbital_in_both_chains():
+    claims = ScriptedOrbital(Verdict.allow(annotations={"claims": ["x"]}), name="claims")
+    judge = ScriptedOrbital(name="judge", reads=["claims"])
+    engine = make_engine(inputs=[claims], outputs=[judge, claims])
+    turn = await start(engine)
+    decision = await engine.run_output(turn, reply="ok", history=OUT_HISTORY)
+    assert decision.kind == "accept"
+    assert judge.contexts[0].annotations["claims"] == {"claims": ["x"]}
+
+
+async def test_judge_reason_does_not_leak_with_default_capture(caplog, spans):
+    from chatomon.orbitals import JudgeOrbital
+    from tests.fakes import FakeConnector
+
+    secret = "IBAN IT60X0542811101000000123456"
+    caplog.set_level(logging.DEBUG, logger="chatomon")
+    judge = JudgeOrbital(model="m", instructions="Judge.")
+    judge.bind(FakeConnector([{"action": "block", "reply": "No.", "reason": secret}]))
+    engine = make_engine(outputs=[judge], tracer=spans.tracer)
+    turn = await start(engine)
+    await engine.run_output(turn, reply="draft", history=OUT_HISTORY)
+    report = await engine.finish_turn(turn)
+    assert secret not in report.model_dump_json()
+    assert all(secret not in repr(record.__dict__.get("chatomon", "")) for record in caplog.records)
+    for span in spans.exporter.get_finished_spans():
+        assert all(secret not in str(value) for value in (span.attributes or {}).values())

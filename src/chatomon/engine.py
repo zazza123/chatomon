@@ -68,6 +68,9 @@ class TurnState:
     annotations: dict[str, Any] = field(default_factory=dict)
     """Annotations produced so far, by orbital name."""
 
+    input_annotations: dict[str, Any] = field(default_factory=dict)
+    """Annotations left by the input chain; every output attempt starts from them."""
+
     input_results: list[OrbitalResult] = field(default_factory=list)
     """Audit records of the input chain."""
 
@@ -231,6 +234,7 @@ class Engine:
                 decision = InputDecision(kind="proceed", guidance=tuple(guidance))
             span.set_attribute("chatomon.decision.kind", decision.kind)
         turn.input_decision = decision
+        turn.input_annotations = dict(turn.annotations)
         self._log_decision(turn, "input", decision.kind)
         return decision
 
@@ -281,8 +285,7 @@ class Engine:
             raise RuntimeError("this turn already has its final reply")
         turn.attempt += 1
         attempt = turn.attempt
-        for orb in self._output:
-            turn.annotations.pop(orb.name, None)
+        turn.annotations = dict(turn.input_annotations)
         results: list[OrbitalResult] = []
         turn.output_results.append(results)
         decision: OutputDecision | None = None

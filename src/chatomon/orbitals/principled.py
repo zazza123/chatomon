@@ -61,7 +61,7 @@ V2_OUTPUT_FIELDS = ("scope_class", "evidences", "reasoning", "suggested_response
 
 def _suggested_response(result: ScopeGuardResult, *, escalate: bool) -> Verdict:
     text = getattr(result, "suggested_response", None)
-    if not text:
+    if not text or not text.strip():
         raise ValueError(
             f"ScopeGuard returned {result.scope_class.value!r} without a suggested_response"
         )
@@ -113,7 +113,12 @@ def _check_headers(client: object, headers: HeadersProvider | None) -> None:
 async def _refresh_headers(client: Any, headers: HeadersProvider | None) -> None:
     if headers is None:
         return
-    value = headers()
+    if inspect.iscoroutinefunction(headers):
+        value = await headers()
+    else:
+        # Sync providers (e.g. google-auth token fetches) do blocking I/O: run them in a
+        # thread so the orbital's timeout still applies and the event loop keeps running.
+        value = await asyncio.to_thread(headers)
     if inspect.isawaitable(value):
         value = await value
     client.custom_headers = {**client.custom_headers, **cast("Mapping[str, str]", value)}

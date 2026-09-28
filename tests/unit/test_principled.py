@@ -262,3 +262,35 @@ async def test_claim_extractor_annotates_the_last_message(side, role):
     ]
     assert calls[0]["intents_only"] is True
     assert orb.name == "claim_extractor"
+
+
+async def test_whitespace_suggested_response_is_an_error():
+    orb = ScopeGuardOrbital(
+        guard=v2_guard(ScopeClass.PREDEFINED_ANSWER, suggested="  "), description=DESCRIPTION
+    )
+    with pytest.raises(ValueError, match="suggested_response"):
+        await orb.check(ctx())
+
+
+async def test_slow_sync_headers_provider_is_cut_off_by_the_timeout():
+    import time
+
+    from tests.fakes import make_engine
+
+    def slow_headers() -> dict[str, str]:
+        time.sleep(0.5)
+        return {"Authorization": "Bearer t"}
+
+    orb = ScopeGuardOrbital(
+        guard=v2_guard(ScopeClass.DIRECTLY_SUPPORTED),
+        description=DESCRIPTION,
+        headers=slow_headers,
+        timeout=0.1,
+    )
+    engine = make_engine(inputs=[orb])
+    turn = engine.start_turn()
+    started = time.perf_counter()
+    decision = await engine.run_input(turn, message="hi")
+    assert time.perf_counter() - started < 0.4
+    assert turn.input_results[0].error_type == "TimeoutError"
+    assert decision.kind == "reply"

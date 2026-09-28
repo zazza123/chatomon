@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal
 
 from opentelemetry import trace
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from chatomon.errors import ChatomonConfigError
 from chatomon.knowledge import Knowledge
@@ -57,29 +57,39 @@ class JudgeDecision(BaseModel):
     guidance: str | None = Field(
         default=None, description="Instructions for the assistant, for allow on input or block."
     )
-    reason: str = Field(description="Short label for the audit log; never quotes the user.")
+    reason: str = Field(description="Short label of a few words; never quotes the user.")
     explanation: str | None = Field(default=None, description="Reasoning behind the decision.")
+
+    @field_validator("reply", "guidance")
+    @classmethod
+    def _blank_is_none(cls, value: str | None) -> str | None:
+        return value if value is not None and value.strip() else None
 
     def to_verdict(self) -> Verdict:
         """Convert the decision into a verdict.
 
+        The model's `reason` and `explanation` are model-written text that may quote
+        the user, so they go into the annotations (treated as content). The
+        verdict's audit reason is the fixed label `judge_<action>`.
+
         Returns:
-            The verdict, with the explanation as annotations.
+            The verdict.
 
         Raises:
             ValueError: If the fields do not form a valid verdict (for example
                 `respond` without a reply, or `block` with both reply and guidance).
         """
-        annotations = {"explanation": self.explanation} if self.explanation else None
+        reason = f"judge_{self.action}"
+        annotations = {"label": self.reason, "explanation": self.explanation}
         if self.action == "allow":
-            return Verdict.allow(self.guidance, reason=self.reason, annotations=annotations)
+            return Verdict.allow(self.guidance, reason=reason, annotations=annotations)
         if self.action == "block":
             return Verdict.block(
-                self.reply, guidance=self.guidance, reason=self.reason, annotations=annotations
+                self.reply, guidance=self.guidance, reason=reason, annotations=annotations
             )
         if not self.reply:
             raise ValueError("the judge chose 'respond' without a reply")
-        return Verdict.respond(self.reply, reason=self.reason, annotations=annotations)
+        return Verdict.respond(self.reply, reason=reason, annotations=annotations)
 
 
 class JudgeOrbital(Orbital):

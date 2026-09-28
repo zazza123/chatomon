@@ -111,3 +111,8 @@ def test_turn_report_round_trips_to_json():
         output=((),),
     )
     assert TurnReport.model_validate_json(report.model_dump_json()) == report
+
+
+def test_respond_rejects_whitespace_only_text():
+    with pytest.raises(ValueError, match="non-empty reply"):
+        Verdict.respond("   ")
