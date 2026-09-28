@@ -20,6 +20,8 @@ from chatomon.errors import ChatomonConfigError, MissingExtraError
 from chatomon.schemas import Message
 
 try:
+    from typing import NotRequired
+
     from langchain.agents import create_agent
     from langchain.agents.middleware import AgentMiddleware, AgentState, hook_config
     from langchain.agents.middleware.types import ModelRequest, ModelResponse, PrivateStateAttr
@@ -29,7 +31,6 @@ try:
     from langgraph.config import get_config
     from langgraph.errors import GraphBubbleUp
     from langgraph.graph.state import CompiledStateGraph
-    from typing_extensions import NotRequired
 except ImportError as exc:
     if importlib.util.find_spec("langchain") is None:
         raise MissingExtraError("langchain", "langchain") from exc

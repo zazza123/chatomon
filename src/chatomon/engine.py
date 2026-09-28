@@ -19,7 +19,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from opentelemetry import trace
@@ -216,7 +216,7 @@ class Engine:
         return TurnState(
             turn_id=uuid.uuid4().hex,
             conversation_id=conversation_id,
-            started_at=datetime.now(timezone.utc),
+            started_at=datetime.now(UTC),
             started_perf=time.perf_counter(),
         )
 
