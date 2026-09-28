@@ -1,0 +1,85 @@
+name: Feature
+description: A new capability, or an improvement to an existing one
+labels: ["type:feat", "status:needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for proposing an improvement. For open-ended ideas, a
+        [Discussion](https://github.com/zazza123/chatomon/discussions) may be a
+        better first step.
+
+        **Title:** English prose, no prefix.
+
+        - ✅ `ADK connector`
+        - ❌ `[Feature]: add ADK`
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or impossible today, and for whom. The problem, not the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed solution
+      description: What chatomon should do — the user-visible behaviour or API, with a short code sketch if it helps.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches and why they fall short. Optional, but it saves a round of review.
+
+  - type: textarea
+    id: done-when
+    attributes:
+      label: Done when
+      description: How we will know it is finished — one checkable condition per line.
+      value: |
+        - [ ]
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ### Classification
+
+        Your answers below **become the issue's labels automatically** — do not add
+        labels by hand. When unsure, pick "Don't know".
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Where the change would live. Pick every one that applies.
+      multiple: true
+      options:
+        - "area:core — Atom, knowledge, schemas, orbital engine"
+        - "area:connectors — Shared connector layer, contract suite"
+        - "area:orbitals — Built-in orbitals (judge, Principled Intelligence)"
+        - "area:observability — Logging, OpenTelemetry, turn reports"
+        - "area:docs — Documentation site, docstrings"
+        - "area:ci — GitHub Actions, scripts, repository tooling"
+        - "Don't know"
+
+  - type: dropdown
+    id: framework
+    attributes:
+      label: Framework
+      description: >-
+        The agent framework involved. Asking for a framework chatomon does not
+        support yet? Pick "Other" and name it in the title and the problem.
+      multiple: true
+      options:
+        - "framework:pydantic-ai — PydanticAI"
+        - "framework:langchain — LangChain / LangGraph"
+        - "Other — name it in the description"
+        - "None / don't know"
