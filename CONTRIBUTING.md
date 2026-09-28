@@ -269,6 +269,8 @@ closed.
 - **Branch in this repository → merge commit.** Its message is the pull
   request's title and description, and the individual commits stay in the
   history — which is why every one of them must follow the convention.
+  Dependabot's pull requests are no exception: their single commit is already
+  `DEP: Bump …`.
 - **Branch in a fork → squash merge.** Its message is the pull request title.
 - Rebase merging is disabled, and merged branches are deleted automatically.
 

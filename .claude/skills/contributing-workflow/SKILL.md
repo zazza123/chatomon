@@ -97,9 +97,8 @@ The method depends on where the branch lives ("Review and merging" in
 
 | Branch | Command |
 |---|---|
-| this repository | `gh pr merge <n> --merge --delete-branch` |
+| this repository, Dependabot's included | `gh pr merge <n> --merge --delete-branch` |
 | a fork | `gh pr merge <n> --squash` |
-| Dependabot | `gh pr merge <n> --squash --delete-branch` |
 
 Never merge with a red check. Merge a fork's pull request only after reviewing
 it.
