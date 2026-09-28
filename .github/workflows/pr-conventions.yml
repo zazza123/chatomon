@@ -1,0 +1,49 @@
+name: PR conventions
+
+# The pull request convention gate (CONTRIBUTING.md, "Pull requests"): branch
+# name, title, the linked issue's type: label and the commit subjects, relaxed
+# for pull requests from forks. The logic is scripts/check_pr_conventions.py,
+# tested in tests/tooling/; this file only feeds it the event.
+#
+# Split from ci.yml because it must re-run on `edited`: a title can be renamed
+# after the pull request is opened, and on squash merge it becomes the commit
+# subject. Re-running the whole test suite on every edit of the body would be
+# waste.
+#
+# Known gap: removing the type: label from the linked issue after this ran
+# fires no pull request event, so it goes unnoticed until the next push or edit.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+permissions: {}
+
+concurrency:
+  group: pr-conventions-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  conventions:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # Text chosen by whoever opens the pull request reaches the script only
+      # through the environment — never interpolated into a shell command.
+      PR_TITLE: ${{ github.event.pull_request.title }}
+      PR_BRANCH: ${{ github.head_ref }}
+      PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+      # Empty when the fork was deleted; the script then treats it as a fork.
+      PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+      PR_BASE_REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Check the pull request conventions
+        run: python3 scripts/check_pr_conventions.py
