@@ -1,0 +1,36 @@
+version: 2
+# Monthly, with every minor and patch update of an ecosystem grouped into ONE
+# pull request: ungrouped updates open one pull request per dependency, and
+# each is tested alone, so a combination that only breaks together is never
+# exercised. Major updates are left out of the group, so each arrives in its own
+# pull request — its breaking changes deserve to be read on their own.
+#
+# The DEP prefix gives titles like "DEP: Bump …". The convention gate exempts
+# Dependabot by author, and the changelog label files the update under
+# Maintenance.
+updates:
+  - package-ecosystem: uv
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "python"]
+    commit-message:
+      prefix: "DEP"
+    groups:
+      python:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "github-actions"]
+    commit-message:
+      prefix: "DEP"
+    groups:
+      github-actions:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
