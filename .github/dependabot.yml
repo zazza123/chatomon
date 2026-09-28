@@ -11,6 +11,10 @@ version: 2
 updates:
   - package-ecosystem: uv
     directory: "/"
+    # A library's lower bounds are a promise to its users, and chatomon's were
+    # found by bisection: `widen` only ever raises an upper bound (for a new
+    # major), never a floor. Updates within the ranges touch uv.lock only.
+    versioning-strategy: widen
     schedule:
       interval: monthly
     open-pull-requests-limit: 5
