@@ -87,6 +87,6 @@ convention = "google"
 "tests/**" = ["D", "DOC"]
 
 [tool.pyright]
-include = ["src", "tests"]
+include = ["src", "tests", "scripts"]
 pythonVersion = "3.10"
 typeCheckingMode = "standard"
