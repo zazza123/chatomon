@@ -76,10 +76,10 @@ body:
       label: Framework
       description: >-
         The agent framework involved. Asking for a framework chatomon does not
-        support yet? Pick "Other" and name it in the title and the problem.
+        support yet? Pick "Other" and name it in the title and in Problem.
       multiple: true
       options:
         - "framework:pydantic-ai — PydanticAI"
         - "framework:langchain — LangChain / LangGraph"
-        - "Other — name it in the description"
+        - "Other — name it in the title and in Problem"
         - "None / don't know"
