@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from chatomon import Verdict
+from chatomon import OrbitalContext, Verdict, orbital
 from tests.contract.harness import build_agent
 from tests.fakes import ScriptedOrbital
 
@@ -52,3 +52,20 @@ async def test_chatomon_spans_are_emitted(harness, spans):
         "chatomon.orbital i",
         "chatomon.orbital o",
     } <= names
+
+
+async def test_concurrent_conversations_do_not_share_guidance(harness):
+    @orbital
+    def personal_hint(ctx: OrbitalContext) -> Verdict:
+        return Verdict.allow(f"hint for {ctx.message}")
+
+    agent, _ = build_agent(harness, ["one", "two"], input_orbitals=[personal_hint])
+    await asyncio.gather(
+        harness.ask(agent, "first", conversation="a"),
+        harness.ask(agent, "second", conversation="b"),
+    )
+    for call in harness.calls:
+        message = call.messages[-1][1]
+        other = "second" if message == "first" else "first"
+        assert f"hint for {message}" in call.system
+        assert f"hint for {other}" not in call.system

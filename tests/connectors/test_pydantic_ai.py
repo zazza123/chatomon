@@ -10,9 +10,10 @@ from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
-from chatomon import Atom, ChatomonConfigError, MissingExtraError, TurnReport
+from chatomon import Atom, ChatomonConfigError, MissingExtraError, TurnReport, Verdict
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.orbitals import JudgeDecision
+from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER
 from tests.fakes import ScriptedOrbital
 
 
@@ -38,8 +39,10 @@ def test_user_capabilities_run_inside_chatomon():
     seen: list[str] = []
 
     class Recorder(AbstractCapability[Any]):
-        async def before_run(self, ctx: Any) -> None:
-            seen.append("user capability")
+        async def before_model_request(self, ctx: Any, request_context: Any) -> Any:
+            last = request_context.messages[-1]
+            seen.extend(part.content for part in last.parts if hasattr(part, "content"))
+            return request_context
 
     agent = Atom(
         name="speedypack",
@@ -47,9 +50,10 @@ def test_user_capabilities_run_inside_chatomon():
         connector=PydanticAIConnector(
             TestModel(custom_output_text="ok"), capabilities=[Recorder()]
         ),
+        input_orbitals=[ScriptedOrbital(Verdict.block(guidance="Decline."), name="guard")],
     ).build()
-    agent.run_sync("hello")
-    assert seen == ["user capability"]
+    agent.run_sync("secret request")
+    assert seen == [DEFAULT_BLOCKED_PLACEHOLDER]
 
 
 def _streaming_model(calls: list[str]) -> FunctionModel:
