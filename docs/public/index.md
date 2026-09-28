@@ -57,6 +57,7 @@ assert result.output == "Refunds are handled by email."
 | [Observability and Audit](observability.md) | Logs, OpenTelemetry spans, turn reports, content capture and compliance notes |
 | [Deployment](deployment/index.md) | Running guard models behind private endpoints |
 | [API Reference](reference/index.md) | The complete public API, generated from the code |
+| [Changelog](changelog.md) | Where release notes are published and how versions are numbered |
 
 ## Key Components
 
