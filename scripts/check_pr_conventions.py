@@ -62,16 +62,30 @@ class PullRequest:
     is_fork: bool
 
 
+@dataclass(frozen=True)
+class Issue:
+    """What the gate needs to know about the issue a title references.
+
+    Attributes:
+        labels: The issue's label names.
+        is_pull_request: Whether the number belongs to a pull request — GitHub
+            numbers issues and pull requests from the same sequence.
+    """
+
+    labels: tuple[str, ...]
+    is_pull_request: bool = False
+
+
 def check(
     pr: PullRequest,
-    issue_labels: Callable[[int], Sequence[str] | None],
+    issue: Callable[[int], Issue | None],
     commit_subjects: Callable[[], Sequence[str] | None],
 ) -> list[str]:
     """Return every convention the pull request violates.
 
     Args:
         pr: The pull request to check.
-        issue_labels: Returns the labels of an issue, or ``None`` when they cannot
+        issue: Returns the issue with a given number, or ``None`` when it cannot
             be read.
         commit_subjects: Returns the subject line of every commit of the pull
             request, or ``None`` when they cannot be read.
@@ -100,7 +114,7 @@ def check(
             f"CODE in {', '.join(COMMIT_CODES)}"
         )
     else:
-        violations.extend(_check_issue(match["code"], match["issue"], pr.is_fork, issue_labels))
+        violations.extend(_check_issue(match["code"], match["issue"], pr.is_fork, issue))
     if not pr.is_fork:
         violations.extend(_check_commits(commit_subjects))
     return violations
@@ -108,11 +122,11 @@ def check(
 
 def _check_issue(
     code: str,
-    issue: str | None,
+    number: str | None,
     is_fork: bool,
-    issue_labels: Callable[[int], Sequence[str] | None],
+    issue: Callable[[int], Issue | None],
 ) -> list[str]:
-    if issue is None:
+    if number is None:
         if not is_fork:
             return ["the title carries no issue reference: append ' (#<issue>)'"]
         if code in FORK_ISSUE_REQUIRED:
@@ -121,15 +135,20 @@ def _check_issue(
                 "agree on the change, then append ' (#<issue>)' to the title"
             ]
         return []
-    labels = issue_labels(int(issue))
-    if labels is None:
+    found = issue(int(number))
+    if found is None:
         return [
-            f"could not read the labels of issue #{issue} (does it exist?): the gate fails "
+            f"could not read the labels of issue #{number} (does it exist?): the gate fails "
             "closed when the GitHub API does not answer — check the number, then re-run it"
         ]
-    types = sum(label.startswith("type:") for label in labels)
+    if found.is_pull_request:
+        return [
+            f"#{number} is a pull request, not an issue: "
+            "reference the issue the pull request closes"
+        ]
+    types = sum(label.startswith("type:") for label in found.labels)
     if types != 1:
-        return [f"issue #{issue} carries {types} type: labels: exactly one is required (R1)"]
+        return [f"issue #{number} carries {types} type: labels: exactly one is required (R1)"]
     return []
 
 
@@ -138,11 +157,22 @@ def _check_commits(commit_subjects: Callable[[], Sequence[str] | None]) -> list[
     if subjects is None:
         return ["could not read the commits of the pull request: re-run the gate"]
     return [
-        f"commit subject {subject!r}: expected 'CODE: Title' (reword it with an interactive "
-        "rebase; update the branch with git rebase main, never by merging main into it)"
+        _commit_violation(subject)
         for subject in subjects
         if not (subject.isprintable() and SUBJECT_RE.fullmatch(subject))
     ]
+
+
+def _commit_violation(subject: str) -> str:
+    if subject.startswith("Merge "):
+        return (
+            f"commit subject {subject!r}: a merge of another branch into this one — drop it "
+            "with git rebase main, which is how a branch is kept current"
+        )
+    return (
+        f"commit subject {subject!r}: expected 'CODE: Title' (reword it with an interactive "
+        "rebase; update the branch with git rebase main, never by merging main into it)"
+    )
 
 
 def _gh(*args: str) -> str | None:
@@ -153,18 +183,26 @@ def _gh(*args: str) -> str | None:
     return result.stdout
 
 
-def fetch_issue_labels(repo: str, number: int) -> list[str] | None:
-    """Read the label names of an issue with the GitHub CLI.
+def fetch_issue(repo: str, number: int) -> Issue | None:
+    """Read an issue's labels, and whether it is a pull request, with the GitHub CLI.
 
     Args:
         repo: The repository, as ``owner/name``.
         number: The issue number.
 
     Returns:
-        The label names, or ``None`` when the API call fails.
+        The issue, or ``None`` when the API call fails.
     """
-    output = _gh("api", f"repos/{repo}/issues/{number}", "--jq", "[.labels[].name]")
-    return None if output is None else list(json.loads(output))
+    output = _gh(
+        "api",
+        f"repos/{repo}/issues/{number}",
+        "--jq",
+        "{labels: [.labels[].name], pull_request: (.pull_request != null)}",
+    )
+    if output is None:
+        return None
+    data = json.loads(output)
+    return Issue(labels=tuple(data["labels"]), is_pull_request=data["pull_request"])
 
 
 def fetch_commit_subjects(repo: str, number: str) -> list[str] | None:
@@ -211,7 +249,7 @@ def main(env: Mapping[str, str] | None = None) -> int:
     )
     violations = check(
         pr,
-        issue_labels=lambda issue: fetch_issue_labels(repo, issue),
+        issue=lambda issue: fetch_issue(repo, issue),
         commit_subjects=lambda: fetch_commit_subjects(repo, number),
     )
     for violation in violations:

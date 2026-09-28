@@ -2,13 +2,17 @@
 
 import pytest
 from scripts import check_pr_conventions as gate
-from scripts.check_pr_conventions import PullRequest, check
+from scripts.check_pr_conventions import Issue, PullRequest, check
 
 ONE_TYPE = ["type:feat", "area:connectors"]
 
 
 def labels_of(mapping):
-    return lambda number: mapping.get(number)
+    def lookup(number):
+        labels = mapping.get(number)
+        return None if labels is None else Issue(labels=tuple(labels))
+
+    return lookup
 
 
 def no_issue_lookup(number):
@@ -205,15 +209,15 @@ BASE_ENV = {
 def fake_github(monkeypatch, labels=ONE_TYPE, subjects=("ADD: ADK connector module",)):
     seen = []
 
-    def issue_labels(repo, number):
+    def issue(repo, number):
         seen.append(("issue", repo, number))
-        return labels
+        return Issue(labels=tuple(labels))
 
     def commit_subjects(repo, number):
         seen.append(("commits", repo, number))
         return list(subjects)
 
-    monkeypatch.setattr(gate, "fetch_issue_labels", issue_labels)
+    monkeypatch.setattr(gate, "fetch_issue", issue)
     monkeypatch.setattr(gate, "fetch_commit_subjects", commit_subjects)
     return seen
 
@@ -254,3 +258,21 @@ def test_main_exits_2_when_an_input_is_missing(missing, capsys):
     env = {name: value for name, value in BASE_ENV.items() if name != missing}
     assert gate.main(env) == 2
     assert missing in capsys.readouterr().err
+
+
+def test_a_pull_request_number_in_the_title_is_named_as_such():
+    def lookup(number):
+        return Issue(labels=(), is_pull_request=True)
+
+    violations = check(internal(), lookup, commits())
+    assert violations == [
+        "#12 is a pull request, not an issue: reference the issue the pull request closes"
+    ]
+
+
+def test_a_merge_commit_is_to_be_dropped_not_reworded():
+    subject = "Merge branch 'main' into feat/12-adk"
+    violations = check(internal(), labels_of({12: ONE_TYPE}), commits(subject))
+    assert len(violations) == 1
+    assert "drop it with git rebase main" in violations[0]
+    assert "reword" not in violations[0]
