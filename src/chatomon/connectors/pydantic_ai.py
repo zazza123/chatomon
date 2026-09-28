@@ -159,10 +159,17 @@ class _ChatomonCapability(AbstractCapability[Any]):
             return ModelResponse(parts=[TextPart(content=decision.reply or "")])
         if request_context.streaming and self._engine.output_orbitals:
             raise ChatomonConfigError(_STREAMING_REFUSED)
+        if turn.final_action is not None:
+            # The framework asks again after chatomon accepted a reply (for example
+            # an output validator raising ModelRetry): check the new reply too.
+            self._engine.reopen_output(turn)
         response = await handler(
             _with_guidance(request_context, (*decision.guidance, *self._output_guidance))
         )
         while not _has_tool_calls(response):
+            if not _response_text(response):
+                # Nothing to check: PydanticAI retries empty responses itself.
+                return response
             outcome = await self._engine.run_output(
                 turn, reply=_response_text(response), history=self._history_out
             )

@@ -53,6 +53,8 @@ class ScriptedChatModel(BaseChatModel):
         step = self.script.pop(0)
         if isinstance(step, Exception):
             raise step
+        if isinstance(step, AIMessage):
+            return step
         if isinstance(step, ToolCall):
             tool_call = {"name": "lookup", "args": {}, "id": f"call-{len(self.recorder)}"}
             return AIMessage(content="", tool_calls=[tool_call])

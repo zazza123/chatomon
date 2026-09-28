@@ -67,3 +67,28 @@ async def test_abort_turn_records_the_message_only_with_full_capture():
     report = await engine.abort_turn(turn, ValueError("boom"))
     assert report.error_message == "boom"
     assert report.input == ()
+
+
+async def test_reopen_output_allows_checking_a_new_reply_after_acceptance():
+    out = ScriptedOrbital(name="out")
+    engine = make_engine(outputs=[out])
+    turn = engine.start_turn()
+    await engine.run_input(turn, message=QUESTION)
+    await engine.run_output(turn, reply="first")
+    engine.reopen_output(turn)
+    assert turn.final_action is None
+    decision = await engine.run_output(turn, reply="second")
+    assert decision.kind == "accept"
+    assert turn.final_reply == "second"
+    assert [ctx.attempt for ctx in out.contexts] == [1, 2]
+
+
+async def test_reopen_output_is_rejected_after_an_input_reply_or_a_finished_turn():
+    engine = make_engine(inputs=[ScriptedOrbital(Verdict.respond("FAQ"), name="faq")])
+    turn = engine.start_turn()
+    await engine.run_input(turn, message=QUESTION)
+    with pytest.raises(RuntimeError, match="input chain"):
+        engine.reopen_output(turn)
+    await engine.finish_turn(turn)
+    with pytest.raises(RuntimeError, match="finished"):
+        engine.reopen_output(turn)
