@@ -4,7 +4,9 @@ import pytest
 from pytest_examples import CodeExample, EvalExample, find_examples
 
 ROOT = Path(__file__).resolve().parent.parent
-EXAMPLES = list(find_examples(ROOT / "src" / "chatomon", ROOT / "docs" / "public"))
+EXAMPLES = list(
+    find_examples(ROOT / "src" / "chatomon", ROOT / "docs" / "public", ROOT / "README.md")
+)
 
 
 @pytest.mark.parametrize("example", EXAMPLES, ids=str)

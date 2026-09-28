@@ -37,6 +37,7 @@ The design source of truth is `docs/superpowers/specs/2026-09-27-chatomon-design
 
 - Hand-written usage docs (concepts, orbitals, connectors, observability, end-to-end examples) live in `docs/public/` (the Zensical `docs_dir`; `docs/superpowers/` is internal and never published) and are always written or updated with the `writing-documentation` skill.
 - They explain how to use chatomon and link to the generated API reference for details; don't duplicate parameter tables that docstrings already cover.
+- Exception to the skill's no-code rule (approved by the user): usage pages may include short code examples when they genuinely help. They must run under `pytest-examples` (collected from `docs/public/`), or be fenced as ```` ```{.python test="skip"} ```` when they need real services.
 - Any change that alters behavior updates the affected pages in the same milestone.
 
 ## Testing

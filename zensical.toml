@@ -4,7 +4,15 @@ site_description = "Declare a chat agent once and build it into native agent fra
 docs_dir = "docs/public"
 nav = [
   { "Home" = "index.md" },
-  { "API reference" = "reference/api.md" },
+  { "Concepts" = "concepts.md" },
+  { "Orbitals" = "orbitals.md" },
+  { "Connectors" = "connectors.md" },
+  { "Observability and audit" = "observability.md" },
+  { "Deployment" = [
+    { "Overview" = "deployment/index.md" },
+    { "ScopeGuard on Cloud Run" = "deployment/cloud_run.md" },
+  ] },
+  { "API reference" = "reference/index.md" },
 ]
 
 [project.markdown_extensions.admonition]
@@ -15,6 +23,10 @@ permalink = true
 [project.markdown_extensions.pymdownx.highlight]
 [project.markdown_extensions.pymdownx.inlinehilite]
 [project.markdown_extensions.pymdownx.superfences]
+[[project.markdown_extensions.pymdownx.superfences.custom_fences]]
+name = "mermaid"
+class = "mermaid"
+format = "pymdownx.superfences.fence_code_format"
 
 [project.plugins.mkdocstrings.handlers.python]
 paths = ["src"]
