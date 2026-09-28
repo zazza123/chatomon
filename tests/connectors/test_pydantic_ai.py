@@ -19,7 +19,8 @@ from tests.fakes import ScriptedOrbital
 @pytest.mark.parametrize("key", ["instructions", "system_prompt", "output_type", "name"])
 def test_reserved_arguments_are_rejected(key):
     with pytest.raises(ChatomonConfigError, match=key):
-        PydanticAIConnector("test", **{key: "x"})
+        kwargs: dict[str, Any] = {key: "x"}
+        PydanticAIConnector("test", **kwargs)
 
 
 def test_build_returns_a_native_agent():
