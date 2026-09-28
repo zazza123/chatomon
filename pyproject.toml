@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = ["hatchling>=1.27", "hatch-vcs>=0.5"]
 build-backend = "hatchling.build"
 
 [project]
@@ -49,9 +49,15 @@ docs = [
 
 [tool.uv]
 default-groups = ["dev", "docs"]
+# The version comes from git: rebuild the editable install when HEAD or the
+# tags move, or the reported version goes stale.
+cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]
 
 [tool.hatch.version]
-path = "src/chatomon/_version.py"
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/chatomon/_version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/chatomon"]

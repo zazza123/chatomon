@@ -13,6 +13,8 @@ nav = [
     { "ScopeGuard on Cloud Run" = "deployment/cloud_run.md" },
   ] },
   { "API reference" = "reference/index.md" },
+  { "Changelog" = "changelog.md" },
+  { "Contributing" = "https://github.com/zazza123/chatomon/blob/main/CONTRIBUTING.md" },
 ]
 
 [project.markdown_extensions.admonition]
