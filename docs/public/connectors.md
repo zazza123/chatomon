@@ -37,7 +37,9 @@ In both frameworks the output checks and regenerations happen inside the hook th
 |--|-----------|-----------|
 | Where the history lives | In the `message_history` you pass to the next run | In the graph's checkpointer |
 | Conversation id in reports | The run's `conversation_id`, stable across runs that share the history | The `thread_id` of the run config |
-| Blocked messages in the history | Replaced by the placeholder in `all_messages()` | Replaced by the placeholder in the checkpoint |
+| Blocked messages in the history | Replaced by the placeholder in `all_messages()` | Replaced by the placeholder in the latest checkpoint |
+
+A LangGraph checkpointer keeps every earlier snapshot of the thread, and the snapshot written before chatomon runs still contains the original user message. The nucleus never sees it again — replaying a thread runs the input orbitals again — but it remains in storage: pruning and retention of checkpoints are the application's responsibility, as for any other personal data.
 
 With LangChain, the checkpointer keeps the conversation and its `thread_id` becomes the conversation id of every report:
 
@@ -92,6 +94,8 @@ Tools are declared on the native agent as usual. Model responses that call tools
 | LangChain | Tokens stream normally | The model is tagged `nostream` and checked inside the model call, so streaming emits only the approved reply |
 | PydanticAI | Tokens stream normally | `run_stream` is refused with `ChatomonConfigError` before the model is called, because PydanticAI streams text before it can be checked; use `run` or `run_sync` |
 
+The LangChain guarantee covers the graph's output streams (`stream` / `astream` with `messages`, `updates` or `values`). **`astream_events` and callback handlers are not a safe user-facing channel when output orbitals exist**: they observe every internal model call, so they also see drafts that the output orbitals later reject. Use them for tracing, not to feed a user interface.
+
 ## Judges and Model Resolution
 
 A `JudgeOrbital` without its own connector calls its model through the atom's connector. Each connector has a `resolve_model` setting that maps the judge's model id to a framework model; by default PydanticAI uses the id as a model string and LangChain calls `init_chat_model` with it.
@@ -102,7 +106,7 @@ PydanticAI propagates the OpenTelemetry context through its hooks, so chatomon's
 
 ## Failures
 
-If the model or the framework raises during a turn, the connector closes the turn with `Engine.abort_turn` — the report says `aborted` and records the exception type — and the exception propagates to your code. In LangChain this covers failures of the model call; failures in other graph nodes (for example inside tools) do not produce a report in this version.
+If the model or the framework raises during a turn, the connector closes the turn with `Engine.abort_turn` — the report says `aborted` and records the exception type — and the exception propagates to your code. In LangChain this covers failures of the model call and of tools. A turn interrupted by `interrupt()` (human in the loop) stays open and is closed when the graph resumes; if it is resumed by another process or agent instance, chatomon rebuilds the turn and runs the input orbitals again before the model is called, so the reply is always checked. A turn left behind by a failure elsewhere is closed as `aborted` when the next message arrives on the same thread.
 
 ## Related Documentation
 
