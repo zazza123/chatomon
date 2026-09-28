@@ -14,7 +14,7 @@ from chatomon.observability import sha256_text, stable_json
 from chatomon.schemas import ErrorPolicy, OrbitalContext, Side, Verdict
 
 if TYPE_CHECKING:
-    from chatomon.connectors.base import Connector  # pyright: ignore[reportMissingImports]
+    from chatomon.connectors.base import Connector
 
 __all__ = ["FunctionOrbital", "Orbital", "OrbitalFunction", "orbital"]
 
