@@ -345,6 +345,12 @@ Releasing (maintainers):
    deploys the documentation. Pushing a tag on its own does nothing.
 4. Check that the pipeline is green and the PyPI page is right.
 
+**The first release** is the exception to step 2: with no previous release to
+compare against, the draft proposes `v0.0.1` and its "Full changelog" link has
+no starting tag. Set the tag and the title to `v0.1.0`, write the notes by hand
+— the pull requests merged before the changelog labels existed carry none —
+and delete the compare link.
+
 Only the latest release receives fixes.
 
 ## Code of conduct
