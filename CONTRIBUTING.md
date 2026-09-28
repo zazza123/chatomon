@@ -30,7 +30,7 @@ instead of copying it.
 
 ## Development setup
 
-chatomon supports Python 3.10 and later and uses
+chatomon supports Python 3.11 and later and uses
 [uv](https://docs.astral.sh/uv/).
 
 ```bash

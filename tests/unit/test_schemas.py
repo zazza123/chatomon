@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -103,7 +103,7 @@ def test_turn_report_round_trips_to_json():
         turn_id="t1",
         conversation_id=None,
         atom_name="speedypack",
-        started_at=datetime(2026, 9, 28, tzinfo=timezone.utc),
+        started_at=datetime(2026, 9, 28, tzinfo=UTC),
         duration_ms=10.0,
         final_action="answered",
         escalated=False,
