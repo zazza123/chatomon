@@ -1,0 +1,10 @@
+# Blank issues are disabled: one would carry no type: label and break R1
+# (CONTRIBUTING.md, "Labels").
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/zazza123/chatomon/security/advisories/new
+    about: Report it privately through GitHub Security Advisories — never in a public issue.
+  - name: Question or idea
+    url: https://github.com/zazza123/chatomon/discussions
+    about: Usage questions and early ideas belong in Discussions.

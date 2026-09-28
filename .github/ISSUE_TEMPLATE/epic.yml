@@ -1,0 +1,84 @@
+name: Epic (maintainers)
+description: For maintainers — an umbrella that groups child issues
+labels: ["type:epic"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Title:** English prose, no prefix, short — it becomes the prefix of every
+        child's title: `<Epic> — <description>`. Each child carries its own `type:`
+        label and is attached here as a sub-issue.
+
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: Where we want to be when the epic closes.
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: Why it is worth doing now.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What is in and, above all, what is out — the line that stops the epic from growing forever.
+      value: |
+        In scope:
+
+        -
+
+        Out of scope:
+
+        -
+    validations:
+      required: true
+
+  - type: textarea
+    id: done-when
+    attributes:
+      label: Done when
+      description: The closing conditions — not the list of children, which are linked as sub-issues.
+      value: |
+        - [ ]
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ### Classification
+
+        The answers below become labels automatically.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - "area:core — Atom, knowledge, schemas, orbital engine"
+        - "area:connectors — Shared connector layer, contract suite"
+        - "area:orbitals — Built-in orbitals (judge, Principled Intelligence)"
+        - "area:observability — Logging, OpenTelemetry, turn reports"
+        - "area:docs — Documentation site, docstrings"
+        - "area:ci — GitHub Actions, scripts, repository tooling"
+        - "Don't know"
+
+  - type: dropdown
+    id: framework
+    attributes:
+      label: Framework
+      multiple: true
+      options:
+        - "framework:pydantic-ai — PydanticAI"
+        - "framework:langchain — LangChain / LangGraph"
+        - "None / don't know"

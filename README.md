@@ -43,3 +43,9 @@ Replace `TestModel(...)` with a real model, for example `"openai:gpt-5"`.
 ## Documentation
 
 The documentation site is built with Zensical from `docs/public/`: run `uv run zensical serve` and open http://localhost:8000. It covers concepts, orbitals, connectors, observability and deployment, plus the API reference generated from the code.
+
+## Contributing
+
+Bug reports, ideas and pull requests are welcome — start with
+[`CONTRIBUTING.md`](CONTRIBUTING.md). Security issues: see
+[`SECURITY.md`](SECURITY.md).

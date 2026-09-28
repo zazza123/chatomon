@@ -10,3 +10,7 @@ site/
 
 # Internal design documents (specs, plans, spikes): kept local, never published
 docs/superpowers/
+
+# Personal Claude Code instructions
+CLAUDE.local.md
+.superpowers/

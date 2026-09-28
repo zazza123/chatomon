@@ -1,0 +1,128 @@
+# Canonical label set for chatomon — see CONTRIBUTING.md, "Labels".
+#
+# Synced by .github/workflows/labels.yml (EndBug/label-sync) on every push to
+# main that touches this file. A label that is not listed here does not exist
+# (R6): add it here, never by hand in the GitHub UI.
+#
+# Rules:
+#   - Colours are 6-digit hex without '#', always quoted: an all-digit value
+#     such as "000000" is otherwise read as an integer and the sync rejects it.
+#   - Names are always quoted: scripts/derive_issue_labels.py reads this file
+#     without a YAML parser.
+#   - A new area: or framework: value is added only when a second real
+#     instance exists (R5), together with an option in every issue form's
+#     menu — tests/tooling/test_issue_forms.py fails if they drift apart.
+
+# ─── type: — exactly one on every open issue (R1) ────────────────────────────
+- name: "type:feat"
+  color: "a2eeef"
+  description: "New capability or improvement to an existing one"
+- name: "type:fix"
+  color: "d73a4a"
+  description: "Something behaves incorrectly"
+- name: "type:refactor"
+  color: "cfd3d7"
+  description: "Restructuring with no behaviour change"
+- name: "type:docs"
+  color: "0075ca"
+  description: "Documentation only"
+- name: "type:chore"
+  color: "ededed"
+  description: "Tooling, CI, dependencies and repository upkeep"
+- name: "type:epic"
+  color: "3e4b9e"
+  description: "Umbrella issue grouping child issues"
+
+# ─── area: — where the code lives, which docs page to update ─────────────────
+- name: "area:core"
+  color: "c5def5"
+  description: "Atom, knowledge, schemas and the orbital engine"
+- name: "area:connectors"
+  color: "c5def5"
+  description: "Shared connector layer and contract suite"
+- name: "area:orbitals"
+  color: "c5def5"
+  description: "Built-in orbitals, including Principled Intelligence"
+- name: "area:observability"
+  color: "c5def5"
+  description: "Logging, OpenTelemetry and turn reports"
+- name: "area:docs"
+  color: "c5def5"
+  description: "Documentation site and docstrings"
+- name: "area:ci"
+  color: "c5def5"
+  description: "GitHub Actions, scripts and repository tooling"
+
+# ─── framework: — which agent framework is involved ──────────────────────────
+- name: "framework:pydantic-ai"
+  color: "f9d0c4"
+  description: "PydanticAI"
+- name: "framework:langchain"
+  color: "f9d0c4"
+  description: "LangChain and LangGraph"
+
+# ─── priority: — at most one; absent means normal ────────────────────────────
+- name: "priority:high"
+  color: "b60205"
+  description: "Ahead of the normal order"
+- name: "priority:low"
+  color: "0e8a16"
+  description: "Blocks nothing"
+
+# ─── status: — at most one ───────────────────────────────────────────────────
+- name: "status:needs-triage"
+  color: "fbca04"
+  description: "Awaiting classification by a maintainer"
+- name: "status:needs-info"
+  color: "d876e3"
+  description: "Awaiting information from the reporter; closed after 30 silent days"
+- name: "status:blocked"
+  color: "000000"
+  description: "Cannot progress until something external resolves"
+
+# ─── Flags ───────────────────────────────────────────────────────────────────
+- name: "breaking"
+  color: "b60205"
+  description: "Backwards-incompatible change"
+- name: "security"
+  color: "ee0701"
+  description: "Security-related change"
+
+# ─── Community ───────────────────────────────────────────────────────────────
+- name: "good first issue"
+  color: "7057ff"
+  description: "Good for newcomers"
+- name: "help wanted"
+  color: "008672"
+  description: "Extra attention or community contribution welcome"
+
+# ─── Release notes — pull requests only ──────────────────────────────────────
+- name: "changelog:feature"
+  color: "0e8a16"
+  description: "Release notes: Features (set from the PR title)"
+- name: "changelog:fix"
+  color: "d73a4a"
+  description: "Release notes: Fixes (set from the PR title)"
+- name: "changelog:security"
+  color: "ee0701"
+  description: "Release notes: Security (set from the PR title)"
+- name: "changelog:docs"
+  color: "0075ca"
+  description: "Release notes: Documentation (set from the PR title)"
+- name: "changelog:maintenance"
+  color: "cfd3d7"
+  description: "Release notes: Maintenance (set from the PR title)"
+- name: "skip-changelog"
+  color: "ededed"
+  description: "Leave this pull request out of the release notes"
+
+# ─── Dependabot — applied automatically, do not touch ────────────────────────
+- name: "dependencies"
+  color: "0366d6"
+  description: "Dependency updates"
+- name: "python"
+  color: "3572a5"
+  description: "Python dependency"
+- name: "github-actions"
+  color: "2088ff"
+  description: "GitHub Actions dependency"

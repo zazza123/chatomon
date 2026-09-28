@@ -1,0 +1,108 @@
+name: Bug
+description: Something in chatomon behaves incorrectly
+labels: ["type:fix", "status:needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this.
+
+        **Title:** English prose, no prefix. `ADD:`, `FIX:` or `[Bug]:` belong to
+        commits and pull requests, not issues.
+
+        - ✅ `LangChain connector drops the guidance when streaming`
+        - ❌ `[Bug]: streaming broken`
+
+        **Security vulnerabilities do not go here** — report them privately through
+        [GitHub Security Advisories](https://github.com/zazza123/chatomon/security/advisories/new).
+
+  - type: textarea
+    id: what-happens
+    attributes:
+      label: What happens
+      description: What actually happens. Paste the full error or traceback.
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-should-happen
+    attributes:
+      label: What should happen
+      description: What you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproducer
+    attributes:
+      label: Minimal reproducer
+      description: >-
+        The smallest self-contained script that shows the problem. Use a fake
+        model (PydanticAI's `TestModel`, LangChain's `GenericFakeChatModel`)
+        whenever you can, so it runs without credentials.
+      render: python
+    validations:
+      required: true
+
+  - type: input
+    id: chatomon-version
+    attributes:
+      label: chatomon version
+      description: "Output of `python -c 'import chatomon; print(chatomon.__version__)'`."
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: "3.12.4"
+    validations:
+      required: true
+
+  - type: input
+    id: framework-version
+    attributes:
+      label: Framework and version
+      description: >-
+        The agent framework and its version, e.g. `pydantic-ai-slim 2.51.0` or
+        `langchain 1.4.2`. Write `none` if the problem does not depend on one.
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        ### Classification
+
+        Your answers below **become the issue's labels automatically** — do not add
+        labels by hand. When unsure, pick "Don't know": a missing label is added at
+        triage, a wrong one misleads.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Where the problem lives. Pick every one that applies.
+      multiple: true
+      options:
+        - "area:core — Atom, knowledge, schemas, orbital engine"
+        - "area:connectors — Shared connector layer, contract suite"
+        - "area:orbitals — Built-in orbitals (judge, Principled Intelligence)"
+        - "area:observability — Logging, OpenTelemetry, turn reports"
+        - "area:docs — Documentation site, docstrings"
+        - "area:ci — GitHub Actions, scripts, repository tooling"
+        - "Don't know"
+
+  - type: dropdown
+    id: framework
+    attributes:
+      label: Framework
+      description: The agent framework involved, if any.
+      multiple: true
+      options:
+        - "framework:pydantic-ai — PydanticAI"
+        - "framework:langchain — LangChain / LangGraph"
+        - "None / don't know"
