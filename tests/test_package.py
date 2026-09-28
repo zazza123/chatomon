@@ -5,8 +5,11 @@ from chatomon import ChatomonConfigError, ChatomonError, MissingExtraError
 from chatomon.errors import MissingAnnotationsError
 
 
-def test_version_is_exposed():
-    assert chatomon.__version__ == "0.1.0.dev0"
+def test_version_is_the_installed_distribution_version():
+    from importlib.metadata import version
+
+    assert chatomon.__version__ == version("chatomon")
+    assert chatomon.__version__ != "0.1.0.dev0"
 
 
 def test_library_logger_has_only_a_null_handler():
