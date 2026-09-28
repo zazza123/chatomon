@@ -7,3 +7,6 @@ __pycache__/
 dist/
 site/
 .DS_Store
+
+# Internal design documents (specs, plans, spikes): kept local, never published
+docs/superpowers/
