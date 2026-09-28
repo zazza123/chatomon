@@ -44,6 +44,7 @@ __all__ = ["LangChainConnector"]
 _RESERVED = frozenset({"system_prompt", "response_format", "name"})
 _NO_FINAL_REPLY = "the agent ended without a final text reply"
 _STALE_TURN = "the previous turn ended before chatomon could close it"
+_NO_AI_MESSAGE = "the model call returned no AI message, so there is no reply to check"
 
 ModelCall = Callable[[ModelRequest], Awaitable[ModelResponse]]
 
@@ -232,7 +233,9 @@ class _ChatomonMiddleware(AgentMiddleware[_ChatomonState]):
             )
             while True:
                 reply = _last_ai(response)
-                if reply is None or reply.tool_calls:
+                if reply is None:
+                    raise RuntimeError(_NO_AI_MESSAGE)
+                if reply.tool_calls:
                     return response
                 with self._parent():
                     outcome = await self._engine.run_output(

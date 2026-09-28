@@ -255,3 +255,26 @@ def test_tool_failure_aborts_the_turn_with_the_sync_api():
     with pytest.raises(ValueError, match="tool down"):
         agent.invoke({"messages": [HumanMessage(content="hours?")]})
     assert [report.final_action for report in reports] == ["aborted"]
+
+
+class _EmptyResponse(AgentMiddleware):
+    """An inner middleware that answers without any AI message."""
+
+    async def awrap_model_call(self, request: Any, handler: Any) -> Any:
+        from langchain.agents.middleware.types import ModelResponse
+
+        return ModelResponse(result=[])
+
+
+async def test_langchain_response_without_an_ai_message_fails_closed():
+    reports: list[TurnReport] = []
+    agent = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=LangChainConnector(ScriptedChatModel(script=[]), middleware=[_EmptyResponse()]),
+        output_orbitals=[ScriptedOrbital(name="out")],
+        on_turn=reports.append,
+    ).build()
+    with pytest.raises(RuntimeError, match="no AI message"):
+        await agent.ainvoke({"messages": [HumanMessage(content="hello")]})
+    assert [report.final_action for report in reports] == ["aborted"]
