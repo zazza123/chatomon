@@ -17,9 +17,9 @@ An orbital is a check on a user message before the nucleus sees it, or on a repl
 | Orbital | Side | Needs | Page |
 |---------|------|-------|------|
 | Your own (`orbital`, `Orbital`) | input, output | — | [Writing your own](custom.md) |
-| `JudgeOrbital` | input, output | a model of the atom's framework | [JudgeOrbital](judge.md) |
-| `ScopeGuardOrbital` | input | extra `principled`, a ScopeGuard service | [Principled Intelligence](principled.md#scopeguard) |
-| `ClaimExtractorOrbital` | input, output | extra `principled`, a ClaimExtractor service | [Principled Intelligence](principled.md#claimextractor) |
+| `JudgeOrbital` | input, output | a model, called through the atom's connector or its own `connector` | [JudgeOrbital](judge.md) |
+| `ScopeGuardOrbital` | input | extra `principled`, a ScopeGuard model (local, self-hosted or API backend) | [Principled Intelligence](principled.md#scopeguard) |
+| `ClaimExtractorOrbital` | input, output | extra `principled`, a ClaimExtractor model (local, self-hosted or API backend) | [Principled Intelligence](principled.md#claimextractor) |
 
 ## Chaining Orbitals
 

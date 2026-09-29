@@ -13,10 +13,11 @@
 | Hook | What chatomon does there |
 |------|--------------------------|
 | `before_agent` | Runs the input chain, redacts a blocked message by id, jumps to the end when an orbital replies |
-| `wrap_model_call` | Adds the guidance, runs the output chain and the regenerations |
+| `wrap_model_call` | Adds the guidance, runs the output chain and the regenerations; rebuilds a turn resumed by another process or agent instance |
+| `wrap_tool_call` | Closes the turn as `aborted` when a tool raises |
 | `after_agent` | Finishes the turn and clears chatomon's private state |
 
-Both `invoke` and `ainvoke` are supported.
+Every hook has a sync and an async variant, so both `invoke` and `ainvoke` are supported.
 
 ## Conversations
 
@@ -52,7 +53,7 @@ assert [report.conversation_id for report in reports] == ["customer-42", "custom
 With input orbitals only, tokens stream normally. With output orbitals the model is tagged `nostream` and checked inside the model call, so the graph's output streams (`stream` / `astream` with `messages`, `updates` or `values`) emit only the approved reply.
 
 !!! danger "`astream_events` and callbacks are not a safe user-facing channel"
-    When output orbitals exist they observe every internal model call, so they also see drafts that the output orbitals later reject. Use them for tracing, not to feed a user interface.
+    `astream_events` and callback handlers observe every internal model call, so when output orbitals exist they also see drafts that the output orbitals later reject. Use them for tracing, not to feed a user interface.
 
 ## Tracing
 
