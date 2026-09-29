@@ -8,7 +8,7 @@
 
 A judge has its own `instructions`, an optional `context` (reference material, typically a `Knowledge` shared explicitly with the atom) and a `history_window` of recent messages. It never inherits the atom's instructions or knowledge.
 
-It calls the model through the atom's connector — so a LangChain atom uses a LangChain model — unless you give it a `connector` of its own; connectors resolve the judge's model id with their `resolve_model` setting (see [Judges and Model Resolution](../connectors.md#judges-and-model-resolution)).
+It calls the model through the atom's connector — so a LangChain atom uses a LangChain model — unless you give it a `connector` of its own; connectors resolve the judge's model id with their `resolve_model` setting (see [Judges and Model Resolution](../connectors/index.md#judges-and-model-resolution)).
 
 ## Decisions and Audit
 

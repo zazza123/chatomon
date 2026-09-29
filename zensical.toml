@@ -15,7 +15,11 @@ nav = [
     { "JudgeOrbital" = "orbitals/judge.md" },
     { "Principled Intelligence" = "orbitals/principled.md" },
   ] },
-  { "Connectors" = "connectors.md" },
+  { "Connectors" = [
+    { "Overview" = "connectors/index.md" },
+    { "PydanticAI" = "connectors/pydantic_ai.md" },
+    { "LangChain / LangGraph" = "connectors/langchain.md" },
+  ] },
   { "Observability and audit" = "observability.md" },
   { "Deployment" = [
     { "Overview" = "deployment/index.md" },
