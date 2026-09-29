@@ -8,7 +8,14 @@ edit_uri = "edit/main/docs/public/"
 docs_dir = "docs/public"
 nav = [
   { "Home" = "index.md" },
-  { "Concepts" = "concepts.md" },
+  { "Guide" = [
+    { "Concepts" = "concepts.md" },
+    { "Observability and audit" = "observability.md" },
+    { "Deployment" = [
+      { "Overview" = "deployment/index.md" },
+      { "ScopeGuard on Cloud Run" = "deployment/cloud_run.md" },
+    ] },
+  ] },
   { "Orbitals" = [
     { "Overview" = "orbitals/index.md" },
     { "Writing your own" = "orbitals/custom.md" },
@@ -19,11 +26,6 @@ nav = [
     { "Overview" = "connectors/index.md" },
     { "PydanticAI" = "connectors/pydantic_ai.md" },
     { "LangChain / LangGraph" = "connectors/langchain.md" },
-  ] },
-  { "Observability and audit" = "observability.md" },
-  { "Deployment" = [
-    { "Overview" = "deployment/index.md" },
-    { "ScopeGuard on Cloud Run" = "deployment/cloud_run.md" },
   ] },
   { "API reference" = [
     { "Overview" = "reference/index.md" },
