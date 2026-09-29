@@ -111,6 +111,7 @@ emoji_generator = "zensical.extensions.emoji.to_svg"
 [project.markdown_extensions.pymdownx.mark]
 [project.markdown_extensions.pymdownx.snippets]
 auto_append = ["docs/includes/abbreviations.md"]
+check_paths = true
 [project.markdown_extensions.pymdownx.superfences]
 [[project.markdown_extensions.pymdownx.superfences.custom_fences]]
 name = "mermaid"
