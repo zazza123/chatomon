@@ -6,6 +6,7 @@ repo_url = "https://github.com/zazza123/chatomon"
 repo_name = "zazza123/chatomon"
 edit_uri = "edit/main/docs/public/"
 docs_dir = "docs/public"
+extra_css = ["stylesheets/chatomon.css"]
 nav = [
   { "Home" = "index.md" },
   { "Guide" = [
@@ -70,9 +71,10 @@ features = [
   "search.highlight",
   "toc.follow",
 ]
-
-[project.theme.icon]
-logo = "lucide/atom"
+# docs/overrides/partials/logo.html shows the dark variant of the logo in the slate scheme.
+custom_dir = "docs/overrides"
+logo = "assets/brand/symbol-light.svg"
+favicon = "assets/brand/favicon.svg"
 
 [[project.theme.palette]]
 media = "(prefers-color-scheme)"
@@ -82,12 +84,16 @@ toggle.name = "Switch to light mode"
 [[project.theme.palette]]
 media = "(prefers-color-scheme: light)"
 scheme = "default"
+primary = "custom"
+accent = "custom"
 toggle.icon = "lucide/sun"
 toggle.name = "Switch to dark mode"
 
 [[project.theme.palette]]
 media = "(prefers-color-scheme: dark)"
 scheme = "slate"
+primary = "custom"
+accent = "custom"
 toggle.icon = "lucide/moon"
 toggle.name = "Switch to system preference"
 
