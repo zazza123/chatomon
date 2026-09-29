@@ -7,4 +7,3 @@
 *[verdicts]: What orbitals return: allow, block or respond.
 *[guidance]: An instruction an orbital gives the model for one model call; it is never stored in the conversation history.
 *[turn]: One user message and the reply the user receives, with every orbital check and regeneration in between.
-*[turns]: User messages and the replies the user receives, with every orbital check and regeneration in between.

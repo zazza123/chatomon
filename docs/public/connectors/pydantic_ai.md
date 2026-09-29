@@ -53,7 +53,7 @@ PydanticAI propagates the OpenTelemetry context through its hooks, so chatomon's
 
 - [Connectors](index.md) — what the two connectors share
 - [LangChain / LangGraph](langchain.md) — the other connector
-- [API Reference: connectors.pydantic_ai](../reference/connectors_pydantic_ai.md) — every parameter and a runnable example
+- [API Reference: `chatomon.connectors.pydantic_ai`](../reference/connectors_pydantic_ai.md) — every parameter and a runnable example
 
 ---
 **Last Updated:** September 2026

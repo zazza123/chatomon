@@ -20,7 +20,7 @@ A judge often reads the annotations of an earlier orbital — for example the cl
 
 - [Orbitals](index.md) — chaining, errors and timeouts
 - [Observability and Audit](../observability.md) — content capture and the `gen_ai.evaluation.result` event
-- [API Reference: orbitals.judge](../reference/orbitals_judge.md) — every parameter and a runnable example
+- [API Reference: `chatomon.orbitals.judge`](../reference/orbitals_judge.md) — every parameter and a runnable example
 
 ---
 **Last Updated:** September 2026

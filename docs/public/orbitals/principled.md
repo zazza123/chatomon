@@ -53,7 +53,7 @@ Both orbitals accept a `headers` provider, called before every request, to refre
 
 - [Orbitals](index.md) — chaining, errors and timeouts
 - [Deployment](../deployment/index.md) — running guard models behind private endpoints
-- [API Reference: orbitals.principled](../reference/orbitals_principled.md) — every parameter
+- [API Reference: `chatomon.orbitals.principled`](../reference/orbitals_principled.md) — every parameter
 
 ---
 **Last Updated:** September 2026

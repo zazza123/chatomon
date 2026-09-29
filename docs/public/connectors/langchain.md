@@ -66,7 +66,7 @@ Failures of the model call and of tools close the turn as `aborted` (see [Failur
 
 - [Connectors](index.md) — what the two connectors share
 - [PydanticAI](pydantic_ai.md) — the other connector
-- [API Reference: connectors.langchain](../reference/connectors_langchain.md) — every parameter and a runnable example
+- [API Reference: `chatomon.connectors.langchain`](../reference/connectors_langchain.md) — every parameter and a runnable example
 
 ---
 **Last Updated:** September 2026

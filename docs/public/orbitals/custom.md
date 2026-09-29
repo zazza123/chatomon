@@ -57,8 +57,8 @@ asyncio.run(main())
 
 - [Orbitals](index.md) — chaining, errors and timeouts
 - [Concepts](../concepts.md) — what each verdict does on each side
-- [API Reference: orbitals.base](../reference/orbitals_base.md) — `Orbital`, `orbital` and `FunctionOrbital`
-- [API Reference: schemas](../reference/schemas.md) — `OrbitalContext` and `Verdict`
+- [API Reference: `chatomon.orbitals.base`](../reference/orbitals_base.md) — `Orbital`, `orbital` and `FunctionOrbital`
+- [API Reference: `chatomon.schemas`](../reference/schemas.md) — `OrbitalContext` and `Verdict`
 
 ---
 **Last Updated:** September 2026
