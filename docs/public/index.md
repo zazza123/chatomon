@@ -52,7 +52,7 @@ assert result.output == "Refunds are handled by email."
 | Document | Description |
 |----------|-------------|
 | [Concepts](concepts.md) | Atoms, orbitals, verdicts and what happens during a turn |
-| [Orbitals](orbitals.md) | Writing orbitals, chaining them, error handling, the judge and the Principled Intelligence orbitals |
+| [Orbitals](orbitals/index.md) | Writing orbitals, chaining them, error handling, the judge and the Principled Intelligence orbitals |
 | [Connectors](connectors.md) | How atoms become PydanticAI agents and LangChain graphs, streaming, tools and conversations |
 | [Observability and Audit](observability.md) | Logs, OpenTelemetry spans, turn reports, content capture and compliance notes |
 | [Deployment](deployment/index.md) | Running guard models behind private endpoints |

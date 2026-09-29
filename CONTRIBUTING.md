@@ -99,7 +99,7 @@ Issues are classified along independent axes. Only `type:` is mandatory.
 |---|---|---|
 | `core` | `atom.py`, `knowledge.py`, `schemas.py`, `engine.py`, `errors.py`, `_sync.py` | `concepts.md` |
 | `connectors` | `connectors/`, `tests/contract/` | `connectors.md` |
-| `orbitals` | `orbitals/` | `orbitals.md`, `deployment/` |
+| `orbitals` | `orbitals/` | `orbitals/`, `deployment/` |
 | `observability` | `observability.py` | `observability.md` |
 | `docs` | `docs/public/`, `zensical.toml`, docstrings | — |
 | `ci` | `.github/`, `scripts/`, `tests/tooling/` | — |

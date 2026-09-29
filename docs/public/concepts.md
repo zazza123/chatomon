@@ -30,7 +30,7 @@ Every orbital returns a `Verdict` (`src/chatomon/schemas.py`):
 | `block` with neither | The atom's default refusal is sent | The atom's default refusal is sent |
 | `respond` | The orbital answers the user; the model is not called | The reply is replaced by the orbital's text |
 
-A verdict can also carry `annotations` (data for later orbitals, see [Orbitals](orbitals.md)), a short `reason` label for the audit report, and `escalate`, which marks the turn as needing a human.
+A verdict can also carry `annotations` (data for later orbitals, see [Chaining Orbitals](orbitals/index.md#chaining-orbitals)), a short `reason` label for the audit report, and `escalate`, which marks the turn as needing a human.
 
 ## A Turn, Step by Step
 
@@ -70,7 +70,7 @@ The engine that implements these rules is `Engine` in `src/chatomon/engine.py`; 
 
 ## Related Documentation
 
-- [Orbitals](orbitals.md) — writing and chaining orbitals
+- [Orbitals](orbitals/index.md) — writing and chaining orbitals
 - [Connectors](connectors.md) — how the rules map onto PydanticAI and LangChain
 - [Observability and Audit](observability.md) — what each turn records
 

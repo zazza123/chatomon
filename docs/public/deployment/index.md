@@ -19,7 +19,7 @@ Guard models such as ScopeGuard and ClaimExtractor run as separate services, usu
 
 ## Related Documentation
 
-- [Orbitals](../orbitals.md) — the Principled Intelligence orbitals
+- [Principled Intelligence Orbitals](../orbitals/principled.md) — the Principled Intelligence orbitals
 - [Home](../index.md) — documentation overview
 
 ---

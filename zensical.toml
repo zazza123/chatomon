@@ -9,7 +9,12 @@ docs_dir = "docs/public"
 nav = [
   { "Home" = "index.md" },
   { "Concepts" = "concepts.md" },
-  { "Orbitals" = "orbitals.md" },
+  { "Orbitals" = [
+    { "Overview" = "orbitals/index.md" },
+    { "Writing your own" = "orbitals/custom.md" },
+    { "JudgeOrbital" = "orbitals/judge.md" },
+    { "Principled Intelligence" = "orbitals/principled.md" },
+  ] },
   { "Connectors" = "connectors.md" },
   { "Observability and audit" = "observability.md" },
   { "Deployment" = [
