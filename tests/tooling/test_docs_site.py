@@ -1,5 +1,6 @@
 """The docs site: every page is in the nav and every public module has a reference page."""
 
+import importlib
 import pkgutil
 import re
 import tomllib
@@ -22,9 +23,20 @@ def nav_pages(entries):
                 yield target
 
 
+def is_public(name):
+    return not any(part.startswith("_") for part in name.split("."))
+
+
 def public_modules():
     for module in pkgutil.walk_packages(chatomon.__path__, "chatomon."):
-        if not module.ispkg and not module.name.rsplit(".", 1)[-1].startswith("_"):
+        if not module.ispkg and is_public(module.name):
+            yield module.name
+
+
+def public_packages():
+    yield "chatomon"
+    for module in pkgutil.walk_packages(chatomon.__path__, "chatomon."):
+        if module.ispkg and is_public(module.name):
             yield module.name
 
 
@@ -45,3 +57,15 @@ def test_every_public_module_has_one_reference_page():
         for match in DIRECTIVE_RE.finditer(path.read_text(encoding="utf-8"))
     ]
     assert sorted(directives) == sorted(public_modules())
+
+
+def test_every_package_export_is_listed_in_the_reference_index():
+    index = (DOCS / "reference" / "index.md").read_text(encoding="utf-8")
+    section = index.split("\n## Exports\n", 1)[1].split("\n## ", 1)[0]
+    exports = {
+        f"{package}.{name}"
+        for package in public_packages()
+        for name in importlib.import_module(package).__all__
+        if name != "__version__"
+    }
+    assert {export for export in exports if f"`{export.rsplit('.', 1)[1]}`" not in section} == set()

@@ -43,9 +43,11 @@ The public API of chatomon, generated from the docstrings of the code. There is 
 |------|--------|----------|
 | [Observability](observability.md) | `chatomon.observability` | The tracer, the content policy and the hashing helpers |
 
-## Root Exports
+## Exports
 
-The names importable from `chatomon` are documented in the module that defines them:
+The packages re-export their main names, so `from chatomon import Atom` works as well as `from chatomon.atom import Atom`. Each name is documented in the module that defines it.
+
+### `chatomon`
 
 | Name | Documented in |
 |------|---------------|
@@ -54,6 +56,29 @@ The names importable from `chatomon` are documented in the module that defines t
 | `Verdict`, `OrbitalContext`, `TurnReport` | [Schemas](schemas.md) |
 | `ChatomonError`, `ChatomonConfigError`, `MissingExtraError` | [Errors](errors.md) |
 | `Orbital`, `orbital` | [Orbitals / Base](orbitals_base.md) |
+
+`chatomon.__version__` holds the installed version as a string.
+
+### `chatomon.orbitals`
+
+| Name | Documented in |
+|------|---------------|
+| `Orbital`, `orbital`, `FunctionOrbital`, `OrbitalFunction` | [Orbitals / Base](orbitals_base.md) |
+| `JudgeOrbital`, `JudgeDecision` | [Orbitals / Judge](orbitals_judge.md) |
+
+The Principled Intelligence orbitals are not re-exported: import them from `chatomon.orbitals.principled`, which needs the `principled` extra.
+
+### `chatomon.connectors`
+
+| Name | Documented in |
+|------|---------------|
+| `Connector`, `render_guidance` | [Connectors / Base](connectors_base.md) |
+
+The framework connectors are not re-exported: import them from `chatomon.connectors.pydantic_ai` or `chatomon.connectors.langchain`, which need the matching extra.
+
+## Editing the Reference
+
+These pages are generated from the docstrings in `src/chatomon/`: to change them, edit the docstrings, not the files in `docs/public/reference/`.
 
 ## Related Documentation
 
