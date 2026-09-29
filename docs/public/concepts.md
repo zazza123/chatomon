@@ -30,7 +30,7 @@ Every orbital returns a `Verdict` (`src/chatomon/schemas.py`):
 | `block` with neither | The atom's default refusal is sent | The atom's default refusal is sent |
 | `respond` | The orbital answers the user; the model is not called | The reply is replaced by the orbital's text |
 
-A verdict can also carry `annotations` (data for later orbitals, see [Orbitals](orbitals.md)), a short `reason` label for the audit report, and `escalate`, which marks the turn as needing a human.
+A verdict can also carry `annotations` (data for later orbitals, see [Chaining Orbitals](orbitals/index.md#chaining-orbitals)), a short `reason` label for the audit report, and `escalate`, which marks the turn as needing a human.
 
 ## A Turn, Step by Step
 
@@ -60,7 +60,7 @@ The engine that implements these rules is `Engine` in `src/chatomon/engine.py`; 
 
 ## Rules That Always Hold
 
-- **Blocked messages never reach the nucleus.** In the stored conversation history a blocked user message is replaced by a placeholder (`[message removed by chatomon]` by default), so it cannot resurface in later turns. (LangGraph checkpointers also keep earlier snapshots of a thread; see [Connectors](connectors.md#conversations).)
+- **Blocked messages never reach the nucleus.** In the stored conversation history a blocked user message is replaced by a placeholder (`[message removed by chatomon]` by default), so it cannot resurface in later turns. (LangGraph checkpointers also keep earlier snapshots of a thread; see [Connectors](connectors/langchain.md#conversations).)
 - **Guidance lives for one model call.** It is added to the system prompt of that call only and never stored in the history.
 - **Everything the nucleus writes goes through the output orbitals**, including a guided refusal. What an orbital writes does not.
 - **Regenerations are capped.** After `max_retries` regenerations (2 by default) the user receives the default refusal. Each regeneration carries every output guidance received so far in the turn, so the model does not reintroduce a problem already fixed.
@@ -70,8 +70,8 @@ The engine that implements these rules is `Engine` in `src/chatomon/engine.py`; 
 
 ## Related Documentation
 
-- [Orbitals](orbitals.md) — writing and chaining orbitals
-- [Connectors](connectors.md) — how the rules map onto PydanticAI and LangChain
+- [Orbitals](orbitals/index.md) — writing and chaining orbitals
+- [Connectors](connectors/index.md) — how the rules map onto PydanticAI and LangChain
 - [Observability and Audit](observability.md) — what each turn records
 
 ---

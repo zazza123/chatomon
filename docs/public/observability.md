@@ -42,7 +42,7 @@ trace.set_tracer_provider(provider)
 | `chatomon.output` (one per attempt) | the same, plus the attempt number |
 | `chatomon.orbital {name}` | orbital name, side, configuration fingerprint, verdict action and reason, whether it carried guidance, escalation, `error.type` on failure |
 
-A `JudgeOrbital` also adds the `gen_ai.evaluation.result` event of the OpenTelemetry GenAI conventions. The conventions for guardrails are still a proposal; chatomon uses its own `chatomon.*` names until they are stable. How spans nest in each framework is described in [Connectors](connectors.md).
+A `JudgeOrbital` also adds the `gen_ai.evaluation.result` event of the OpenTelemetry GenAI conventions. The conventions for guardrails are still a proposal; chatomon uses its own `chatomon.*` names until they are stable. How spans nest in each framework is described in [Connectors](connectors/index.md#at-a-glance).
 
 ## Turn Reports
 
@@ -104,7 +104,7 @@ These notes are orientation, not legal advice.
 ## Related Documentation
 
 - [Concepts](concepts.md) — the final actions of a turn
-- [Connectors](connectors.md) — span nesting per framework
+- [Connectors](connectors/index.md) — span nesting per framework
 - [API Reference](reference/index.md) — `TurnReport`, `OrbitalResult` and `ContentPolicy`
 
 ---

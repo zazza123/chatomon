@@ -98,8 +98,8 @@ Issues are classified along independent axes. Only `type:` is mandatory.
 | `area:` | Code | Documentation |
 |---|---|---|
 | `core` | `atom.py`, `knowledge.py`, `schemas.py`, `engine.py`, `errors.py`, `_sync.py` | `concepts.md` |
-| `connectors` | `connectors/`, `tests/contract/` | `connectors.md` |
-| `orbitals` | `orbitals/` | `orbitals.md`, `deployment/` |
+| `connectors` | `connectors/`, `tests/contract/` | `connectors/` |
+| `orbitals` | `orbitals/` | `orbitals/`, `deployment/` |
 | `observability` | `observability.py` | `observability.md` |
 | `docs` | `docs/public/`, `zensical.toml`, docstrings | — |
 | `ci` | `.github/`, `scripts/`, `tests/tooling/` | — |
@@ -313,7 +313,8 @@ others — is the most likely large contribution, so its path is written down:
      pinned;
    - a harness in `tests/contract/` passes the whole contract suite, using the
      framework's fake models and no network;
-   - `docs/public/connectors.md` has a section for it.
+   - `docs/public/connectors/` has a page for it, listed in the `nav` of
+     `zensical.toml`, and `docs/public/reference/` has a page for its module.
 
 What a connector may and may not do is in [`CLAUDE.md`](CLAUDE.md).
 

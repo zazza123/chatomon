@@ -19,45 +19,121 @@ chatomon is installed with the extra of the framework you use: `pip install 'cha
 
 ## Quickstart
 
-An atom with one input orbital that turns refund requests into a guided refusal. `TestModel` stands in for a real model; replace it with a model string such as `"openai:gpt-5"`.
+An atom with one input orbital that turns refund requests into a guided refusal. The fake models stand in for real ones; replace them with a model string such as `"openai:gpt-5"`.
 
-```python
-from pydantic_ai.models.test import TestModel
+=== "PydanticAI"
 
-from chatomon import Atom, Knowledge, OrbitalContext, Verdict, orbital
-from chatomon.connectors.pydantic_ai import PydanticAIConnector
+    ```python
+    from pydantic_ai.models.test import TestModel
 
-
-@orbital
-def no_refunds(ctx: OrbitalContext) -> Verdict:
-    if "refund" in ctx.message.lower():
-        return Verdict.block(guidance="Explain that refunds are handled by email.")
-    return Verdict.allow()
+    from chatomon import Atom, Knowledge, OrbitalContext, Verdict, orbital
+    from chatomon.connectors.pydantic_ai import PydanticAIConnector
 
 
-atom = Atom(
-    name="speedypack",
-    instructions="You are the customer assistant of SpeedyPack, a parcel courier.",
-    knowledge=Knowledge("Opening hours: Monday to Friday, 9-18."),
-    connector=PydanticAIConnector(TestModel(custom_output_text="Refunds are handled by email.")),
-    input_orbitals=[no_refunds],
-)
-agent = atom.build()
-result = agent.run_sync("I want a refund")
-assert result.output == "Refunds are handled by email."
-```
+    @orbital
+    def no_refunds(ctx: OrbitalContext) -> Verdict:
+        if "refund" in ctx.message.lower():
+            return Verdict.block(guidance="Explain that refunds are handled by email.")
+        return Verdict.allow()
+
+
+    atom = Atom(
+        name="speedypack",
+        instructions="You are the customer assistant of SpeedyPack, a parcel courier.",
+        knowledge=Knowledge("Opening hours: Monday to Friday, 9-18."),
+        connector=PydanticAIConnector(TestModel(custom_output_text="Refunds are handled by email.")),
+        input_orbitals=[no_refunds],
+    )
+    agent = atom.build()
+    result = agent.run_sync("I want a refund")
+    assert result.output == "Refunds are handled by email."
+    ```
+
+=== "LangChain"
+
+    ```python
+    from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from chatomon import Atom, Knowledge, OrbitalContext, Verdict, orbital
+    from chatomon.connectors.langchain import LangChainConnector
+
+
+    @orbital
+    def no_refunds(ctx: OrbitalContext) -> Verdict:
+        if "refund" in ctx.message.lower():
+            return Verdict.block(guidance="Explain that refunds are handled by email.")
+        return Verdict.allow()
+
+
+    model = GenericFakeChatModel(messages=iter([AIMessage(content="Refunds are handled by email.")]))
+    atom = Atom(
+        name="speedypack",
+        instructions="You are the customer assistant of SpeedyPack, a parcel courier.",
+        knowledge=Knowledge("Opening hours: Monday to Friday, 9-18."),
+        connector=LangChainConnector(model),
+        input_orbitals=[no_refunds],
+    )
+    agent = atom.build()
+    result = agent.invoke({"messages": [HumanMessage(content="I want a refund")]})
+    assert result["messages"][-1].content == "Refunds are handled by email."
+    ```
 
 ## Table of Contents
 
-| Document | Description |
-|----------|-------------|
-| [Concepts](concepts.md) | Atoms, orbitals, verdicts and what happens during a turn |
-| [Orbitals](orbitals.md) | Writing orbitals, chaining them, error handling, the judge and the Principled Intelligence orbitals |
-| [Connectors](connectors.md) | How atoms become PydanticAI agents and LangChain graphs, streaming, tools and conversations |
-| [Observability and Audit](observability.md) | Logs, OpenTelemetry spans, turn reports, content capture and compliance notes |
-| [Deployment](deployment/index.md) | Running guard models behind private endpoints |
-| [API Reference](reference/index.md) | The complete public API, generated from the code |
-| [Changelog](changelog.md) | Where release notes are published and how versions are numbered |
+<div class="grid cards" markdown>
+
+-   :lucide-atom:{ .lg .middle } __Concepts__
+
+    ---
+
+    Atoms, orbitals, verdicts and what happens to a message during a turn.
+
+    [:lucide-arrow-right: Concepts](concepts.md)
+
+-   :lucide-shield-check:{ .lg .middle } __Orbitals__
+
+    ---
+
+    Chaining and failures, writing your own, the LLM judge and the Principled Intelligence guard models.
+
+    [:lucide-arrow-right: Orbitals](orbitals/index.md)
+
+-   :lucide-plug:{ .lg .middle } __Connectors__
+
+    ---
+
+    How atoms become PydanticAI agents and LangChain graphs: conversations, streaming, tools and tracing.
+
+    [:lucide-arrow-right: Connectors](connectors/index.md)
+
+-   :lucide-activity:{ .lg .middle } __Observability and audit__
+
+    ---
+
+    Logs, OpenTelemetry spans, turn reports, content capture and compliance notes.
+
+    [:lucide-arrow-right: Observability](observability.md)
+
+-   :lucide-server:{ .lg .middle } __Deployment__
+
+    ---
+
+    Running guard models behind private, authenticated endpoints.
+
+    [:lucide-arrow-right: Deployment](deployment/index.md)
+
+-   :lucide-book-open:{ .lg .middle } __API reference__
+
+    ---
+
+    Every public module, generated from the code, with runnable examples.
+
+    [:lucide-arrow-right: API reference](reference/index.md)
+
+</div>
+
+The [Changelog](changelog.md) explains where release notes are published and how versions are numbered.
 
 ## Key Components
 

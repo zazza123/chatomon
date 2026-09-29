@@ -68,7 +68,7 @@ The opt-in tests in `tests/integration/test_scope_guard.py` exercise a real depl
 
 ## Related Documentation
 
-- [Orbitals](../orbitals.md) — ScopeGuard's class-to-verdict mapping
+- [Principled Intelligence Orbitals](../orbitals/principled.md) — ScopeGuard's class-to-verdict mapping
 - [Observability and Audit](../observability.md) — how guard failures are recorded
 - [Deployment](index.md) — section overview
 
