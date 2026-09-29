@@ -16,7 +16,27 @@ nav = [
     { "Overview" = "deployment/index.md" },
     { "ScopeGuard on Cloud Run" = "deployment/cloud_run.md" },
   ] },
-  { "API reference" = "reference/index.md" },
+  { "API reference" = [
+    { "Overview" = "reference/index.md" },
+    { "Core" = [
+      { "Atom" = "reference/atom.md" },
+      { "Knowledge" = "reference/knowledge.md" },
+      { "Schemas" = "reference/schemas.md" },
+      { "Errors" = "reference/errors.md" },
+    ] },
+    { "Engine" = "reference/engine.md" },
+    { "Orbitals" = [
+      { "Base" = "reference/orbitals_base.md" },
+      { "Judge" = "reference/orbitals_judge.md" },
+      { "Principled" = "reference/orbitals_principled.md" },
+    ] },
+    { "Connectors" = [
+      { "Base" = "reference/connectors_base.md" },
+      { "PydanticAI" = "reference/connectors_pydantic_ai.md" },
+      { "LangChain" = "reference/connectors_langchain.md" },
+    ] },
+    { "Observability" = "reference/observability.md" },
+  ] },
   { "Changelog" = "changelog.md" },
   { "Contributing" = "https://github.com/zazza123/chatomon/blob/main/CONTRIBUTING.md" },
 ]
