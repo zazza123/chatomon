@@ -1,4 +1,4 @@
-/* chatomon theme: the "Ambra guardrail" palette and Fredoka headings. */
+/* chatomon theme: the "Ambra guardrail" palette, Fredoka headings, the home hero. */
 
 @font-face {
   font-family: "Fredoka";
@@ -101,4 +101,47 @@
 [data-md-color-scheme="default"] .md-logo img[src$="#only-dark"],
 [data-md-color-scheme="slate"] .md-logo img[src$="#only-light"] {
   display: none;
+}
+
+/* Home page hero: the animated wordmark next to the mascot */
+.cm-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.md-typeset .cm-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem 2rem;
+  margin-block: 0.5rem 2rem;
+}
+
+.md-typeset .cm-hero__text {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+
+.md-typeset .cm-hero__word {
+  display: block;
+  width: 100%;
+  max-width: 30rem;
+  height: auto;
+}
+
+.md-typeset .cm-hero__tagline {
+  margin: 0.75rem 0 0;
+  font-size: 1rem;
+  color: var(--md-default-fg-color--light);
+}
+
+.md-typeset .cm-hero__mascot {
+  width: 9rem;
+  height: auto;
+  flex: none;
 }

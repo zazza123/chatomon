@@ -1,4 +1,14 @@
-# chatomon
+# chatomon { .cm-visually-hidden }
+
+<div class="cm-hero">
+  <div class="cm-hero__text">
+    <img class="cm-hero__word" src="assets/brand/hero-light.svg#only-light" alt="chatomon">
+    <img class="cm-hero__word" src="assets/brand/hero-dark.svg#only-dark" alt="chatomon">
+    <p class="cm-hero__tagline">Declare a chat agent once, wrap it in orbitals, and build it into the framework you already use.</p>
+  </div>
+  <img class="cm-hero__mascot" src="assets/brand/mascot/hello-light.svg#only-light" alt="The chatomon mascot waving hello">
+  <img class="cm-hero__mascot" src="assets/brand/mascot/hello-dark.svg#only-dark" alt="The chatomon mascot waving hello">
+</div>
 
 ## Overview
 

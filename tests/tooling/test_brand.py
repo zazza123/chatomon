@@ -12,6 +12,7 @@ CONFIG = tomllib.loads((ROOT / "zensical.toml").read_text(encoding="utf-8"))["pr
 DOCS = ROOT / CONFIG["docs_dir"]
 BRAND = DOCS / "assets" / "brand"
 SVG_NS = "{http://www.w3.org/2000/svg}"
+IMAGE_RE = re.compile(r'(?:src|srcset)="(?P<path>[^"#]+)')
 ASSET_RE = re.compile(r"'(?P<path>assets/[^']+)'")
 
 
@@ -58,3 +59,10 @@ def test_self_hosted_fonts_ship_their_license():
     fonts = DOCS / "assets" / "fonts"
     assert list(fonts.glob("*.woff2"))
     assert (fonts / "OFL.txt").is_file()
+
+
+def test_home_page_images_exist():
+    home = (DOCS / "index.md").read_text(encoding="utf-8")
+    images = [match["path"] for match in IMAGE_RE.finditer(home)]
+    assert images
+    assert [image for image in images if not (DOCS / image).is_file()] == []
