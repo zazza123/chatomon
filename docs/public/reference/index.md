@@ -2,7 +2,7 @@
 
 ## Overview
 
-The public API of chatomon, generated from the docstrings of the code. There is one page per module; each starts with a summary of its members, and every class and function includes its parameters, return values, raised exceptions and, for the main entry points, runnable examples.
+The public API of chatomon, generated from the docstrings of the code. There is one page per public module or connector package; each starts with a summary of its members, and every class and function includes its parameters, return values, raised exceptions and, for the main entry points, runnable examples.
 
 ## Table of Contents
 
@@ -36,6 +36,7 @@ The public API of chatomon, generated from the docstrings of the code. There is 
 | [Base](connectors_base.md) | `chatomon.connectors.base` | The `Connector` extension point and `render_guidance` |
 | [PydanticAI](connectors_pydantic_ai.md) | `chatomon.connectors.pydantic_ai` | `PydanticAIConnector` (extra `pydantic-ai`) |
 | [LangChain](connectors_langchain.md) | `chatomon.connectors.langchain` | `LangChainConnector` (extra `langchain`) |
+| [Microsoft Agent Framework](connectors_maf.md) | `chatomon.connectors.maf` | `MAFConnector` and `MAFFoundryConnector` (extras `maf`, `maf-foundry`) |
 
 ### Observability
 
@@ -74,7 +75,13 @@ The Principled Intelligence orbitals are not re-exported: import them from `chat
 |------|---------------|
 | `Connector`, `render_guidance` | [Connectors / Base](connectors_base.md) |
 
-The framework connectors are not re-exported: import them from `chatomon.connectors.pydantic_ai` or `chatomon.connectors.langchain`, which need the matching extra.
+The framework connectors are not re-exported: import them from `chatomon.connectors.pydantic_ai`, `chatomon.connectors.langchain`, or `chatomon.connectors.maf`, which need the matching extra.
+
+### `chatomon.connectors.maf`
+
+| Name | Documented in |
+|------|---------------|
+| `MAFConnector`, `MAFFoundryConnector` | [Connectors / Microsoft Agent Framework](connectors_maf.md) |
 
 ## Editing the Reference
 

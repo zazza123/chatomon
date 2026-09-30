@@ -81,4 +81,5 @@ body:
       options:
         - "framework:pydantic-ai — PydanticAI"
         - "framework:langchain — LangChain / LangGraph"
+        - "framework:maf — Microsoft Agent Framework"
         - "None / don't know"

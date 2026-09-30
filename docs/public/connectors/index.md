@@ -4,7 +4,7 @@
 
 ![](../assets/brand/mascot/reply-light.svg#only-light){ .cm-page-mascot }
 ![](../assets/brand/mascot/reply-dark.svg#only-dark){ .cm-page-mascot }
-A connector builds an atom into a native agent of one framework and installs chatomon's checks as the outermost layer of that agent. Both connectors implement the same rules and pass the same contract test suite (`tests/contract/`); this page covers what they share, and each framework has its own page for conversations, streaming and tracing.
+A connector builds an atom into a native agent of one framework and installs chatomon's checks as the outermost layer of that agent. The connectors implement the same engine rules and pass the shared contract test suite (`tests/contract/`); each framework has its own page for conversations, streaming and tracing.
 
 ## Table of Contents
 
@@ -12,6 +12,7 @@ A connector builds an atom into a native agent of one framework and installs cha
 |----------|-------------|
 | [PydanticAI](pydantic_ai.md) | `PydanticAIConnector`: the agent it builds, message history, streaming limits, tracing |
 | [LangChain / LangGraph](langchain.md) | `LangChainConnector`: the graph it builds, checkpointers, streaming, `parent_span`, human in the loop |
+| [Microsoft Agent Framework](maf.md) | `MAFConnector` and `MAFFoundryConnector`: local sessions, Foundry, streaming limits |
 
 ## What "Native" Means
 
@@ -21,6 +22,8 @@ A connector builds an atom into a native agent of one framework and installs cha
 |-----------|-------------------|-------------------------------|
 | [`PydanticAIConnector`](pydantic_ai.md) | `pydantic_ai.Agent` with text output | `pydantic_ai.Agent` |
 | [`LangChainConnector`](langchain.md) | LangGraph `CompiledStateGraph` from `create_agent` | `langchain.agents.create_agent` |
+| [`MAFConnector`](maf.md) | `agent_framework.Agent` | `agent_framework.Agent` |
+| [`MAFFoundryConnector`](maf.md) | `agent_framework.foundry.FoundryAgent` | `FoundryAgent` |
 
 chatomon sets the prompt and name from the atom, so the arguments that would conflict are refused with `ChatomonConfigError` (listed on each framework's page). Your own capabilities or middleware run inside chatomon's layer.
 
@@ -36,18 +39,22 @@ flowchart TB
         L1[before_agent<br/>run input chain, redact by message id, jump to end on reply] --> L2[wrap_model_call<br/>add guidance, output chain, regenerations]
         L2 --> L3[after_agent<br/>finish the turn, clear private state]
     end
+    subgraph MAF
+        M1[AgentMiddleware<br/>run input chain, redact blocked message] --> M2[ChatMiddleware<br/>guidance, final output checks, regenerations]
+        M2 --> M3[local session history and turn report]
+    end
 ```
 
-In both frameworks the output checks and regenerations happen inside the hook that wraps the model call: the framework only ever sees the approved reply, so rejected drafts never enter the history and guidance is never stored. Both connectors support the async and the sync API of their framework (`run`/`run_sync`, `ainvoke`/`invoke`); sync hooks run the async engine through `chatomon._sync.run_sync`, which also works when an event loop is already running.
+Output checks and regenerations happen around the model call, before approved replies enter conversation history. Guidance is added to the current model request and is not stored. PydanticAI and LangChain support both their native async and sync APIs; MAF exposes an async native API. Both MAF connectors support checked output on non-streaming runs.
 
 ## At a Glance
 
-| | PydanticAI | LangChain |
-|--|-----------|-----------|
-| Where the history lives | The `message_history` you pass to the next run | The graph's checkpointer |
-| Conversation id in reports | The run's `conversation_id` | The `thread_id` of the run config |
-| Streaming with output orbitals | `run_stream` is refused | Only the approved reply is streamed |
-| Span nesting | Automatic | Through `parent_span` |
+| | PydanticAI | LangChain | MAF |
+|--|-----------|-----------|-----|
+| Where the history lives | The `message_history` you pass to the next run | The graph's checkpointer | Local `AgentSession` history provider, with `store=False` |
+| Conversation id in reports | The run's `conversation_id` | The `thread_id` of the run config | The local `session_id` |
+| Streaming with output orbitals | `run_stream` is refused | Only the approved reply is streamed | `run(..., stream=True)` is refused |
+| Span nesting | Automatic | Through `parent_span` | Automatic |
 
 ## Tools
 
@@ -55,7 +62,7 @@ Tools are declared on the native agent as usual. Model responses that call tools
 
 ## Judges and Model Resolution
 
-A `JudgeOrbital` without its own connector calls its model through the atom's connector. Each connector has a `resolve_model` setting that maps the judge's model id to a framework model; by default PydanticAI uses the id as a model string and LangChain calls `init_chat_model` with it.
+A `JudgeOrbital` without its own connector calls its model through the atom's connector. PydanticAI and LangChain accept `resolve_model`; by default PydanticAI uses the ID as a model string and LangChain calls `init_chat_model` with it. MAF needs a `resolve_client` callback because its core package does not resolve model IDs to chat clients.
 
 ## Failures
 
@@ -68,6 +75,7 @@ If the model or the framework raises during a turn, the connector closes the tur
 | `Connector` | `src/chatomon/connectors/base.py` | The extension point every connector implements |
 | `PydanticAIConnector` | `src/chatomon/connectors/pydantic_ai.py` | Builds atoms into PydanticAI agents |
 | `LangChainConnector` | `src/chatomon/connectors/langchain.py` | Builds atoms into LangChain agents (LangGraph graphs) |
+| `MAFConnector`, `MAFFoundryConnector` | `src/chatomon/connectors/maf/` | Build atoms into MAF core and Foundry agents |
 | Contract suite | `tests/contract/` | The rules every connector must pass |
 
 ## Related Documentation

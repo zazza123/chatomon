@@ -12,7 +12,7 @@ A chatomon agent is an **atom**: a nucleus that answers the user, surrounded by 
 |-------|-----------|-------|
 | Instructions | The definition of the nucleus: who it is, what it does, what it must not do. Free text, used only by the nucleus. | `Atom(instructions=...)` |
 | Knowledge | Plain text the nucleus draws from, appended to its prompt in a `<knowledge>` section. Retrieval (RAG) is planned for a later version. | `Knowledge` in `src/chatomon/knowledge.py` |
-| Connector | The framework and model the atom runs on. | `PydanticAIConnector`, `LangChainConnector` |
+| Connector | The framework and model the atom runs on. | `PydanticAIConnector`, `LangChainConnector`, `MAFConnector`, `MAFFoundryConnector` |
 | Input orbitals | Checks run, in order, on the user message before the nucleus sees it. | `Atom(input_orbitals=[...])` |
 | Output orbitals | Checks run, in order, on the nucleus reply before the user sees it. | `Atom(output_orbitals=[...])` |
 
@@ -73,7 +73,7 @@ The engine that implements these rules is `Engine` in `src/chatomon/engine.py`; 
 ## Related Documentation
 
 - [Orbitals](orbitals/index.md) — writing and chaining orbitals
-- [Connectors](connectors/index.md) — how the rules map onto PydanticAI and LangChain
+- [Connectors](connectors/index.md) — how the rules map onto PydanticAI, LangChain and MAF
 - [Observability and Audit](observability.md) — what each turn records
 
 ---

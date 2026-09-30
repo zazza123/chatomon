@@ -60,6 +60,9 @@
 - name: "framework:langchain"
   color: "f9d0c4"
   description: "LangChain and LangGraph"
+- name: "framework:maf"
+  color: "f9d0c4"
+  description: "Microsoft Agent Framework"
 
 # ─── priority: — at most one; absent means normal ────────────────────────────
 - name: "priority:high"

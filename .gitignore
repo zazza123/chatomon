@@ -6,6 +6,7 @@ __pycache__/
 .cache/
 dist/
 site/
+gitignore/
 .DS_Store
 
 # Internal design documents (specs, plans, spikes): kept local, never published

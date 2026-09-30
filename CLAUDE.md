@@ -1,6 +1,6 @@
 # chatomon
 
-chatomon ("chat" + "atom") is a Python library to declare a chat agent — an **Atom** (instructions, knowledge, connector) — wrapped by ordered chains of **Orbitals** (input/output guardrails), and build it into a **native** agent of existing frameworks (PydanticAI, LangChain/LangGraph; Google ADK next). It is not a chatbot framework: it never runs the agent itself.
+chatomon ("chat" + "atom") is a Python library to declare a chat agent — an **Atom** (instructions, knowledge, connector) — wrapped by ordered chains of **Orbitals** (input/output guardrails), and build it into a **native** agent of existing frameworks (PydanticAI, LangChain/LangGraph, Microsoft Agent Framework; Google ADK next). It is not a chatbot framework: it never runs the agent itself.
 
 Architecture invariants are stated in this file. The maintainer keeps the design spec outside the repository; any rule a contributor must follow lives here or in `CONTRIBUTING.md`.
 
@@ -16,7 +16,7 @@ Architecture invariants are stated in this file. The maintainer keeps the design
 
 - The engine (`engine.py`) holds all orbital-chain semantics and is pure Python — no framework imports. Connectors only translate `InputDecision`/`OutputDecision` into native hooks.
 - `schemas.py` imports nothing from chatomon.
-- Framework and `orbitals` imports live only in `connectors/<framework>.py` and `orbitals/principled.py`, imported lazily; a missing extra raises an error naming the extra to install.
+- Framework and `orbitals` imports live only in `connectors/<framework>.py` or `connectors/<framework>/` and `orbitals/principled.py`, imported lazily; a missing extra raises an error naming the extra to install.
 - `Orbital` and `Connector` are the only abstract extension points. Don't add abstractions without a second concrete use.
 - Never derive an orbital's definition/config from the Atom. Sharing (e.g. the same `Knowledge` given to a judge) is always explicit.
 - Defaults are fail-closed (`on_error="block"`) and content-free (`capture_content="none"`).

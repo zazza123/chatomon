@@ -29,7 +29,7 @@ def is_public(name):
 
 def public_modules():
     for module in pkgutil.walk_packages(chatomon.__path__, "chatomon."):
-        if not module.ispkg and is_public(module.name):
+        if is_public(module.name) and (not module.ispkg or len(module.name.split(".")) > 2):
             yield module.name
 
 
