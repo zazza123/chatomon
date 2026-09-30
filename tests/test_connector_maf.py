@@ -298,6 +298,15 @@ class FakeProjectClient:
         return AsyncOpenAI(api_key="fake", base_url="https://example.invalid")
 
 
+class _CaptureChatRequest(ChatMiddleware):
+    def __init__(self) -> None:
+        self.seen: list[tuple[tuple[str, str], ...]] = []
+
+    async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        self.seen.append(tuple((message.role, message.text) for message in context.messages))
+        await call_next()
+
+
 def replace_transport(client: Any, scripted: ScriptedMAFClient) -> None:
     client._inner_get_response = scripted._inner_get_response
 
@@ -350,19 +359,56 @@ async def test_foundry_agent_input_checks_and_local_history_without_network():
     assert [report.final_action for report in reports] == ["blocked", "answered"]
 
 
-def test_foundry_raw_client_type_is_rejected():
-    atom = Atom(
+async def test_foundry_agent_sends_atom_instructions_as_developer_input():
+    observer = _CaptureChatRequest()
+    input_guard = ScriptedOrbital(
+        Verdict.allow(guidance="Only for the first turn."), Verdict.allow(), name="input_guard"
+    )
+    agent = Atom(
         name="test",
         instructions="Be useful.",
         connector=MAFFoundryConnector(
             project_client=FakeProjectClient(),
             agent_name="remote-agent",
             agent_version="1",
-            client_type=RawFoundryAgentChatClient,
+            middleware=[observer],
         ),
+        input_orbitals=[input_guard],
+    ).build()
+    scripted = ScriptedMAFClient(["one", "two"], [])
+    replace_transport(agent.client, scripted)
+    session = agent.create_session()
+    assert (await agent.run("first", session=session)).text == "one"
+    assert (await agent.run("second", session=session)).text == "two"
+
+    assert agent.default_options["instructions"] == "Be useful."
+    assert all("instructions" not in options for options in scripted.options_seen)
+    assert all(options["store"] is False for options in scripted.options_seen)
+    assert observer.seen[0][0][0] == observer.seen[1][0][0] == "developer"
+    assert "Be useful." in observer.seen[0][0][1]
+    assert "Only for the first turn." in observer.seen[0][0][1]
+    assert "Only for the first turn." not in observer.seen[1][0][1]
+
+    wire = await cast(Any, agent.client)._prepare_options(
+        [Message("developer", ["Be useful."]), Message("user", ["third"])],
+        {"store": False},
     )
-    with pytest.raises(ChatomonConfigError, match="ChatMiddlewareLayer"):
-        atom.build()
+    assert "instructions" not in wire
+    assert [item["role"] for item in wire["input"]] == ["developer", "user"]
+    assert wire["extra_body"]["agent_reference"]["name"] == "remote-agent"
+
+    with pytest.raises(ChatomonConfigError, match="instructions are set by the atom"):
+        await agent.run("third", session=session, options={"instructions": "Override"})
+
+
+def test_foundry_raw_client_type_is_rejected():
+    with pytest.raises(ChatomonConfigError, match="sets client_type"):
+        MAFFoundryConnector(
+            project_client=FakeProjectClient(),
+            agent_name="remote-agent",
+            agent_version="1",
+            client_type=RawFoundryAgentChatClient,
+        )
 
 
 def test_preconfigured_client_middleware_cannot_rewrite_checked_output():

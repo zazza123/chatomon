@@ -237,8 +237,9 @@ class _ChatomonAgentMiddleware(AgentMiddleware):
 class _ChatomonChatMiddleware(ChatMiddleware):
     """Check final chat replies before MAF persists the local session history."""
 
-    def __init__(self, engine: Engine) -> None:
+    def __init__(self, engine: Engine, *, foundry_instructions: str | None = None) -> None:
         self._engine = engine
+        self._foundry_instructions = foundry_instructions
 
     async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
         current = context.kwargs.pop(_TURN_KEY, None)
@@ -254,10 +255,24 @@ class _ChatomonChatMiddleware(ChatMiddleware):
             return
 
         base_options = dict(context.options or {})
+        base_messages = tuple(context.messages)
+        if self._foundry_instructions is not None:
+            runtime_instructions = base_options.pop("instructions", None)
+            if runtime_instructions not in (None, self._foundry_instructions):
+                raise ChatomonConfigError(
+                    "FoundryAgent instructions are set by the atom; "
+                    "do not override them in run options"
+                )
         while True:
-            context.options = _with_guidance(
-                base_options, (*current.decision.guidance, *current.output_guidance)
-            )
+            guidance = (*current.decision.guidance, *current.output_guidance)
+            if self._foundry_instructions is None:
+                context.options = _with_guidance(base_options, guidance)
+            else:
+                instruction_text = self._foundry_instructions
+                if guidance:
+                    instruction_text += f"\n\n{render_guidance(guidance)}"
+                context.options = _with_guidance(base_options, ())
+                context.messages = [Message("developer", [instruction_text]), *base_messages]
             await call_next()
             if context.stream:
                 return
