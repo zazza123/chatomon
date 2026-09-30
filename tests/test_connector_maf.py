@@ -380,6 +380,8 @@ def test_preconfigured_client_middleware_cannot_rewrite_checked_output():
 
 def test_missing_core_is_reported_as_maf_extra(monkeypatch):
     monkeypatch.delitem(sys.modules, "chatomon.connectors.maf", raising=False)
+    monkeypatch.delitem(sys.modules, "chatomon.connectors.maf._core", raising=False)
+    monkeypatch.delitem(sys.modules, "chatomon.connectors.maf._shared", raising=False)
     monkeypatch.setitem(sys.modules, "agent_framework", None)
     real_find_spec = importlib.util.find_spec
     monkeypatch.setattr(

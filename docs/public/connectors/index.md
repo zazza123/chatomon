@@ -75,7 +75,7 @@ If the model or the framework raises during a turn, the connector closes the tur
 | `Connector` | `src/chatomon/connectors/base.py` | The extension point every connector implements |
 | `PydanticAIConnector` | `src/chatomon/connectors/pydantic_ai.py` | Builds atoms into PydanticAI agents |
 | `LangChainConnector` | `src/chatomon/connectors/langchain.py` | Builds atoms into LangChain agents (LangGraph graphs) |
-| `MAFConnector`, `MAFFoundryConnector` | `src/chatomon/connectors/maf.py` | Build atoms into MAF core and Foundry agents |
+| `MAFConnector`, `MAFFoundryConnector` | `src/chatomon/connectors/maf/` | Build atoms into MAF core and Foundry agents |
 | Contract suite | `tests/contract/` | The rules every connector must pass |
 
 ## Related Documentation

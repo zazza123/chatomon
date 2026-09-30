@@ -187,7 +187,7 @@ The [Changelog](changelog.md) explains where release notes are published and how
 | `Engine` | `src/chatomon/engine.py` | Runs the orbital chains and turns verdicts into decisions |
 | `PydanticAIConnector` | `src/chatomon/connectors/pydantic_ai.py` | Builds atoms into PydanticAI agents |
 | `LangChainConnector` | `src/chatomon/connectors/langchain.py` | Builds atoms into LangChain agents (LangGraph graphs) |
-| `MAFConnector`, `MAFFoundryConnector` | `src/chatomon/connectors/maf.py` | Build atoms into MAF core and Foundry agents |
+| `MAFConnector`, `MAFFoundryConnector` | `src/chatomon/connectors/maf/` | Build atoms into MAF core and Foundry agents |
 | `JudgeOrbital` | `src/chatomon/orbitals/judge.py` | An LLM that judges messages with its own instructions |
 | `ScopeGuardOrbital`, `ClaimExtractorOrbital` | `src/chatomon/orbitals/principled.py` | Principled Intelligence guard models as orbitals |
 

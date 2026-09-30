@@ -77,6 +77,12 @@ The Principled Intelligence orbitals are not re-exported: import them from `chat
 
 The framework connectors are not re-exported: import them from `chatomon.connectors.pydantic_ai`, `chatomon.connectors.langchain`, or `chatomon.connectors.maf`, which need the matching extra.
 
+### `chatomon.connectors.maf`
+
+| Name | Documented in |
+|------|---------------|
+| `MAFConnector`, `MAFFoundryConnector` | [Connectors / Microsoft Agent Framework](connectors_maf.md) |
+
 ## Editing the Reference
 
 These pages are generated from the docstrings in `src/chatomon/`: to change them, edit the docstrings, not the files in `docs/public/reference/`.
