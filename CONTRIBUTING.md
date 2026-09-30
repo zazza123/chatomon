@@ -89,7 +89,7 @@ Issues are classified along independent axes. Only `type:` is mandatory.
 |---|---|---|
 | `type:` | exactly 1 on open issues | `feat` · `fix` · `refactor` · `docs` · `chore` · `epic` |
 | `area:` | 0–N | `core` · `connectors` · `orbitals` · `observability` · `docs` · `ci` |
-| `framework:` | 0–N | `pydantic-ai` · `langchain` |
+| `framework:` | 0–N | `pydantic-ai` · `langchain` · `maf` |
 | `priority:` | 0–1 | `high` · `low` — absent means normal |
 | `status:` | 0–1 | `needs-triage` · `needs-info` · `blocked` |
 
