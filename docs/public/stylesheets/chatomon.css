@@ -174,3 +174,21 @@
   width: 9rem;
   height: auto;
 }
+
+/* Footer credit: the Andromeda Labs mark at its 24 px minimum size, then the name */
+.md-copyright .cm-credit {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  vertical-align: middle;
+}
+
+.md-copyright .cm-credit img {
+  width: 24px;
+  height: 24px;
+}
+
+[data-md-color-scheme="default"] .md-copyright .cm-credit img[src$="#only-dark"],
+[data-md-color-scheme="slate"] .md-copyright .cm-credit img[src$="#only-light"] {
+  display: none;
+}

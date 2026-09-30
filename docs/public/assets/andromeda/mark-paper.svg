@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="-110.25280345913063 -110.25280345913063 220.50560691826126 220.50560691826126" role="img" aria-label="Andromeda">
+  <title>Andromeda — Mark</title>
+  
+  <g fill="none" stroke="#F6F0E6" stroke-width="18" stroke-linecap="butt">
+    <line x1="0" y1="-57.735" x2="-67.5" y2="59.178"></line>
+    <line x1="-50" y1="28.868" x2="85" y2="28.868"></line>
+    <line x1="50" y1="28.868" x2="-17.5" y2="-88.046"></line>
+  </g>
+</svg>

@@ -87,3 +87,12 @@ def test_markdown_images_exist():
     ]
     assert images
     assert [(page.name, image) for page, image in images if not image.is_file()] == []
+
+
+def test_footer_credits_andromeda_labs():
+    footer = (ROOT / CONFIG["theme"]["custom_dir"] / "partials" / "copyright.html").read_text(
+        encoding="utf-8"
+    )
+    assert 'href="https://andromedalabs.io"' in footer
+    assert "Designed and built by" in footer
+    assert "Andromeda Labs" in footer

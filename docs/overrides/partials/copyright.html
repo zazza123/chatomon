@@ -1,0 +1,19 @@
+{#-
+  Zensical's footer credit, followed by the credit to the studio behind chatomon.
+  Replaces Zensical's partials/copyright.html.
+-#}
+<div class="md-copyright">
+  {% if config.copyright %}
+    <div class="md-copyright__highlight">
+      {{ config.copyright }}
+    </div>
+  {% endif %}
+  {% if not config.extra.generator == false %}
+    Made with <a href="https://zensical.org/" target="_blank" rel="noopener">Zensical</a> ·
+  {% endif %}
+  Designed and built by
+  <a class="cm-credit" href="https://andromedalabs.io" target="_blank" rel="noopener">
+    <img src="{{ 'assets/andromeda/mark-ink.svg' | url }}#only-light" alt="" width="24" height="24">
+    <img src="{{ 'assets/andromeda/mark-paper.svg' | url }}#only-dark" alt="" width="24" height="24">
+    <span>Andromeda Labs</span></a>
+</div>
