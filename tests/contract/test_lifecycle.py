@@ -18,6 +18,8 @@ async def test_model_error_aborts_the_turn_and_the_next_turn_works(harness):
 
 
 def test_sync_api(harness):
+    if not harness.supports_sync:
+        pytest.skip("MAF exposes only an asynchronous native run API")
     agent, reports = build_agent(harness, ["Hi!"], output_orbitals=[ScriptedOrbital(name="out")])
     assert harness.ask_sync(agent, "hello") == "Hi!"
     assert reports[0].final_action == "answered"

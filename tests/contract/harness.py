@@ -38,6 +38,7 @@ class Harness(ABC):
     """Drives one framework through the same scenarios."""
 
     name: str
+    supports_sync: bool = True
 
     @property
     @abstractmethod
