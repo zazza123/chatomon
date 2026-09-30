@@ -2,6 +2,8 @@
 
 ## Overview
 
+![](../assets/brand/mascot/block-light.svg#only-light){ .cm-page-mascot }
+![](../assets/brand/mascot/block-dark.svg#only-dark){ .cm-page-mascot }
 An orbital is a check on a user message before the nucleus sees it, or on a reply before the user sees it. Each one returns a `Verdict` that lets the message through, blocks it, or answers in place of the model (see [Verdicts](../concepts.md#verdicts)). This page explains how orbitals are chained and how failures are handled; the pages below cover writing your own and the orbitals chatomon ships with.
 
 ## Table of Contents

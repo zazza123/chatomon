@@ -145,3 +145,32 @@
   height: auto;
   flex: none;
 }
+
+/* One small, static mascot pose next to the overview of a few guide pages */
+.md-typeset .cm-page-mascot {
+  float: right;
+  width: 5.5rem;
+  height: auto;
+  margin: 0 0 1rem 1.5rem;
+}
+
+.md-typeset h2 {
+  clear: right;
+}
+
+@media screen and (max-width: 44.9375em) {
+  .md-typeset .cm-page-mascot {
+    display: none;
+  }
+}
+
+/* 404 page: the mascot asleep */
+.md-typeset .cm-not-found {
+  text-align: center;
+  margin-block: 2rem;
+}
+
+.md-typeset .cm-not-found img {
+  width: 9rem;
+  height: auto;
+}

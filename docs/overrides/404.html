@@ -1,0 +1,12 @@
+{#-
+  The mascot sleeps on pages that do not exist. Replaces Zensical's 404.html.
+-#}
+{% extends "main.html" %}
+{% block content %}
+  <div class="cm-not-found">
+    <img src="{{ 'assets/brand/mascot/idle-light.svg' | url }}#only-light" alt="">
+    <img src="{{ 'assets/brand/mascot/idle-dark.svg' | url }}#only-dark" alt="">
+    <h1>404 - Not found</h1>
+    <p>There is nothing here. The <a href="{{ config.site_url | d('/', true) }}">home page</a> or the search can help you find what you were looking for.</p>
+  </div>
+{% endblock %}

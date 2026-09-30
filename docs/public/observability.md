@@ -2,6 +2,8 @@
 
 ## Overview
 
+![](assets/brand/mascot/think-light.svg#only-light){ .cm-page-mascot }
+![](assets/brand/mascot/think-dark.svg#only-dark){ .cm-page-mascot }
 Every turn leaves three kinds of records: log records, OpenTelemetry spans and a structured `TurnReport`. All three are content-free by default: they describe what happened (which orbital decided what, how long it took, what failed) without the text of the conversation, unless you explicitly allow it.
 
 ## Logging

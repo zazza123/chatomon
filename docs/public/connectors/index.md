@@ -2,6 +2,8 @@
 
 ## Overview
 
+![](../assets/brand/mascot/reply-light.svg#only-light){ .cm-page-mascot }
+![](../assets/brand/mascot/reply-dark.svg#only-dark){ .cm-page-mascot }
 A connector builds an atom into a native agent of one framework and installs chatomon's checks as the outermost layer of that agent. Both connectors implement the same rules and pass the same contract test suite (`tests/contract/`); this page covers what they share, and each framework has its own page for conversations, streaming and tracing.
 
 ## Table of Contents

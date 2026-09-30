@@ -13,6 +13,7 @@ DOCS = ROOT / CONFIG["docs_dir"]
 BRAND = DOCS / "assets" / "brand"
 SVG_NS = "{http://www.w3.org/2000/svg}"
 IMAGE_RE = re.compile(r'(?:src|srcset)="(?P<path>[^"#]+)')
+MD_IMAGE_RE = re.compile(r"!\[[^\]]*\]\((?P<path>[^)#\s]+)")
 RAW_MAIN = "https://raw.githubusercontent.com/zazza123/chatomon/main/"
 ASSET_RE = re.compile(r"'(?P<path>assets/[^']+)'")
 
@@ -76,3 +77,13 @@ def test_readme_images_point_to_files_on_main():
     assert images
     assert [image for image in images if not image.startswith(RAW_MAIN)] == []
     assert [image for image in images if not (ROOT / image.removeprefix(RAW_MAIN)).is_file()] == []
+
+
+def test_markdown_images_exist():
+    images = [
+        (page, page.parent / match["path"])
+        for page in DOCS.rglob("*.md")
+        for match in MD_IMAGE_RE.finditer(page.read_text(encoding="utf-8"))
+    ]
+    assert images
+    assert [(page.name, image) for page, image in images if not image.is_file()] == []
