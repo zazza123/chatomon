@@ -307,14 +307,16 @@ others — is the most likely large contribution, so its path is written down:
    option in the *Framework* menu of every issue form. A test fails if the two
    drift apart.
 3. **Done when:**
-   - `src/chatomon/connectors/<framework>.py` imports the framework lazily and
+   - `src/chatomon/connectors/<framework>.py` or
+     `src/chatomon/connectors/<framework>/` imports the framework lazily and
      raises an error naming the extra when it is missing;
    - `pyproject.toml` has an extra for it, with the framework's major version
      pinned;
    - a harness in `tests/contract/` passes the whole contract suite, using the
      framework's fake models and no network;
    - `docs/public/connectors/` has a page for it, listed in the `nav` of
-     `zensical.toml`, and `docs/public/reference/` has a page for its module.
+     `zensical.toml`, and `docs/public/reference/` has a page for its public
+     module or package.
 
 What a connector may and may not do is in [`CLAUDE.md`](CLAUDE.md).
 

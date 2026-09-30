@@ -2,7 +2,7 @@
 
 ## Overview
 
-The public API of chatomon, generated from the docstrings of the code. There is one page per module; each starts with a summary of its members, and every class and function includes its parameters, return values, raised exceptions and, for the main entry points, runnable examples.
+The public API of chatomon, generated from the docstrings of the code. There is one page per public module or connector package; each starts with a summary of its members, and every class and function includes its parameters, return values, raised exceptions and, for the main entry points, runnable examples.
 
 ## Table of Contents
 
