@@ -426,7 +426,7 @@ async def test_foundry_agent_sends_atom_instructions_as_developer_input():
     assert observer.seen[0][0][0] == observer.seen[1][0][0] == "developer"
     assert "Be useful." in observer.seen[0][0][1]
     assert "Only for the first turn." in observer.seen[0][0][1]
-    assert "Only for the first turn." not in observer.seen[1][0][1]
+    assert all("Only for the first turn." not in text for _role, text in observer.seen[1])
 
     wire = await cast(Any, agent.client)._prepare_options(
         [Message("developer", ["Be useful."]), Message("user", ["third"])],
