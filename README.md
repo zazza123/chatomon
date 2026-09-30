@@ -18,7 +18,7 @@ pip install 'chatomon[maf-foundry]'   # FoundryChatClient and FoundryAgent
 pip install 'chatomon[principled]'    # Principled Intelligence ScopeGuard / ClaimExtractor orbitals
 ```
 
-Both MAF connectors support input and output orbitals on non-streaming runs. The [MAF guide](docs/public/connectors/maf.md) covers local Foundry sessions and the live-verified PromptAgent path.
+Both MAF connectors support input and output orbitals on non-streaming runs. The [MAF guide](docs/public/connectors/maf.md) covers local Foundry sessions and connector configuration.
 
 ## Quickstart
 

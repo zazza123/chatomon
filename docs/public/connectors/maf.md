@@ -7,7 +7,7 @@ The MAF connectors build native asynchronous agents from an [Atom][chatomon.Atom
 | Connector | Native result | Output orbitals |
 |-----------|---------------|-----------------|
 | [`MAFConnector`][chatomon.connectors.maf.MAFConnector] | `agent_framework.Agent`, including one backed by `FoundryChatClient` | Supported for non-streaming runs |
-| [`MAFFoundryConnector`][chatomon.connectors.maf.MAFFoundryConnector] | `agent_framework.foundry.FoundryAgent` connected to an existing PromptAgent or HostedAgent | Supported for non-streaming runs; live continuity verified with a PromptAgent |
+| [`MAFFoundryConnector`][chatomon.connectors.maf.MAFFoundryConnector] | `agent_framework.foundry.FoundryAgent` connected to an existing PromptAgent or HostedAgent | Supported for non-streaming runs |
 
 ## Building an Agent
 
@@ -79,7 +79,7 @@ MAF's native API is asynchronous. With input orbitals only, `run(..., stream=Tru
 
 Model and middleware failures abort the turn and preserve the exception type in the report. Message content, guidance, and judge explanations are absent from chatomon logs and reports by default; the atom's `capture_content` policy controls optional capture.
 
-Output checks on `MAFFoundryConnector` were verified against a Foundry v2 PromptAgent. With `store=False`, a rejected draft was absent from the next request and reply after both replacement and regeneration; only the approved reply entered the local history. This test does not cover HostedAgent runtime sessions, which may require a remote `agent_session_id` that chatomon refuses to reuse.
+With `store=False`, output checks happen before replies enter local history. Replacement and regeneration retain only approved replies. HostedAgent runtime sessions may require a remote `agent_session_id`, which chatomon refuses to reuse.
 
 ## Related Documentation
 
