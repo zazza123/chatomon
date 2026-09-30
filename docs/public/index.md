@@ -29,7 +29,7 @@ chatomon is installed with the extra of the framework you use: `pip install 'cha
 
 ## Quickstart
 
-An atom with one input orbital that turns refund requests into a guided refusal. The fake models stand in for real ones; replace them with a model string such as `"openai:gpt-5"`.
+An atom with one input orbital that turns refund requests into a guided refusal. The PydanticAI and LangChain tabs use fake models. The MAF tab uses a configured Foundry chat client from the `maf-foundry` extra; set `FOUNDRY_PROJECT_ENDPOINT` to the full project endpoint and set `FOUNDRY_MODEL_DEPLOYMENT` before running it.
 
 === "PydanticAI"
 
@@ -92,32 +92,44 @@ An atom with one input orbital that turns refund requests into a guided refusal.
 === "Microsoft Agent Framework"
 
     ```{.python test="skip"}
+    import asyncio
+    import os
+
     from agent_framework.foundry import FoundryChatClient
-    from azure.identity import DefaultAzureCredential
+    from azure.identity.aio import DefaultAzureCredential
 
     from chatomon import Atom, OrbitalContext, Verdict, orbital
     from chatomon.connectors.maf import MAFConnector
 
 
     @orbital
-    def no_refunds(ctx: OrbitalContext) -> Verdict:
+    async def no_refunds(ctx: OrbitalContext) -> Verdict:
         if "refund" in ctx.message.lower():
             return Verdict.block(guidance="Explain that refunds are handled by email.")
         return Verdict.allow()
 
 
-    client = FoundryChatClient(
-        project_endpoint="https://example.services.ai.azure.com",
-        model="my-deployment",
-        credential=DefaultAzureCredential(),
-    )
-    agent = Atom(
-        name="speedypack",
-        instructions="You are the customer assistant of SpeedyPack.",
-        connector=MAFConnector(client),
-        input_orbitals=[no_refunds],
-    ).build()
-    reply = await agent.run("I want a refund", session=agent.create_session())
+    async def main() -> None:
+        async with DefaultAzureCredential() as credential:
+            client = FoundryChatClient(
+                project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+                model=os.environ["FOUNDRY_MODEL_DEPLOYMENT"],
+                credential=credential,
+            )
+            try:
+                agent = Atom(
+                    name="speedypack",
+                    instructions="You are the customer assistant of SpeedyPack.",
+                    connector=MAFConnector(client),
+                    input_orbitals=[no_refunds],
+                ).build()
+                reply = await agent.run("I want a refund", session=agent.create_session())
+                print(reply.text)
+            finally:
+                await client.project_client.close()
+
+
+    asyncio.run(main())
     ```
 
 ## Table of Contents

@@ -61,17 +61,35 @@ class MAFFoundryConnector(Connector["FoundryAgent"]):
 
     Examples:
         ```{.python test="skip"}
+        import asyncio
+        import os
+
         from azure.identity.aio import DefaultAzureCredential
+
         from chatomon import Atom
         from chatomon.connectors.maf import MAFFoundryConnector
 
-        atom = Atom(name="assistant", instructions="Be concise.",
+
+        async def main() -> None:
+            async with DefaultAzureCredential() as credential:
+                agent = Atom(
+                    name="assistant",
+                    instructions="Be concise.",
                     connector=MAFFoundryConnector(
-                        project_endpoint="https://example.services.ai.azure.com/api/projects/my-project",
-                        agent_name="my-agent", agent_version="1",
-                        credential=DefaultAzureCredential()))
-        agent = atom.build()
-        reply = await agent.run("Hello", session=agent.create_session())
+                        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
+                        agent_name=os.environ["FOUNDRY_AGENT_NAME"],
+                        agent_version=os.environ["FOUNDRY_AGENT_VERSION"],
+                        credential=credential,
+                    ),
+                ).build()
+                try:
+                    reply = await agent.run("Hello", session=agent.create_session())
+                    print(reply.text)
+                finally:
+                    await agent.client.close()
+
+
+        asyncio.run(main())
         ```
     """
 

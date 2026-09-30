@@ -46,15 +46,31 @@ class MAFConnector(Connector[Agent[Any]]):
 
     Examples:
         ```{.python test="skip"}
+        import asyncio
+        import os
+
         from agent_framework.openai import OpenAIChatClient
+        from openai import AsyncOpenAI
+
         from chatomon import Atom
         from chatomon.connectors.maf import MAFConnector
 
-        atom = Atom(name="assistant", instructions="Be concise.",
-                    connector=MAFConnector(OpenAIChatClient(model="gpt-4.1-mini")))
-        agent = atom.build()
-        session = agent.create_session()
-        reply = await agent.run("Hello", session=session)
+
+        async def main() -> None:
+            async with AsyncOpenAI() as provider:
+                client = OpenAIChatClient(
+                    model=os.environ["MAF_MODEL"], async_client=provider
+                )
+                agent = Atom(
+                    name="assistant",
+                    instructions="Be concise.",
+                    connector=MAFConnector(client),
+                ).build()
+                reply = await agent.run("Hello", session=agent.create_session())
+                print(reply.text)
+
+
+        asyncio.run(main())
         ```
     """
 
