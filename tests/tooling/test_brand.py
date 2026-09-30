@@ -13,6 +13,7 @@ DOCS = ROOT / CONFIG["docs_dir"]
 BRAND = DOCS / "assets" / "brand"
 SVG_NS = "{http://www.w3.org/2000/svg}"
 IMAGE_RE = re.compile(r'(?:src|srcset)="(?P<path>[^"#]+)')
+RAW_MAIN = "https://raw.githubusercontent.com/zazza123/chatomon/main/"
 ASSET_RE = re.compile(r"'(?P<path>assets/[^']+)'")
 
 
@@ -66,3 +67,12 @@ def test_home_page_images_exist():
     images = [match["path"] for match in IMAGE_RE.finditer(home)]
     assert images
     assert [image for image in images if not (DOCS / image).is_file()] == []
+
+
+def test_readme_images_point_to_files_on_main():
+    # The README is also the PyPI description, where relative paths do not resolve.
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    images = [match["path"] for match in IMAGE_RE.finditer(readme)]
+    assert images
+    assert [image for image in images if not image.startswith(RAW_MAIN)] == []
+    assert [image for image in images if not (ROOT / image.removeprefix(RAW_MAIN)).is_file()] == []
