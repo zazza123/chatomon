@@ -280,17 +280,56 @@ async def test_user_middleware_runs_inside_chatomon_checks():
     assert client.recorder[0].messages[-1] == ("user", DEFAULT_BLOCKED_PLACEHOLDER)
 
 
-def test_foundry_output_orbitals_are_blocked_before_agent_construction():
+async def test_foundry_output_orbitals_replace_before_local_history():
+    reports = []
     atom = Atom(
         name="test",
         instructions="Be useful.",
         connector=MAFFoundryConnector(
-            project_endpoint="https://example.invalid", agent_name="agent"
+            project_client=FakeProjectClient(), agent_name="agent", agent_version="1"
         ),
-        output_orbitals=[ScriptedOrbital()],
+        output_orbitals=[ScriptedOrbital(Verdict.block("Approved."), name="out")],
+        on_turn=reports.append,
     )
-    with pytest.raises(ChatomonConfigError, match="real-service test"):
-        atom.build()
+    agent = atom.build()
+    scripted = ScriptedMAFClient(["rejected draft"], [])
+    replace_transport(agent.client, scripted)
+    session = agent.create_session()
+    with pytest.raises(ChatomonConfigError, match="stream=False"):
+        await agent.run("hello", session=session, stream=True).get_final_response()
+    assert (await agent.run("hello", session=session)).text == "Approved."
+    assert visible(session.state["in_memory"]["messages"]) == [
+        ("user", "hello"),
+        ("assistant", "Approved."),
+    ]
+    assert [report.final_action for report in reports] == ["blocked"]
+
+
+async def test_foundry_output_regeneration_uses_transient_developer_guidance():
+    observer = _CaptureChatRequest()
+    out = ScriptedOrbital(Verdict.block(guidance="Answer safely."), Verdict.allow(), name="out")
+    agent = Atom(
+        name="test",
+        instructions="Be useful.",
+        connector=MAFFoundryConnector(
+            project_client=FakeProjectClient(),
+            agent_name="agent",
+            agent_version="1",
+            middleware=[observer],
+        ),
+        output_orbitals=[out],
+    ).build()
+    scripted = ScriptedMAFClient(["rejected draft", "approved answer"], [])
+    replace_transport(agent.client, scripted)
+    session = agent.create_session()
+    assert (await agent.run("hello", session=session)).text == "approved answer"
+    assert len(observer.seen) == 2
+    assert "Answer safely." not in observer.seen[0][0][1]
+    assert "Answer safely." in observer.seen[1][0][1]
+    assert visible(session.state["in_memory"]["messages"]) == [
+        ("user", "hello"),
+        ("assistant", "approved answer"),
+    ]
 
 
 class FakeProjectClient:

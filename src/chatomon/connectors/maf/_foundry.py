@@ -43,10 +43,10 @@ class MAFFoundryConnector(Connector["FoundryAgent"]):
     """Build an atom into a native `agent_framework.foundry.FoundryAgent`.
 
     This connector attaches to an agent already configured in Foundry. Input
-    orbitals are supported. Output orbitals are blocked until a real Foundry
-    test proves rejected drafts are not reused in later turns. Atom instructions
-    and knowledge are sent as a developer message because Foundry rejects the
-    request-level `instructions` field when an agent is specified.
+    and output orbitals run around its local MAF session. Atom instructions and
+    knowledge are sent as a developer message because Foundry rejects the
+    request-level `instructions` field when an agent is specified. Rejected
+    drafts are replaced or regenerated before entering local history.
 
     Args:
         resolve_client: Maps a `JudgeOrbital` model ID to a MAF chat client.
@@ -89,7 +89,7 @@ class MAFFoundryConnector(Connector["FoundryAgent"]):
         self.foundry_kwargs = _prepare_kwargs(foundry_kwargs)
 
     def build(self, atom: Atom[FoundryAgent], engine: Engine) -> FoundryAgent:
-        """Build a native Foundry agent with input checks and local history.
+        """Build a native Foundry agent with checks and local history.
 
         Args:
             atom: The validated atom.
@@ -99,15 +99,9 @@ class MAFFoundryConnector(Connector["FoundryAgent"]):
             A native Foundry agent.
 
         Raises:
-            ChatomonConfigError: If output orbitals or a raw client are supplied.
+            ChatomonConfigError: If a custom client type is supplied.
             MissingExtraError: If the Foundry extra is not installed.
         """
-        if engine.output_orbitals:
-            raise ChatomonConfigError(
-                "FoundryAgent output orbitals need a real-service test proving rejected "
-                "drafts are not reused in later turns; use MAFConnector(FoundryChatClient(...)) "
-                "for checked output"
-            )
         _require_resolver(atom, self, self.resolve_client)
         try:
             from agent_framework.foundry import FoundryAgent as NativeFoundryAgent
