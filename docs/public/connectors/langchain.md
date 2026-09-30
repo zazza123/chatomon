@@ -65,8 +65,9 @@ Failures of the model call and of tools close the turn as `aborted` (see [Failur
 
 ## Related Documentation
 
-- [Connectors](index.md) — what the two connectors share
-- [PydanticAI](pydantic_ai.md) — the other connector
+- [Connectors](index.md) — shared connector behavior
+- [PydanticAI](pydantic_ai.md) — the PydanticAI connector
+- [Microsoft Agent Framework](maf.md) — the MAF connectors
 - [API Reference: `chatomon.connectors.langchain`](../reference/connectors_langchain.md) — every parameter and a runnable example
 
 ---

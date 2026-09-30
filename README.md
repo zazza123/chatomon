@@ -5,7 +5,7 @@
   </picture>
 </h1>
 
-Declare a chat agent once — its instructions, its knowledge and the **orbitals** (input/output guardrails) around it — and build it into a native agent of the framework you already use: PydanticAI or LangChain/LangGraph.
+Declare a chat agent once — its instructions, its knowledge and the **orbitals** (input/output guardrails) around it — and build it into a native agent of the framework you already use: PydanticAI, LangChain/LangGraph, or Microsoft Agent Framework.
 
 > Status: pre-alpha, under active development.
 
@@ -13,6 +13,8 @@ Declare a chat agent once — its instructions, its knowledge and the **orbitals
 
 ```bash
 pip install 'chatomon[pydantic-ai]'   # or 'chatomon[langchain]'
+pip install 'chatomon[maf]'           # MAF core; add your provider's MAF client package
+pip install 'chatomon[maf-foundry]'   # FoundryChatClient and FoundryAgent
 pip install 'chatomon[principled]'    # Principled Intelligence ScopeGuard / ClaimExtractor orbitals
 ```
 
@@ -47,7 +49,7 @@ Replace `TestModel(...)` with a real model, for example `"openai:gpt-5"`.
 
 ## Documentation
 
-The documentation site is built with Zensical from `docs/public/`: run `uv run zensical serve` and open http://localhost:8000. It covers concepts, orbitals, connectors, observability and deployment, plus the API reference generated from the code.
+The documentation site is built with Zensical from `docs/public/`: run `uv run zensical serve` and open http://localhost:8000. It covers concepts, orbitals, [connectors including MAF](docs/public/connectors/maf.md), observability and deployment, plus the API reference generated from the code.
 
 ## Contributing
 

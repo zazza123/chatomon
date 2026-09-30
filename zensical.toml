@@ -27,6 +27,7 @@ nav = [
     { "Overview" = "connectors/index.md" },
     { "PydanticAI" = "connectors/pydantic_ai.md" },
     { "LangChain / LangGraph" = "connectors/langchain.md" },
+    { "Microsoft Agent Framework" = "connectors/maf.md" },
   ] },
   { "API reference" = [
     { "Overview" = "reference/index.md" },
@@ -46,6 +47,7 @@ nav = [
       { "Base" = "reference/connectors_base.md" },
       { "PydanticAI" = "reference/connectors_pydantic_ai.md" },
       { "LangChain" = "reference/connectors_langchain.md" },
+      { "Microsoft Agent Framework" = "reference/connectors_maf.md" },
     ] },
     { "Observability" = "reference/observability.md" },
   ] },
