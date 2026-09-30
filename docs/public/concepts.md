@@ -2,6 +2,8 @@
 
 ## Overview
 
+![](assets/brand/mascot/listen-light.svg#only-light){ .cm-page-mascot }
+![](assets/brand/mascot/listen-dark.svg#only-dark){ .cm-page-mascot }
 A chatomon agent is an **atom**: a nucleus that answers the user, surrounded by **orbitals** that check what goes in and what comes out. This page explains the pieces, what an orbital can decide, and what happens to a message during one conversation turn.
 
 ## The Atom

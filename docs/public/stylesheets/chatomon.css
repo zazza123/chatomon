@@ -1,0 +1,194 @@
+/* chatomon theme: the "Ambra guardrail" palette, Fredoka headings, the home hero. */
+
+@font-face {
+  font-family: "Fredoka";
+  src: url("../assets/fonts/Fredoka.woff2") format("woff2");
+  font-weight: 300 700;
+  font-display: swap;
+}
+
+:root {
+  --cm-ink: #1a1c26;
+  --cm-paper: #f8f8f9;
+  --cm-night: #121319;
+  --cm-snow: #efeff3;
+  --cm-amber: #f2a516;
+}
+
+[data-md-color-scheme="default"] {
+  --cm-link: #8f5a06;
+  --cm-allowed: #18794e;
+  --cm-blocked: #c93434;
+  --cm-warning: #c2410c;
+
+  --md-default-bg-color: var(--cm-paper);
+  --md-default-fg-color: #1a1c26de;
+  --md-default-fg-color--light: #1a1c268a;
+  --md-default-fg-color--lighter: #1a1c2652;
+  --md-default-fg-color--lightest: #1a1c2612;
+}
+
+[data-md-color-scheme="slate"] {
+  --cm-link: #ffc24d;
+  --cm-allowed: #4cc38a;
+  --cm-blocked: #ff7070;
+  --cm-warning: #ff8a5b;
+
+  --md-hue: 231;
+  --md-default-bg-color: var(--cm-night);
+  --md-default-bg-color--light: #121319b3;
+  --md-default-bg-color--lighter: #1213194d;
+  --md-default-bg-color--lightest: #1213191f;
+  --md-default-fg-color: #efeff3de;
+  --md-default-fg-color--light: #efeff39e;
+  --md-default-fg-color--lighter: #efeff352;
+  --md-default-fg-color--lightest: #efeff31f;
+  --md-code-bg-color: #1a1c26;
+}
+
+[data-md-color-scheme="default"],
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: var(--cm-ink);
+  --md-primary-fg-color--light: #2a2d3b;
+  --md-primary-fg-color--dark: #0f1017;
+  --md-primary-bg-color: var(--cm-snow);
+  --md-primary-bg-color--light: #efeff3b3;
+  --md-accent-fg-color: var(--cm-link);
+  --md-accent-fg-color--transparent: #f2a5161f;
+  --md-accent-bg-color: var(--cm-ink);
+  --md-accent-bg-color--light: #1a1c26b3;
+  --md-typeset-a-color: var(--cm-link);
+}
+
+/* Headings, the site name and the page title the header shows on scroll, in Fredoka */
+.md-typeset :is(h1, h2, h3),
+.md-header__topic {
+  font-family: "Fredoka", var(--md-text-font-family), sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Verdict colours on the admonitions that show them */
+.md-typeset :is(.admonition, details):is(.success, .check, .done) {
+  border-color: var(--cm-allowed);
+}
+.md-typeset :is(.success, .check, .done) > :is(.admonition-title, summary) {
+  background-color: color-mix(in srgb, var(--cm-allowed) 10%, transparent);
+}
+.md-typeset :is(.success, .check, .done) > :is(.admonition-title, summary)::before {
+  background-color: var(--cm-allowed);
+}
+.md-typeset :is(.admonition, details):is(.failure, .fail, .missing, .danger, .error) {
+  border-color: var(--cm-blocked);
+}
+.md-typeset :is(.failure, .fail, .missing, .danger, .error) > :is(.admonition-title, summary) {
+  background-color: color-mix(in srgb, var(--cm-blocked) 10%, transparent);
+}
+.md-typeset :is(.failure, .fail, .missing, .danger, .error) > :is(.admonition-title, summary)::before {
+  background-color: var(--cm-blocked);
+}
+.md-typeset :is(.admonition, details):is(.warning, .caution, .attention) {
+  border-color: var(--cm-warning);
+}
+.md-typeset :is(.warning, .caution, .attention) > :is(.admonition-title, summary) {
+  background-color: color-mix(in srgb, var(--cm-warning) 10%, transparent);
+}
+.md-typeset :is(.warning, .caution, .attention) > :is(.admonition-title, summary)::before {
+  background-color: var(--cm-warning);
+}
+
+/* The header logo rule outranks the theme's #only-light / #only-dark rule, so restate it. */
+[data-md-color-scheme="default"] .md-logo img[src$="#only-dark"],
+[data-md-color-scheme="slate"] .md-logo img[src$="#only-light"] {
+  display: none;
+}
+
+/* Home page hero: the animated wordmark next to the mascot */
+.cm-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.md-typeset .cm-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem 2rem;
+  margin-block: 0.5rem 2rem;
+}
+
+.md-typeset .cm-hero__text {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+
+.md-typeset .cm-hero__word {
+  display: block;
+  width: 100%;
+  max-width: 30rem;
+  height: auto;
+}
+
+.md-typeset .cm-hero__tagline {
+  margin: 0.75rem 0 0;
+  font-size: 1rem;
+  color: var(--md-default-fg-color--light);
+}
+
+.md-typeset .cm-hero__mascot {
+  width: 9rem;
+  height: auto;
+  flex: none;
+}
+
+/* One small, static mascot pose next to the overview of a few guide pages */
+.md-typeset .cm-page-mascot {
+  float: right;
+  width: 5.5rem;
+  height: auto;
+  margin: 0 0 1rem 1.5rem;
+}
+
+.md-typeset h2 {
+  clear: right;
+}
+
+@media screen and (max-width: 44.9375em) {
+  .md-typeset .cm-page-mascot {
+    display: none;
+  }
+}
+
+/* 404 page: the mascot asleep */
+.md-typeset .cm-not-found {
+  text-align: center;
+  margin-block: 2rem;
+}
+
+.md-typeset .cm-not-found img {
+  width: 9rem;
+  height: auto;
+}
+
+/* Footer credit: the Andromeda Labs mark at its 24 px minimum size, then the name */
+.md-copyright .cm-credit {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  vertical-align: middle;
+}
+
+.md-copyright .cm-credit img {
+  width: 24px;
+  height: 24px;
+}
+
+[data-md-color-scheme="default"] .md-copyright .cm-credit img[src$="#only-dark"],
+[data-md-color-scheme="slate"] .md-copyright .cm-credit img[src$="#only-light"] {
+  display: none;
+}

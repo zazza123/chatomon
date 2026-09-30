@@ -1,4 +1,9 @@
-# chatomon
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/zazza123/chatomon/main/docs/public/assets/brand/hero-dark.svg">
+    <img alt="chatomon" src="https://raw.githubusercontent.com/zazza123/chatomon/main/docs/public/assets/brand/hero-light.svg" width="420">
+  </picture>
+</h1>
 
 Declare a chat agent once — its instructions, its knowledge and the **orbitals** (input/output guardrails) around it — and build it into a native agent of the framework you already use: PydanticAI or LangChain/LangGraph.
 

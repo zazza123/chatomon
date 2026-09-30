@@ -2,6 +2,8 @@
 
 ## Overview
 
+![](../assets/brand/mascot/think-light.svg#only-light){ .cm-page-mascot }
+![](../assets/brand/mascot/think-dark.svg#only-dark){ .cm-page-mascot }
 Any check you can express in Python can be an orbital: a keyword filter, a call to a moderation API, a lookup in your own database. This page covers the two ways to write one, what a check receives and the settings every orbital shares.
 
 ## Decorator or Subclass
