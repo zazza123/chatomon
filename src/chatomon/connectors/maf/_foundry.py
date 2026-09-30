@@ -61,14 +61,15 @@ class MAFFoundryConnector(Connector["FoundryAgent"]):
 
     Examples:
         ```{.python test="skip"}
-        from azure.identity import DefaultAzureCredential
+        from azure.identity.aio import DefaultAzureCredential
         from chatomon import Atom
         from chatomon.connectors.maf import MAFFoundryConnector
 
         atom = Atom(name="assistant", instructions="Be concise.",
                     connector=MAFFoundryConnector(
-                        project_endpoint="https://example.services.ai.azure.com",
-                        agent_name="my-agent", credential=DefaultAzureCredential()))
+                        project_endpoint="https://example.services.ai.azure.com/api/projects/my-project",
+                        agent_name="my-agent", agent_version="1",
+                        credential=DefaultAzureCredential()))
         agent = atom.build()
         reply = await agent.run("Hello", session=agent.create_session())
         ```

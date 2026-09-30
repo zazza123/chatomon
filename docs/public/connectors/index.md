@@ -45,7 +45,7 @@ flowchart TB
     end
 ```
 
-Output checks and regenerations happen around the model call, before approved replies enter conversation history. Guidance is added to the current model request and is not stored. PydanticAI and LangChain support both their native async and sync APIs; MAF exposes an async native API. `MAFFoundryConnector` has input checks only until its Foundry output-continuity test is complete.
+Output checks and regenerations happen around the model call, before approved replies enter conversation history. Guidance is added to the current model request and is not stored. PydanticAI and LangChain support both their native async and sync APIs; MAF exposes an async native API. Both MAF connectors support checked output on non-streaming runs; the Foundry live continuity test covered a PromptAgent.
 
 ## At a Glance
 

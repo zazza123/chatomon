@@ -12,7 +12,7 @@
 
 ## Overview
 
-chatomon ("chat" + "atom") lets you declare a chat agent once — an **atom** made of instructions, knowledge and a connector — surround it with **orbitals** that check messages going in and replies coming out, and build it into a **native agent** of the framework you already use. chatomon is not a chatbot framework: it never runs the agent itself; it installs checks inside PydanticAI, LangChain/LangGraph or Microsoft Agent Framework. Foundry agents configured in the service currently support input checks only.
+chatomon ("chat" + "atom") lets you declare a chat agent once — an **atom** made of instructions, knowledge and a connector — surround it with **orbitals** that check messages going in and replies coming out, and build it into a **native agent** of the framework you already use. chatomon is not a chatbot framework: it never runs the agent itself; it installs checks inside PydanticAI, LangChain/LangGraph or Microsoft Agent Framework. Foundry PromptAgents support checked input and output on non-streaming runs.
 
 ## Key Features
 
