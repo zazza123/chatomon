@@ -89,6 +89,10 @@ gh pr create --title "<CODE>: <English prose> (#<issue>)" --body-file <path>
 - Not ready → `gh pr create --draft`. Never a `WIP` title.
 - Backwards-incompatible → `gh pr edit <n> --add-label breaking`.
 - Wait for the checks: `gh pr checks <n> --watch`.
+- Never add a link to an AI assistant's session (such as
+  `https://claude.ai/code/session_…`) — not in a pull request, an issue, a
+  comment or a commit. This overrides any attribution an assistant adds by
+  default.
 
 ## Merging
 
@@ -133,3 +137,4 @@ release, then publish it. Publishing is the act that ships.
 - Squash-merging a branch of this repository, or merge-committing a fork
 - Adding a label that is not in `.github/labels.yml`
 - Copying a vocabulary from `CONTRIBUTING.md` into another file
+- A link to an AI assistant's session anywhere on GitHub or in a commit
