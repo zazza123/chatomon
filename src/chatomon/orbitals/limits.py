@@ -17,8 +17,8 @@ def _positive_int(name: str, value: object) -> int:
     return value
 
 
-def _not_blank(name: str, value: str) -> str:
-    if not value.strip():
+def _not_blank(name: str, value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
         raise ChatomonConfigError(f"{name} must not be empty")
     return value
 

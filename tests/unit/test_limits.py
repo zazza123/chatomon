@@ -37,6 +37,12 @@ def test_length_reply_must_not_be_blank():
         MessageLengthOrbital(max_words=5, reply="  ")
 
 
+@pytest.mark.parametrize("value", [None, 42])
+def test_length_reply_must_be_text(value):
+    with pytest.raises(ChatomonConfigError, match="reply must not be empty"):
+        MessageLengthOrbital(max_words=5, reply=value)
+
+
 def test_length_guidance_must_not_be_blank_when_given():
     with pytest.raises(ChatomonConfigError, match="guidance must not be empty"):
         MessageLengthOrbital(max_words=5, guidance="")
@@ -199,6 +205,13 @@ def test_turn_warn_before_must_be_smaller_than_max_turns(value):
 def test_turn_texts_must_not_be_blank(field):
     with pytest.raises(ChatomonConfigError, match=f"{field} must not be empty"):
         settings: dict[str, Any] = {field: " "}
+        TurnLimitOrbital(max_turns=5, **settings)
+
+
+@pytest.mark.parametrize("field", ["reply", "warning"])
+def test_turn_texts_must_be_text(field):
+    settings: dict[str, Any] = {field: None}
+    with pytest.raises(ChatomonConfigError, match=f"{field} must not be empty"):
         TurnLimitOrbital(max_turns=5, **settings)
 
 
