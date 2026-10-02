@@ -22,6 +22,7 @@ These override the generic rules below wherever they conflict.
 - **API reference.** Parameters, return values and exceptions are documented in docstrings and rendered by mkdocstrings. Pages link to the reference (`[Atom][chatomon.Atom]`) instead of repeating parameter tables.
 - **Code examples — approved exception to "no code snippets".** Usage pages may include short code examples when they genuinely help a reader use the library. Every example must run under `pytest-examples` (`tests/test_docs_examples.py` collects `docs/public/`), or be fenced as ```` ```{.python test="skip"} ```` when it needs real services. Never paste source code from `src/`.
 - **Build.** `uv run zensical build --strict` must pass.
+- **No issue or pull request references.** Pages and docstrings never link to or cite GitHub issues or pull requests (`#48`, `.../issues/48`): they go stale once the issue is closed and the docs end up full of dead pointers. Describe the current behavior and any known limitation in prose; tracking lives on GitHub. Release notes, which list pull requests, live in GitHub Releases, not in `docs/public/`.
 
 ## When to Write or Update Documentation
 
