@@ -21,6 +21,7 @@ nav = [
     { "Overview" = "orbitals/index.md" },
     { "Writing your own" = "orbitals/custom.md" },
     { "JudgeOrbital" = "orbitals/judge.md" },
+    { "Limits" = "orbitals/limits.md" },
     { "Principled Intelligence" = "orbitals/principled.md" },
   ] },
   { "Connectors" = [
@@ -41,6 +42,7 @@ nav = [
     { "Orbitals" = [
       { "Base" = "reference/orbitals_base.md" },
       { "Judge" = "reference/orbitals_judge.md" },
+      { "Limits" = "reference/orbitals_limits.md" },
       { "Principled" = "reference/orbitals_principled.md" },
     ] },
     { "Connectors" = [

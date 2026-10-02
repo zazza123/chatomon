@@ -27,6 +27,7 @@ The public API of chatomon, generated from the docstrings of the code. There is 
 |------|--------|----------|
 | [Base](orbitals_base.md) | `chatomon.orbitals.base` | The `Orbital` extension point, the `orbital` decorator and `FunctionOrbital` |
 | [Judge](orbitals_judge.md) | `chatomon.orbitals.judge` | `JudgeOrbital` and its structured `JudgeDecision` |
+| [Limits](orbitals_limits.md) | `chatomon.orbitals.limits` | `MessageLengthOrbital` and `TurnLimitOrbital`: caps on length and turns |
 | [Principled](orbitals_principled.md) | `chatomon.orbitals.principled` | ScopeGuard and ClaimExtractor orbitals (extra `principled`) |
 
 ### Connectors
@@ -66,6 +67,7 @@ The packages re-export their main names, so `from chatomon import Atom` works as
 |------|---------------|
 | `Orbital`, `orbital`, `FunctionOrbital`, `OrbitalFunction` | [Orbitals / Base](orbitals_base.md) |
 | `JudgeOrbital`, `JudgeDecision` | [Orbitals / Judge](orbitals_judge.md) |
+| `MessageLengthOrbital`, `TurnLimitOrbital` | [Orbitals / Limits](orbitals_limits.md) |
 
 The Principled Intelligence orbitals are not re-exported: import them from `chatomon.orbitals.principled`, which needs the `principled` extra.
 

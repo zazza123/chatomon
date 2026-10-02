@@ -21,6 +21,7 @@ chatomon ("chat" + "atom") lets you declare a chat agent once — an **atom** ma
 - **Guidance instead of hard blocks** — orbitals can steer the model for one turn, or make it regenerate a reply, without the guidance ever entering the conversation history.
 - **Fail-closed by default** — an orbital that fails or times out blocks the message unless configured otherwise.
 - **Guard models included** — an LLM judge and wrappers for Principled Intelligence's ScopeGuard (V1 and V2) and ClaimExtractor.
+- **Ready-made limits** — caps on message and reply length and on the number of turns, with no model call.
 - **Audit and privacy** — a structured report for every turn, OpenTelemetry spans and logs that carry no message content unless you allow it.
 
 ## Installation
@@ -148,7 +149,7 @@ An atom with one input orbital that turns refund requests into a guided refusal.
 
     ---
 
-    Chaining and failures, writing your own, the LLM judge and the Principled Intelligence guard models.
+    Chaining and failures, writing your own, the LLM judge, length and turn limits and the Principled Intelligence guard models.
 
     [:lucide-arrow-right: Orbitals](orbitals/index.md)
 
@@ -201,6 +202,7 @@ The [Changelog](changelog.md) explains where release notes are published and how
 | `LangChainConnector` | `src/chatomon/connectors/langchain.py` | Builds atoms into LangChain agents (LangGraph graphs) |
 | `MAFConnector`, `MAFFoundryConnector` | `src/chatomon/connectors/maf/` | Build atoms into MAF core and Foundry agents |
 | `JudgeOrbital` | `src/chatomon/orbitals/judge.py` | An LLM that judges messages with its own instructions |
+| `MessageLengthOrbital`, `TurnLimitOrbital` | `src/chatomon/orbitals/limits.py` | Ready-made length and turn limits |
 | `ScopeGuardOrbital`, `ClaimExtractorOrbital` | `src/chatomon/orbitals/principled.py` | Principled Intelligence guard models as orbitals |
 
 ## Related Documentation
@@ -209,5 +211,5 @@ The [Changelog](changelog.md) explains where release notes are published and how
 - [API Reference](reference/index.md) — parameters and runnable examples for every public object
 
 ---
-**Last Updated:** September 2026
+**Last Updated:** October 2026
 **Status:** Implemented

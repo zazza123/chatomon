@@ -12,6 +12,7 @@ An orbital is a check on a user message before the nucleus sees it, or on a repl
 |----------|-------------|
 | [Writing your own](custom.md) | The `orbital` decorator, `Orbital` subclasses, what a check receives and the settings every orbital has |
 | [JudgeOrbital](judge.md) | A language model that judges messages with its own instructions |
+| [Limits](limits.md) | Message length and turn limits, ready to use |
 | [Principled Intelligence](principled.md) | The ScopeGuard and ClaimExtractor guard models as orbitals |
 
 ## Available Orbitals
@@ -20,6 +21,8 @@ An orbital is a check on a user message before the nucleus sees it, or on a repl
 |---------|------|-------|------|
 | Your own (`orbital`, `Orbital`) | input, output | — | [Writing your own](custom.md) |
 | `JudgeOrbital` | input, output | a model, called through the atom's connector or its own `connector` | [JudgeOrbital](judge.md) |
+| `MessageLengthOrbital` | input, output | — | [Limits](limits.md#message-length) |
+| `TurnLimitOrbital` | input | — | [Limits](limits.md#turn-limit) |
 | `ScopeGuardOrbital` | input | extra `principled`, a ScopeGuard model (local, self-hosted or API backend) | [Principled Intelligence](principled.md#scopeguard) |
 | `ClaimExtractorOrbital` | input, output | extra `principled`, a ClaimExtractor model (local, self-hosted or API backend) | [Principled Intelligence](principled.md#claimextractor) |
 
@@ -54,6 +57,7 @@ Every failure is recorded in the turn report with the exception type and the pol
 |-----------|----------|---------|
 | `Orbital`, `orbital`, `FunctionOrbital` | `src/chatomon/orbitals/base.py` | The extension point and the function decorator |
 | `JudgeOrbital`, `JudgeDecision` | `src/chatomon/orbitals/judge.py` | An LLM judge and its structured decision |
+| `MessageLengthOrbital`, `TurnLimitOrbital` | `src/chatomon/orbitals/limits.py` | Ready-made length and turn limits |
 | `ScopeGuardOrbital`, `ClaimExtractorOrbital` | `src/chatomon/orbitals/principled.py` | Principled Intelligence guard models |
 | `Engine` | `src/chatomon/engine.py` | Runs the chains, applies `reads`, timeouts and `on_error` |
 
@@ -64,5 +68,5 @@ Every failure is recorded in the turn report with the exception type and the pol
 - [API Reference](../reference/index.md) — the `orbitals` pages and the engine
 
 ---
-**Last Updated:** September 2026
+**Last Updated:** October 2026
 **Status:** Implemented

@@ -83,6 +83,8 @@ assert audit_log[0]["user_message"].startswith("sha256:")
 | `error_type` | The exception type of an aborted turn |
 | `user_message`, `final_reply` and the content fields of each result | Only according to `capture_content` |
 
+The ready-made orbitals use fixed `reason` labels that contain no user text, so they are safe to record without content capture and an application can act on them — for example [the limit orbitals](orbitals/limits.md#decisions-and-audit) (`message_too_long`, `turn_limit`, ...), such as closing a chat when `turn_limit` appears. Your own orbitals choose their labels: keep user text out of them.
+
 ## Content Capture
 
 One setting, `Atom(capture_content=...)`, governs message content in logs, spans and reports: the user message, replies, guidance, annotations, judge explanations and exception messages.
@@ -110,5 +112,5 @@ These notes are orientation, not legal advice.
 - [API Reference](reference/index.md) — `TurnReport`, `OrbitalResult` and `ContentPolicy`
 
 ---
-**Last Updated:** September 2026
+**Last Updated:** October 2026
 **Status:** Implemented
