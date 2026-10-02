@@ -46,6 +46,7 @@ The model's own `max_tokens` is a hard cap against runaway generations, set in t
 | PydanticAI | `PydanticAIConnector(model, model_settings={"max_tokens": 400})` |
 | LangChain | On the chat model you pass to `LangChainConnector` (for example `max_tokens` on `ChatOpenAI`) |
 | Microsoft Agent Framework | `MAFConnector(client, default_options={"max_tokens": 400})` |
+| Microsoft Foundry | `MAFFoundryConnector(..., default_options={"max_tokens": 400})`, sent to Foundry as `max_output_tokens` |
 
 ## Turn Limit
 
@@ -54,24 +55,35 @@ The model's own `max_tokens` is a hard cap against runaway generations, set in t
 ```python
 from pydantic_ai.models.test import TestModel
 
-from chatomon import Atom
+from chatomon import Atom, TurnReport
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.orbitals import TurnLimitOrbital
+
+closed: list[str] = []
+
+
+def close_on_limit(report: TurnReport) -> None:
+    if any(result.reason == "turn_limit" for result in report.input):
+        closed.append(report.turn_id)  # end the chat in your application here
+
 
 agent = Atom(
     name="speedypack",
     instructions="You are the customer assistant of SpeedyPack.",
     connector=PydanticAIConnector(TestModel(custom_output_text="Hi!")),
     input_orbitals=[TurnLimitOrbital(max_turns=2, reply="Please start a new chat.")],
+    on_turn=close_on_limit,
 ).build()
 
 first = agent.run_sync("hello")
 second = agent.run_sync("and then?", message_history=first.all_messages())
 third = agent.run_sync("one more", message_history=second.all_messages())
 assert (second.output, third.output) == ("Hi!", "Please start a new chat.")
+assert len(closed) == 1
 ```
 
-- **Closing the session** — chatomon never runs the agent, so it cannot end the conversation: it keeps answering with the closing reply. Your application reads the `turn_limit` reason in the turn report and closes the chat.
+- **Closing the session** — chatomon never runs the agent, so it cannot end the conversation: it keeps answering with the closing reply. Your application reads the `turn_limit` reason in the turn report, as `close_on_limit` does above, and closes the chat.
+- **Chain order** — place it first among the input orbitals. Past the limit it answers before the later orbitals run, so a long message gets the closing reply rather than the length reply, and no judge is called for a conversation that is over.
 - **Full history required** — the count comes from the history your application passes. If it trims the history (for example a sliding window), the count stops growing at the size of the window, and the limit may never be reached.
 - **Microsoft Agent Framework** — MAF's history provider does not store a message identical to one it already holds, so with `MAFConnector` and `MAFFoundryConnector` a message repeated word for word ("yes", "ok") is counted once, and the limit is reached late or never. PydanticAI and LangChain count every message.
 - **Input side only** — placing it among the output orbitals is a configuration error.
