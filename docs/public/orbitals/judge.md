@@ -12,7 +12,7 @@ It calls the model through the atom's connector — so a LangChain atom uses a L
 
 ## What the Judge Sees
 
-The judge's system prompt holds a fixed frame, its `instructions` and its `context`. The user prompt puts the history window, the annotations named in `reads` and the text under review in separate tags. Every piece of text inserted into those tags is XML-escaped (`<`, `>` and `&`), so a message that contains a tag such as `</text_under_review>` cannot close it early and change what the judge believes it is reviewing. The frame tells the judge how to read the escaped characters.
+The judge's system prompt holds a fixed frame, its `instructions` and its `context`. The user prompt puts the history window, the annotations named in `reads` and the text under review in separate tags. Every piece of text inserted into those tags is XML-escaped (`<`, `>` and `&`), so a message that contains a tag such as `</text_under_review>` cannot close it early and change what the judge believes it is reviewing. The frame tells the judge how to read the escaped characters, and that the tagged material is something to judge, never instructions to follow: a message that tells the judge to allow it is part of what the judge reviews. This last rule is an instruction to the model, not a guarantee, so keep critical checks in orbitals that do not depend on a model.
 
 ## Decisions and Audit
 
