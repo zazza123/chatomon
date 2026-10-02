@@ -6,7 +6,7 @@ Orbitals backed by Principled Intelligence models live in
 
 from chatomon.orbitals.base import FunctionOrbital, Orbital, OrbitalFunction, orbital
 from chatomon.orbitals.judge import JudgeDecision, JudgeOrbital
-from chatomon.orbitals.limits import MessageLengthOrbital
+from chatomon.orbitals.limits import MessageLengthOrbital, TurnLimitOrbital
 
 __all__ = [
     "FunctionOrbital",
@@ -15,5 +15,6 @@ __all__ = [
     "MessageLengthOrbital",
     "Orbital",
     "OrbitalFunction",
+    "TurnLimitOrbital",
     "orbital",
 ]

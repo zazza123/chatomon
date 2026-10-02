@@ -1,7 +1,9 @@
+from typing import Any
+
 import pytest
 
 from chatomon import ChatomonConfigError
-from chatomon.orbitals import MessageLengthOrbital
+from chatomon.orbitals import MessageLengthOrbital, TurnLimitOrbital
 from chatomon.schemas import Message, OrbitalContext, Side
 
 LENGTH_REPLY = "Your message is too long. Please shorten it and try again."
@@ -151,3 +153,132 @@ def test_length_fingerprint_follows_the_settings():
     assert MessageLengthOrbital(max_words=5).fingerprint() == base
     assert MessageLengthOrbital(max_words=6).fingerprint() != base
     assert MessageLengthOrbital(max_words=5, reply="Too long.").fingerprint() != base
+
+
+# --- TurnLimitOrbital -------------------------------------------------------------------
+
+TURN_REPLY = "This conversation has reached its limit. Please start a new one."
+TURN_WARNING = "The conversation will end soon: help the user wrap up."
+PLACEHOLDER = "[message removed by chatomon]"
+
+
+def turns(count: int) -> list[Message]:
+    """A history with `count` completed turns (user + assistant)."""
+    history: list[Message] = []
+    for index in range(count):
+        history.append(Message(role="user", content=f"question {index}"))
+        history.append(Message(role="assistant", content=f"answer {index}"))
+    return history
+
+
+def test_turn_default_name_and_side():
+    orb = TurnLimitOrbital(max_turns=3)
+    assert orb.name == "turn_limit"
+    assert orb.sides == frozenset({"input"})
+
+
+@pytest.mark.parametrize("value", [0, -2, 1.5, True])
+def test_turn_max_turns_must_be_a_positive_integer(value):
+    with pytest.raises(ChatomonConfigError, match="max_turns must be a positive integer"):
+        TurnLimitOrbital(max_turns=value)
+
+
+@pytest.mark.parametrize("value", [0, -1, False])
+def test_turn_warn_before_must_be_a_positive_integer(value):
+    with pytest.raises(ChatomonConfigError, match="warn_before must be a positive integer"):
+        TurnLimitOrbital(max_turns=5, warn_before=value)
+
+
+@pytest.mark.parametrize("value", [5, 6])
+def test_turn_warn_before_must_be_smaller_than_max_turns(value):
+    with pytest.raises(ChatomonConfigError, match="warn_before must be smaller than max_turns"):
+        TurnLimitOrbital(max_turns=5, warn_before=value)
+
+
+@pytest.mark.parametrize("field", ["reply", "warning"])
+def test_turn_texts_must_not_be_blank(field):
+    with pytest.raises(ChatomonConfigError, match=f"{field} must not be empty"):
+        settings: dict[str, Any] = {field: " "}
+        TurnLimitOrbital(max_turns=5, **settings)
+
+
+async def test_turn_within_the_limit_is_allowed():
+    verdict = await TurnLimitOrbital(max_turns=3).check(ctx(history=turns(2)))
+    assert verdict.action == "allow"
+    assert verdict.guidance is None
+    assert verdict.annotations == {"turn": 3, "max_turns": 3}
+
+
+async def test_turn_past_the_limit_answers_with_the_reply():
+    verdict = await TurnLimitOrbital(max_turns=3).check(ctx(history=turns(3)))
+    assert (verdict.action, verdict.reply, verdict.reason) == ("respond", TURN_REPLY, "turn_limit")
+    assert verdict.annotations == {"turn": 4, "max_turns": 3}
+
+
+async def test_turn_keeps_answering_after_the_limit():
+    orb = TurnLimitOrbital(max_turns=3, reply="Goodbye.")
+    for done in (3, 4, 10):
+        verdict = await orb.check(ctx(history=turns(done)))
+        assert (verdict.action, verdict.reply) == ("respond", "Goodbye.")
+
+
+async def test_turn_counts_only_user_messages():
+    history = [Message(role="assistant", content="Welcome!"), *turns(1)]
+    verdict = await TurnLimitOrbital(max_turns=5).check(ctx(history=history))
+    assert verdict.annotations["turn"] == 2
+
+
+async def test_turn_counts_blocked_messages():
+    history = [Message(role="user", content=PLACEHOLDER), *turns(1)]
+    verdict = await TurnLimitOrbital(max_turns=2).check(ctx(history=history))
+    assert verdict.action == "respond"
+    assert verdict.annotations["turn"] == 3
+
+
+@pytest.mark.parametrize(
+    ("done", "action", "reason"),
+    [
+        (7, "allow", None),
+        (8, "allow", "turn_limit_warning"),
+        (9, "allow", "turn_limit_warning"),
+        (10, "respond", "turn_limit"),
+    ],
+)
+async def test_turn_warning_window(done, action, reason):
+    orb = TurnLimitOrbital(max_turns=10, warn_before=2)
+    verdict = await orb.check(ctx(history=turns(done)))
+    assert (verdict.action, verdict.reason) == (action, reason)
+    if reason == "turn_limit_warning":
+        assert verdict.guidance == TURN_WARNING
+
+
+async def test_turn_without_warn_before_never_warns():
+    verdict = await TurnLimitOrbital(max_turns=10).check(ctx(history=turns(9)))
+    assert (verdict.action, verdict.guidance, verdict.reason) == ("allow", None, None)
+
+
+async def test_turn_custom_warning():
+    orb = TurnLimitOrbital(max_turns=2, warn_before=1, warning="Offer to email a summary.")
+    verdict = await orb.check(ctx(history=turns(1)))
+    assert verdict.guidance == "Offer to email a summary."
+
+
+async def test_turn_one_instance_serves_many_conversations():
+    orb = TurnLimitOrbital(max_turns=2)
+    assert (await orb.check(ctx(history=turns(5)))).action == "respond"
+    assert (await orb.check(ctx(history=()))).action == "allow"
+    assert (await orb.check(ctx(history=turns(1)))).action == "allow"
+
+
+def test_turn_config_lists_every_setting():
+    config = TurnLimitOrbital(max_turns=10, warn_before=2).config()
+    assert config["kind"] == "TurnLimitOrbital"
+    assert (config["max_turns"], config["warn_before"]) == (10, 2)
+    assert (config["reply"], config["warning"]) == (TURN_REPLY, TURN_WARNING)
+
+
+def test_turn_fingerprint_follows_the_settings():
+    base = TurnLimitOrbital(max_turns=10).fingerprint()
+    assert TurnLimitOrbital(max_turns=10).fingerprint() == base
+    assert TurnLimitOrbital(max_turns=11).fingerprint() != base
+    assert TurnLimitOrbital(max_turns=10, warn_before=1).fingerprint() != base
