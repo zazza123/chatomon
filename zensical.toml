@@ -41,6 +41,7 @@ nav = [
     { "Orbitals" = [
       { "Base" = "reference/orbitals_base.md" },
       { "Judge" = "reference/orbitals_judge.md" },
+      { "Limits" = "reference/orbitals_limits.md" },
       { "Principled" = "reference/orbitals_principled.md" },
     ] },
     { "Connectors" = [
