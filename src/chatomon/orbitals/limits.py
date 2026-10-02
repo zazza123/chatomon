@@ -149,10 +149,10 @@ class TurnLimitOrbital(Orbital):
     session: the application reads the `turn_limit` reason in the turn report
     and closes it.
 
-    The count is right only when the application passes the full history; a
-    trimmed history makes it start over. Every verdict carries the annotations
-    `{"turn": ..., "max_turns": ...}`; the audit reasons are `turn_limit` and
-    `turn_limit_warning`. Input side only.
+    The count is right only when the application passes the full history; with
+    a trimmed history it stops growing at the size of the window. Every verdict
+    carries the annotations `{"turn": ..., "max_turns": ...}`; the audit reasons
+    are `turn_limit` and `turn_limit_warning`. Input side only.
 
     Args:
         max_turns: Number of turns answered by the nucleus.
