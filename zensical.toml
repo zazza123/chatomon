@@ -1,7 +1,7 @@
 [project]
 site_name = "chatomon"
 site_description = "Declare a chat agent once and build it into native agent frameworks, wrapped by guardrail orbitals."
-site_url = "https://zazza123.github.io/chatomon/"
+site_url = "https://chatomon.andromedalabs.io/"
 repo_url = "https://github.com/zazza123/chatomon"
 repo_name = "zazza123/chatomon"
 edit_uri = "edit/main/docs/public/"

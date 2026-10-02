@@ -10,6 +10,17 @@ name: Publish
 #   - PyPI: a pending publisher for zazza123/chatomon, workflow publish.yml,
 #     environment `pypi`.
 #   - GitHub Pages: source "GitHub Actions".
+#   - Custom domain chatomon.andromedalabs.io (site_url in zensical.toml). It is
+#     set in the repository settings, not by a CNAME file: a Pages deployment
+#     from Actions ignores one. Needs a public repository.
+#       1. Account Settings → Pages: verify andromedalabs.io (TXT record
+#          _github-pages-challenge-zazza123 on Cloudflare), so no other account
+#          can claim a subdomain that points to GitHub Pages.
+#       2. Cloudflare DNS: CNAME chatomon → zazza123.github.io, DNS only.
+#       3. Repository Settings → Pages: custom domain chatomon.andromedalabs.io;
+#          once the certificate is issued, enable "Enforce HTTPS".
+#       4. Optional: proxy the record with SSL mode "Full (strict)" and enable
+#          Cloudflare Web Analytics for the hostname (no code change).
 #   - Environment `github-pages`: add the deployment tag rule `v*`. This job runs
 #     on a release event, whose ref is the tag, and the environment usually
 #     allows the default branch only — the deploy would be rejected after PyPI
