@@ -315,6 +315,8 @@ others — is the most likely large contribution, so its path is written down:
      pinned;
    - a harness in `tests/contract/` passes the whole contract suite, using the
      framework's fake models and no network;
+   - a studio runner in `src/chatomon/studio/_runners/` passes the event
+     scenarios of `tests/studio/test_events.py`;
    - `docs/public/connectors/` has a page for it, listed in the `nav` of
      `zensical.toml`, and `docs/public/reference/` has a page for its public
      module or package.
