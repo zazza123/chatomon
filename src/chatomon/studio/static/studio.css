@@ -357,7 +357,7 @@ details.res > summary:hover { background: var(--line); }
   .dlg-head, .dlg-body, .dlg-actions { padding-inline: 16px; }
 }
 @media (max-width: 480px) {
-  .chip-warn .long, .wordmark-tag { display: none; }
+  .chip-warn .long, .wordmark, .wordmark-tag { display: none; }
   .msg.user { max-width: 86%; }
   .lens span { display: none; }
 }
