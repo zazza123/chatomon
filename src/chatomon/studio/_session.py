@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 from opentelemetry.sdk.trace import TracerProvider
-from pydantic_core import to_jsonable_python
+from opentelemetry.sdk.trace.sampling import ALWAYS_ON
+from pydantic_core import to_json
 
 from chatomon._version import __version__
 from chatomon.atom import Atom
@@ -19,6 +22,22 @@ from chatomon.studio._events import Event, EventProcessor
 from chatomon.studio._runners import check_supported
 
 SIDES: tuple[Side, ...] = ("input", "output")
+
+
+def _always_recording_provider() -> TracerProvider:
+    """Return a provider whose spans are always recorded.
+
+    The studio's live events are spans. They must not depend on the developer's
+    OpenTelemetry environment: a sampler that drops spans, an unsampled span of
+    their own tracing in the context, or `OTEL_SDK_DISABLED`, which the SDK
+    reads when a provider is created.
+    """
+    disabled = os.environ.pop("OTEL_SDK_DISABLED", None)
+    try:
+        return TracerProvider(sampler=ALWAYS_ON)
+    finally:
+        if disabled is not None:
+            os.environ["OTEL_SDK_DISABLED"] = disabled
 
 
 class StudioBusyError(ChatomonError):
@@ -66,7 +85,7 @@ class Session:
             (side, orb.name): True for side in SIDES for orb in self._chain(side)
         }
         self.processor = EventProcessor()
-        self.provider = TracerProvider()
+        self.provider = _always_recording_provider()
         self.provider.add_span_processor(self.processor)
         self.history: list[Any] = []
         self.turns: list[TurnRecord] = []
@@ -221,6 +240,7 @@ class Session:
             "kind": type(orb).__name__,
             "side": side,
             "enabled": self._enabled[(side, orb.name)],
-            "config": to_jsonable_python(orb.config(), fallback=repr),
+            # Objects become their repr and non-finite floats strings, so the state is valid JSON.
+            "config": json.loads(to_json(orb.config(), fallback=repr, inf_nan_mode="strings")),
             "fingerprint": orb.fingerprint(),
         }

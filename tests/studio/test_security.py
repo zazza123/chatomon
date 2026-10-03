@@ -5,7 +5,7 @@ from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
-from chatomon.studio._security import Guard, allowed_hosts, cookie_name
+from chatomon.studio._security import Guard, allowed_hosts, cookie_name, is_bind_all
 
 TOKEN = "s3cret-token"
 BASE = "http://127.0.0.1:8016"
@@ -81,3 +81,16 @@ def test_allowed_hosts():
     assert allowed_hosts("127.0.0.1", 8016) == {"127.0.0.1:8016", "localhost:8016", "[::1]:8016"}
     assert "192.168.1.10:9000" in allowed_hosts("192.168.1.10", 9000)
     assert "[fd00::1]:9000" in allowed_hosts("fd00::1", 9000)
+
+
+@pytest.mark.parametrize(
+    "host",
+    ["0.0.0.0", "::", "", "0", "0.0", "::0", "0:0:0:0:0:0:0:0", "::ffff:0.0.0.0"],
+)
+def test_every_spelling_of_a_bind_all_address_is_recognised(host):
+    assert is_bind_all(host)
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1", "192.168.1.10"])
+def test_single_addresses_are_not_bind_all(host):
+    assert not is_bind_all(host)

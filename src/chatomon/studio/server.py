@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import errno
+import os
 import socket
 import sys
 import threading
@@ -15,7 +17,7 @@ from chatomon.atom import Atom
 from chatomon.errors import ChatomonConfigError
 from chatomon.studio._app import create_app
 from chatomon.studio._loading import resolve
-from chatomon.studio._security import LOOPBACK, WILDCARD, new_token
+from chatomon.studio._security import LOOPBACK, is_bind_all, new_token
 from chatomon.studio._session import Session
 
 __all__ = ["DEFAULT_PORT", "serve"]
@@ -71,7 +73,7 @@ def serve(
 
 
 def _start(atom: Atom[Any], *, source: str, host: str, port: int, open_browser: bool) -> None:
-    if host in WILDCARD:
+    if is_bind_all(host):
         raise ChatomonConfigError(
             f"the studio listens on one address; pass the address to use instead of {host!r}"
         )
@@ -96,11 +98,20 @@ def _start(atom: Atom[Any], *, source: str, host: str, port: int, open_browser: 
 
 
 def _check_port(host: str, port: int) -> None:
+    if not 0 < port < 65536:
+        raise ChatomonConfigError(f"the port must be between 1 and 65535, got {port}")
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
     with socket.socket(family, socket.SOCK_STREAM) as probe:
+        if os.name == "posix":
+            # Like the server itself: a port still in TIME_WAIT after a restart is free.
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             probe.bind((host, port))
         except OSError as exc:
+            if exc.errno == errno.EADDRINUSE:
+                raise ChatomonConfigError(
+                    f"port {port} is in use; choose another one with port= or --port"
+                ) from exc
             raise ChatomonConfigError(
-                f"port {port} is in use; choose another one with port= or --port"
+                f"cannot listen on {host}:{port}: {exc.strerror or exc}"
             ) from exc

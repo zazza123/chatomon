@@ -17,7 +17,7 @@ from starlette.staticfiles import StaticFiles
 
 from chatomon.errors import ChatomonConfigError
 from chatomon.studio._events import Event
-from chatomon.studio._security import Guard
+from chatomon.studio._security import LOOPBACK, Guard
 from chatomon.studio._session import Session, StudioBusyError, UnknownOrbitalError
 
 _STATIC = files("chatomon.studio") / "static"
@@ -54,12 +54,17 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
         The Starlette app, guarded by Host, Origin and token checks.
     """
 
+    def state() -> dict[str, Any]:
+        current = session.state()
+        current["studio"]["local"] = host in LOOPBACK
+        return current
+
     async def index(request: Request) -> Response:
         page = (_STATIC / "index.html").read_text(encoding="utf-8")
         return HTMLResponse(page, headers=_NO_STORE)
 
     async def get_state(request: Request) -> Response:
-        return JSONResponse(session.state(), headers=_NO_STORE)
+        return JSONResponse(state(), headers=_NO_STORE)
 
     async def post_turn(request: Request) -> Response:
         body = await _body(request)
@@ -85,14 +90,14 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
             return _error(409, "Busy", str(exc))
         except ChatomonConfigError as exc:
             return _error(409, "Refused", str(exc))
-        return JSONResponse(session.state())
+        return JSONResponse(state())
 
     async def post_reset(request: Request) -> Response:
         try:
             session.reset()
         except StudioBusyError as exc:
             return _error(409, "Busy", str(exc))
-        return JSONResponse(session.state())
+        return JSONResponse(state())
 
     routes = [
         Route("/", index, methods=["GET"]),

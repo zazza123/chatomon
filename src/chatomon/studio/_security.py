@@ -5,7 +5,9 @@ These are the rules for every chatomon tool that opens a server (CLAUDE.md, "Loc
 
 from __future__ import annotations
 
+import ipaddress
 import secrets
+import socket
 
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -14,8 +16,6 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
 """Hosts that only this machine can reach."""
 
-WILDCARD = frozenset({"0.0.0.0", "::", ""})
-"""Bind-all addresses, which the studio refuses."""
 
 _UNSAFE = frozenset({"POST", "PATCH", "PUT", "DELETE"})
 
@@ -42,6 +42,32 @@ It carries the key for this run.</p>
 </body>
 </html>
 """
+
+
+def is_bind_all(host: str) -> bool:
+    """Tell whether `host` listens on every address, however it is spelled.
+
+    `0`, `0.0`, `::0` or `::ffff:0.0.0.0` bind everything just like `0.0.0.0`,
+    so the host is resolved and its addresses are checked.
+
+    Args:
+        host: The address or name the server is asked to listen on.
+
+    Returns:
+        Whether any address `host` resolves to is the unspecified one.
+    """
+    if not host:
+        return True
+    try:
+        found = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except OSError:
+        return False
+    for *_, sockaddr in found:
+        address = ipaddress.ip_address(str(sockaddr[0]).split("%")[0])
+        mapped = getattr(address, "ipv4_mapped", None)
+        if address.is_unspecified or (mapped is not None and mapped.is_unspecified):
+            return True
+    return False
 
 
 def new_token() -> str:

@@ -159,3 +159,27 @@ def test_the_token_never_reaches_the_logs(session, caplog):
         record.getMessage() for record in caplog.records if not record.name.startswith("httpx")
     ]
     assert all(TOKEN not in message for message in studio_logs)
+
+
+def test_the_real_app_is_guarded(session):
+    app = create_app(session, token=TOKEN, host="127.0.0.1", port=8016)
+    with TestClient(app, base_url=BASE) as anonymous:
+        assert anonymous.get("/api/state").status_code == 401
+        assert anonymous.get("/static/js/main.js").status_code == 401
+        assert anonymous.get("/api/state", headers={"host": "evil.example:8016"}).status_code == 400
+        anonymous.get(f"/?token={TOKEN}")
+        assert anonymous.post("/api/turns", json={"message": "hi"}).status_code == 403
+        assert anonymous.get("/api/state").status_code == 200
+
+
+def test_the_state_says_whether_the_studio_is_local(session, client):
+    assert client.get("/api/state").json()["studio"]["local"] is True
+    lan = "http://192.168.1.10:8016"
+    app = create_app(session, token=TOKEN, host="192.168.1.10", port=8016)
+    with TestClient(app, base_url=lan) as remote:
+        remote.get(f"/?token={TOKEN}")
+        assert remote.get("/api/state").json()["studio"]["local"] is False
+        switched = remote.patch(
+            "/api/orbitals/input/reader", json={"enabled": False}, headers={"origin": lan}
+        )
+        assert switched.json()["studio"]["local"] is False

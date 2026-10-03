@@ -169,3 +169,37 @@ def test_python_m_chatomon_studio_shows_the_help():
     assert result.returncode == 0
     assert "MODULE:ATTRIBUTE" in result.stdout
     assert "8016" in result.stdout
+
+
+def test_a_port_in_time_wait_after_a_restart_is_not_reported_as_in_use(runs):
+    """What uvicorn leaves behind when it stops with a browser tab still connected."""
+    listener = socket.socket()
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    port = listener.getsockname()[1]
+    client = socket.create_connection(("127.0.0.1", port))
+    accepted, _ = listener.accept()
+    accepted.close()  # the server side closes first: its end stays in TIME_WAIT
+    client.close()
+    listener.close()
+    serve(make_atom(), port=port, open_browser=False)
+    assert runs["port"] == port
+
+
+@pytest.mark.parametrize("port", [0, -1, 65536, 99999])
+def test_a_port_out_of_range_is_refused_with_a_message(runs, port):
+    with pytest.raises(ChatomonConfigError, match="between 1 and 65535"):
+        serve(make_atom(), port=port)
+
+
+def test_an_address_that_cannot_be_used_is_not_called_a_busy_port(runs):
+    with pytest.raises(ChatomonConfigError, match=r"cannot listen on 192\.0\.2\.55") as error:
+        serve(make_atom(), host="192.0.2.55", port=free_port(), open_browser=False)
+    assert "in use" not in str(error.value)
+
+
+@pytest.mark.parametrize("host", ["0", "0.0", "::0", "::ffff:0.0.0.0"])
+def test_other_spellings_of_a_bind_all_host_are_refused(runs, host):
+    with pytest.raises(ChatomonConfigError, match="listens on one address"):
+        serve(make_atom(), host=host)

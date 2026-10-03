@@ -1,5 +1,6 @@
 import asyncio
 import json
+import math
 from typing import Any
 
 import pytest
@@ -174,3 +175,46 @@ async def test_reset_clears_the_conversation():
     session.reset()
     assert session.history == []
     assert session.turns == []
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"OTEL_TRACES_SAMPLER": "always_off"},
+        {"OTEL_TRACES_SAMPLER": "traceidratio", "OTEL_TRACES_SAMPLER_ARG": "0"},
+        {"OTEL_SDK_DISABLED": "true"},
+    ],
+    ids=["sampler off", "ratio zero", "sdk disabled"],
+)
+async def test_live_events_do_not_depend_on_opentelemetry_settings(monkeypatch, env):
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    session = Session(make_atom(input_orbitals=[ScriptedOrbital(name="guard")]), source="app:atom")
+    events = await drain(session.start_turn("hello"))
+    assert "orbital_finished" in [event["type"] for event in events]
+
+
+async def test_live_events_survive_an_unsampled_span_of_the_developer():
+    from opentelemetry import trace
+    from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
+
+    session = Session(make_atom(input_orbitals=[ScriptedOrbital(name="guard")]), source="app:atom")
+    unsampled = SpanContext(trace_id=1, span_id=1, is_remote=False, trace_flags=TraceFlags(0))
+    with trace.use_span(NonRecordingSpan(unsampled)):
+        events = await drain(session.start_turn("hello"))
+    assert "orbital_finished" in [event["type"] for event in events]
+
+
+def test_the_opentelemetry_environment_is_left_as_it_was(monkeypatch):
+    monkeypatch.setenv("OTEL_SDK_DISABLED", "true")
+    Session(make_atom(), source="app:atom")
+    import os
+
+    assert os.environ["OTEL_SDK_DISABLED"] == "true"
+
+
+def test_non_finite_numbers_in_a_config_still_serialize():
+    slow = ScriptedOrbital(name="slow", timeout=math.inf)
+    state = Session(make_atom(input_orbitals=[slow]), source="app:atom").state()
+    json.dumps(state, allow_nan=False)
+    assert state["orbitals"]["input"][0]["config"]["timeout"] == "Infinity"
