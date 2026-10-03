@@ -1,10 +1,19 @@
 """The studio page in Chromium: turns, reports, switches and the ways a turn can go wrong."""
 
+import asyncio
+import contextlib
+import http.client
+import signal
 import socket
+import subprocess
+import sys
+import textwrap
 import threading
 import time
+import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass
+from http.cookiejar import CookieJar
 
 import pytest
 import uvicorn
@@ -29,8 +38,8 @@ def free_port() -> int:
         return probe.getsockname()[1]
 
 
-def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    """Answer every message, except one that asks for a failure."""
+async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Answer every message; "boom" fails and "slow" takes three seconds."""
     prompts = [
         part.content
         for part in messages[-1].parts
@@ -38,6 +47,8 @@ def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     ]
     if any("boom" in prompt for prompt in prompts):
         raise RuntimeError("model down")
+    if any("slow" in prompt for prompt in prompts):
+        await asyncio.sleep(3)
     return ModelResponse(parts=[TextPart(content=REPLY)])
 
 
@@ -157,3 +168,109 @@ def test_a_studio_that_stops_answering_frees_the_page(page: Page, studio: Studio
     expect(page.locator("#toast")).to_contain_text("not answering")
     expect(page.get_by_role("button", name="Send")).to_be_enabled()
     expect(page.locator("article.turn")).to_have_count(0)
+
+
+def test_a_drawing_failure_does_not_freeze_the_page(page: Page, studio: Studio):
+    open_studio(page, studio)
+    page.evaluate(
+        """() => {
+          const root = document.querySelector('#atom .atom-root');
+          const fail = () => { throw new Error('drawing failed'); };
+          Object.defineProperty(root, 'innerHTML', { set: fail });
+        }"""
+    )
+    message_box(page).fill("Are you open?")
+    page.get_by_role("button", name="Send").click()
+    expect(page.locator("article.turn").first).to_contain_text(REPLY)
+    expect(page.get_by_role("button", name="Send")).to_be_enabled()
+
+
+def test_reloading_during_a_turn_shows_it_running(page: Page, studio: Studio):
+    open_studio(page, studio)
+    message_box(page).fill("a slow question")
+    page.get_by_role("button", name="Send").click()
+    expect(page.locator(".typing")).to_be_visible()
+
+    page.reload()
+    expect(page.locator(".typing")).to_be_visible()
+    expect(page.locator("article.turn .user .bubble")).to_contain_text("a slow question")
+    expect(page.locator("#phase-title")).to_have_text("A turn is running")
+    expect(page.get_by_role("button", name="Send")).to_be_disabled()
+
+    expect(page.locator("article.turn").first).to_contain_text(REPLY, timeout=15_000)
+    expect(page.get_by_role("button", name="Send")).to_be_enabled()
+    expect(page.locator("#phase-title")).to_have_text("Waiting for a message")
+
+
+def test_the_content_notice_opens_its_explanation(page: Page, studio: Studio):
+    open_studio(page, studio)
+    page.get_by_role("button", name="Content visible").click()
+    notice = page.locator("dialog[open]")
+    expect(notice).to_contain_text("capture_content")
+    expect(notice).to_contain_text("only on this machine")
+
+
+SLOW_APP = """
+    import asyncio
+
+    from pydantic_ai.messages import ModelResponse, TextPart
+    from pydantic_ai.models.function import FunctionModel
+
+    from chatomon import Atom
+    from chatomon.connectors.pydantic_ai import PydanticAIConnector
+
+
+    async def respond(messages, info):
+        await asyncio.sleep(60)
+        return ModelResponse(parts=[TextPart(content="late")])
+
+
+    atom = Atom(
+        name="slow",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(FunctionModel(respond)),
+    )
+"""
+
+
+def test_stopping_during_a_turn_does_not_wait_for_the_model(tmp_path):
+    (tmp_path / "slowapp.py").write_text(textwrap.dedent(SLOW_APP), encoding="utf-8")
+    port = free_port()
+    command = [sys.executable, "-m", "chatomon.studio", "slowapp:atom", "--no-browser"]
+    process = subprocess.Popen(
+        [*command, "--port", str(port)], cwd=tmp_path, stderr=subprocess.PIPE, text=True
+    )
+    try:
+        assert process.stderr is not None
+        link = next(word for word in process.stderr.readline().split() if word.startswith("http"))
+        base = link.split("/?")[0]
+        browser = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                browser.open(link).close()
+                break
+            except OSError:
+                assert time.monotonic() < deadline, "the studio did not start"
+                time.sleep(0.1)
+
+        def ask() -> None:
+            request = urllib.request.Request(
+                f"{base}/api/turns",
+                data=b'{"message": "hello"}',
+                headers={"Content-Type": "application/json", "Origin": base},
+            )
+            # The server stops while the stream is open: the read ends with an error.
+            with contextlib.suppress(OSError, http.client.HTTPException):
+                browser.open(request).read()
+
+        threading.Thread(target=ask, daemon=True).start()
+        time.sleep(1)
+        started = time.monotonic()
+        process.send_signal(signal.SIGINT)
+        process.wait(timeout=10)
+        assert time.monotonic() - started < 8
+        assert "chatomon studio stopped" in process.stderr.read()
+    finally:
+        if process.poll() is None:
+            process.kill()

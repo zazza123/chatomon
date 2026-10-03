@@ -172,10 +172,14 @@ export function createStage({ svgs, setCaption, onOrbital, onAtom, onFinished })
       s.blockSide = s.shield;
       setCaption(FINAL[action] || "Blocked", fmtMs(report.duration_ms));
     }
-    render();
-    onFinished(turn);
-    clearTimeout(restTimer);
-    restTimer = setTimeout(() => { if (!s.busy) toRest(); }, 3800);
+    try {
+      render();
+    } finally {
+      // Whatever happens to the drawing, the turn reaches the conversation.
+      onFinished(turn);
+      clearTimeout(restTimer);
+      restTimer = setTimeout(() => { if (!s.busy) toRest(); }, 3800);
+    }
   }
 
   async function apply(ev) {
@@ -257,13 +261,36 @@ export function createStage({ svgs, setCaption, onOrbital, onAtom, onFinished })
 
   async function drain() {
     draining = true;
-    while (queue.length) await apply(queue.shift());
-    draining = false;
+    try {
+      while (queue.length) {
+        const ev = queue.shift();
+        try {
+          await apply(ev);
+        } catch (error) {
+          // A drawing failure must not stop the events that follow, the turn's end above all.
+          console.error("chatomon studio: could not show", ev.type, error);
+        }
+      }
+    } finally {
+      draining = false;
+    }
   }
 
   return {
     push(ev) { queue.push(ev); if (!draining) drain(); },
     setSlow(value) { s.slow = value; },
+    /** A turn started before this page was loaded: its events are gone, show that it runs. */
+    showRunning() {
+      clearTimeout(restTimer);
+      clearTimeout(idleTimer);
+      Object.assign(s, { busy: true, pose: "think", shield: null, dash: {} });
+      setCaption("A turn is running", "It started before this page was loaded");
+      render();
+    },
+    release() {
+      s.busy = false;
+      toRest();
+    },
     setOrbitals(orbitals, atom) {
       s.inputs = orbitals.input.filter((o) => o.enabled);
       s.outputs = orbitals.output.filter((o) => o.enabled);

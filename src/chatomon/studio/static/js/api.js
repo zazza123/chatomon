@@ -23,7 +23,7 @@ async function call(method, path, body) {
 
 export const getState = async () => (await call("GET", "/api/state")).json();
 export const setOrbital = async (side, name, enabled) =>
-  (await call("PATCH", `/api/orbitals/${encodeURIComponent(side)}/${encodeURIComponent(name)}`, { enabled })).json();
+  (await call("PATCH", "/api/orbitals", { side, name, enabled })).json();
 export const resetConversation = async () => (await call("POST", "/api/conversation/reset", {})).json();
 
 /** Run a turn and call onEvent for every event of its stream, in order. */

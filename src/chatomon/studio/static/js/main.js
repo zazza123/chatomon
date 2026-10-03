@@ -3,7 +3,7 @@ import { getState, resetConversation, sendTurn, setOrbital } from "./api.js";
 import { createStage } from "./stage.js";
 import { renderTurns } from "./turns.js";
 import { createDrawer } from "./drawer.js";
-import { closeDialog, showAtom, showOrbital, showReport } from "./cards.js";
+import { closeDialog, showAtom, showNotice, showOrbital, showReport } from "./cards.js";
 
 let toastTimer = 0;
 let toastFn = null;
@@ -165,12 +165,23 @@ async function send(text) {
 /** Show the server's state, waiting for a turn that is still running. */
 async function settle() {
   refresh(await getState());
+  let waited = false;
   while (ui.state.busy) {
+    waited = true;
     setBusy(true);
+    ui.pending = ui.state.running;
+    drawTurns();
+    stage.showRunning();
     await new Promise((resolve) => setTimeout(resolve, 1000));
     refresh(await getState());
   }
+  ui.pending = null;
   setBusy(false);
+  drawTurns();
+  if (waited) {
+    stage.release();
+    scrollToEnd();
+  }
 }
 
 function inspect(n) {
@@ -227,6 +238,7 @@ for (const [id, value] of [["#sp-slow", true], ["#sp-real", false]]) {
 new IntersectionObserver(([entry]) => { $("#dock").hidden = entry.isIntersecting; }, { root: play, threshold: 0.3 }).observe($("#stage"));
 $("#dock").addEventListener("click", () => play.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" }));
 $("#addr").textContent = location.host;
+$("#content-chip").addEventListener("click", () => showNotice(ui.state ? ui.state.studio.local !== false : true));
 
 async function boot() {
   applyTheme(["system", "light", "dark"].includes(storage.get("chatomon-studio-theme")) ? storage.get("chatomon-studio-theme") : "system");

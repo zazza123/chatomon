@@ -58,6 +58,19 @@ export function showAtom(state) {
   });
 }
 
+export function showNotice(local) {
+  const where = local
+    ? "The studio listens only on this machine."
+    : "The studio listens on a network address: anyone who reaches it with the link can read this conversation and use the atom's models.";
+  openDialog({
+    title: "Content visible",
+    body: `<p class="note">The studio runs a copy of your atom with <code>capture_content="full"</code>, so it can show message text, guidance and judge explanations. Your atom keeps its own setting.</p>
+      <p class="note">${where}</p>
+      <p class="note">The copy has its own turn callback and tracer: your <code>on_turn</code> and your tracer provider are not called.</p>`,
+    actions: `<span class="spacer"></span><button class="btn primary" type="button" data-dlg="close">Done</button>`,
+  });
+}
+
 function resRow(x) {
   if (x.action === "skip") {
     return `<div class="res skip"><div class="res-sum"><i class="res-dash skip"></i><span class="name">${esc(x.name)}</span><span class="pill skip">not run</span><span class="dur"></span></div></div>`;
