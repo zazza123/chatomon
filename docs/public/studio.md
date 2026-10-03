@@ -14,7 +14,7 @@ Install the `studio` extra together with the extra of the atom's framework: `pip
 chatomon studio speedypack.app:atom
 ```
 
-The command imports the module from the current directory, prints a link and opens it in the browser. Stop it with ++ctrl+c++. `python -m chatomon.studio` takes the same arguments.
+The command imports the module from the current directory, prints a link and opens it in the browser. Stop it with ++ctrl+c++; a turn that is still waiting for its model does not hold the exit. `python -m chatomon.studio` takes the same arguments.
 
 | Option | Default | Purpose |
 |--------|---------|---------|
@@ -73,7 +73,7 @@ The lens of a turn opens its report: every orbital with its action, reason, dura
 
 ## Content in the Studio
 
-The header shows **Content visible · local only**, or **network address** when you started the studio on one. The studio runs a copy of your atom with `capture_content="full"`, because showing guidance, replies and judge explanations is what it is for.
+The header shows **Content visible · local only**, or **network address** when you started the studio on one; clicking the notice explains it. The studio runs a copy of your atom with `capture_content="full"`, because showing guidance, replies and judge explanations is what it is for.
 
 Your atom keeps its own setting. The copy also has its own turn callback and tracer: your `on_turn`, your tracer provider and your redactor are not called, so chatomon's reports and spans of a studio session stay in the studio.
 
@@ -83,11 +83,12 @@ Model calls are real. With a real model, a turn in the studio costs what a turn 
 
 ## Security
 
-The studio shows conversation text and calls models with your credentials, so it protects itself in four ways:
+The studio shows conversation text and calls models with your credentials, so it protects itself in five ways:
 
 - It listens on `127.0.0.1`, which only your machine can reach.
 - The link it prints carries a key for this run. The page keeps it in a cookie; opened without it, the page asks for the link from the terminal. Treat the link like a password.
 - It answers only on its own address and accepts changes only from its own page, so other sites open in your browser cannot start turns.
+- Its pages run only the studio's own files and cannot be shown inside another page.
 - With `--host` and a network address it prints a warning: anyone who reaches that address with the link can read the conversation and use your models. Addresses that listen everywhere, such as `0.0.0.0`, are refused.
 
 ## Limits of This Version
@@ -96,7 +97,7 @@ The studio shows conversation text and calls models with your credentials, so it
 - **No streaming.** Replies arrive whole, because output orbitals check a reply before it is sent.
 - **Read-only settings.** The cards show an orbital's configuration; change it in your code.
 - **Restart to reload.** After changing the code, stop the command and start it again.
-- **No dependencies.** Turns run without PydanticAI `deps`: an atom whose tools or instructions need them fails when it uses them.
+- **No dependencies.** Turns run without PydanticAI `deps`: an atom whose tools or instructions need them fails when it uses them, and the command says so when it starts.
 - **Rejected replies are not shown.** When an output orbital makes the nucleus write a reply again, the report shows the orbital's guidance, not the text it rejected.
 
 ## Key Components
