@@ -16,7 +16,7 @@ Architecture invariants are stated in this file. The maintainer keeps the design
 
 - The engine (`engine.py`) holds all orbital-chain semantics and is pure Python — no framework imports. Connectors only translate `InputDecision`/`OutputDecision` into native hooks.
 - `schemas.py` imports nothing from chatomon.
-- Framework and `orbitals` imports live only in `connectors/<framework>.py` or `connectors/<framework>/` and `orbitals/principled.py`, imported lazily; a missing extra raises an error naming the extra to install. Web (`starlette`, `uvicorn`) and OpenTelemetry SDK imports live only in `studio/`; everywhere else chatomon depends only on `opentelemetry-api`.
+- Framework and `orbitals` imports live only in `connectors/<framework>.py` or `connectors/<framework>/`, `studio/_runners/<framework>.py` and `orbitals/principled.py`, imported lazily; a missing extra raises an error naming the extra to install. Web (`starlette`, `uvicorn`) and OpenTelemetry SDK imports live only in `studio/`; everywhere else chatomon depends only on `opentelemetry-api`.
 - `Orbital` and `Connector` are the only abstract extension points. Don't add abstractions without a second concrete use.
 - Never derive an orbital's definition/config from the Atom. Sharing (e.g. the same `Knowledge` given to a judge) is always explicit.
 - Defaults are fail-closed (`on_error="block"`) and content-free (`capture_content="none"`).

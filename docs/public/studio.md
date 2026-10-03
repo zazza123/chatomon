@@ -73,9 +73,11 @@ The lens of a turn opens its report: every orbital with its action, reason, dura
 
 ## Content in the Studio
 
-The header shows **Content visible · local only**. The studio runs a copy of your atom with `capture_content="full"`, because showing guidance, replies and judge explanations is what it is for.
+The header shows **Content visible · local only**, or **network address** when you started the studio on one. The studio runs a copy of your atom with `capture_content="full"`, because showing guidance, replies and judge explanations is what it is for.
 
-Your atom keeps its own setting. The copy also has its own turn callback and tracer, so your `on_turn`, your tracer provider and your redactor are not called: nothing from a studio session reaches your audit or tracing systems.
+Your atom keeps its own setting. The copy also has its own turn callback and tracer: your `on_turn`, your tracer provider and your redactor are not called, so chatomon's reports and spans of a studio session stay in the studio.
+
+Two things still go where your application sends them. Tracing you set up outside chatomon, such as PydanticAI's own instrumentation, records a studio turn like any other, messages included if you configured it so. chatomon's log records also follow your logging setup; they carry labels, never message text.
 
 Model calls are real. With a real model, a turn in the studio costs what a turn costs.
 
@@ -94,6 +96,7 @@ The studio shows conversation text and calls models with your credentials, so it
 - **No streaming.** Replies arrive whole, because output orbitals check a reply before it is sent.
 - **Read-only settings.** The cards show an orbital's configuration; change it in your code.
 - **Restart to reload.** After changing the code, stop the command and start it again.
+- **No dependencies.** Turns run without PydanticAI `deps`: an atom whose tools or instructions need them fails when it uses them.
 - **Rejected replies are not shown.** When an output orbital makes the nucleus write a reply again, the report shows the orbital's guidance, not the text it rejected.
 
 ## Key Components
