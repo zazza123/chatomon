@@ -9,15 +9,26 @@ import ipaddress
 import secrets
 import socket
 
+from starlette.datastructures import MutableHeaders
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
 """Hosts that only this machine can reach."""
 
 
 _UNSAFE = frozenset({"POST", "PATCH", "PUT", "DELETE"})
+
+SECURITY_HEADERS = {
+    "content-security-policy": (
+        "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+        "frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+    ),
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer",
+}
+"""Sent with every response: only the studio's own files run, and no other page can frame it."""
 
 LOCKED_PAGE = """<!doctype html>
 <html lang="en">
@@ -84,8 +95,11 @@ def allowed_hosts(host: str, port: int) -> frozenset[str]:
     """Return the `Host` header values the studio answers to."""
     names = {"127.0.0.1", "localhost", "[::1]"}
     if host not in LOOPBACK:
-        names.add(f"[{host}]" if ":" in host else host)
-    return frozenset(f"{name}:{port}" for name in names)
+        names.add(f"[{host}]" if ":" in host else host.lower())
+    hosts = {f"{name}:{port}" for name in names}
+    if port == 80:
+        hosts |= names  # browsers leave the default port out of Host
+    return frozenset(hosts)
 
 
 def _error(status: int, kind: str, message: str) -> JSONResponse:
@@ -106,20 +120,36 @@ class Guard:
         self.cookie = cookie_name(port)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
+        if scope["type"] == "lifespan":
             await self.app(scope, receive, send)
             return
+        if scope["type"] != "http":
+            # The studio has no websocket: refuse rather than pass an unchecked scope on.
+            await receive()
+            await send({"type": "websocket.close", "code": 1008})
+            return
+
+        async def send_with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                for name, value in SECURITY_HEADERS.items():
+                    headers[name] = value
+                if "cache-control" not in headers:
+                    headers["cache-control"] = "no-cache"
+            await send(message)
+
         response = self._check(Request(scope))
         if response is None:
-            await self.app(scope, receive, send)
+            await self.app(scope, receive, send_with_headers)
         else:
-            await response(scope, receive, send)
+            await response(scope, receive, send_with_headers)
 
     def _check(self, request: Request) -> Response | None:
-        host = request.headers.get("host", "")
+        host = request.headers.get("host", "").lower()
         if host not in self.hosts:
             return _error(400, "BadHost", "the studio only answers on the address it printed")
-        if request.method in _UNSAFE and request.headers.get("origin") != f"http://{host}":
+        origin = (request.headers.get("origin") or "").lower()
+        if request.method in _UNSAFE and origin != f"http://{host}":
             return _error(403, "BadOrigin", "changes must come from the studio's own page")
         given = request.query_params.get("token")
         if request.url.path == "/" and request.method == "GET" and given is not None:

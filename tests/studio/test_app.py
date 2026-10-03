@@ -105,39 +105,30 @@ def test_a_turn_while_busy_is_refused(client, session, monkeypatch):
     assert response.json()["error"]["type"] == "Busy"
 
 
+def switch(client, name, enabled, *, side="input", origin=BASE):
+    body = {"side": side, "name": name, "enabled": enabled}
+    return client.patch("/api/orbitals", json=body, headers={"origin": origin})
+
+
 def test_switching_an_orbital(client):
-    response = client.patch("/api/orbitals/input/reader", json={"enabled": False}, headers=ORIGIN)
+    response = switch(client, "reader", False)
     assert response.status_code == 200
     assert response.json()["orbitals"]["input"][1]["enabled"] is False
 
 
 def test_switching_errors(client, session, monkeypatch):
-    assert (
-        client.patch(
-            "/api/orbitals/input/ghost", json={"enabled": False}, headers=ORIGIN
-        ).status_code
-        == 404
-    )
-    refused = client.patch("/api/orbitals/input/first", json={"enabled": False}, headers=ORIGIN)
+    assert switch(client, "ghost", False).status_code == 404
+    refused = switch(client, "first", False)
     assert refused.status_code == 409
     assert "reads 'first'" in refused.json()["error"]["message"]
-    assert (
-        client.patch(
-            "/api/orbitals/input/first", json={"enabled": "no"}, headers=ORIGIN
-        ).status_code
-        == 422
-    )
+    assert switch(client, "first", "no").status_code == 422
+    assert client.patch("/api/orbitals", json={"enabled": False}, headers=ORIGIN).status_code == 422
 
     def busy(side, name, enabled):
         raise StudioBusyError("a turn is running; wait for it to finish")
 
     monkeypatch.setattr(session, "set_enabled", busy)
-    assert (
-        client.patch(
-            "/api/orbitals/input/first", json={"enabled": False}, headers=ORIGIN
-        ).status_code
-        == 409
-    )
+    assert switch(client, "first", False).status_code == 409
 
 
 def test_reset(client):
@@ -179,7 +170,50 @@ def test_the_state_says_whether_the_studio_is_local(session, client):
     with TestClient(app, base_url=lan) as remote:
         remote.get(f"/?token={TOKEN}")
         assert remote.get("/api/state").json()["studio"]["local"] is False
-        switched = remote.patch(
-            "/api/orbitals/input/reader", json={"enabled": False}, headers={"origin": lan}
-        )
+        switched = switch(remote, "reader", False, origin=lan)
         assert switched.json()["studio"]["local"] is False
+
+
+def test_an_orbital_with_dots_for_a_name_can_be_switched():
+    atom = Atom(
+        name="t",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(TestModel()),
+        input_orbitals=[ScriptedOrbital(name="..")],
+    )
+    app = create_app(Session(atom, source="app:atom"), token=TOKEN, host="127.0.0.1", port=8016)
+    with TestClient(app, base_url=BASE) as client:
+        client.get(f"/?token={TOKEN}")
+        response = switch(client, "..", False)
+        assert response.json()["orbitals"]["input"][0]["enabled"] is False
+
+
+def test_a_message_that_cannot_be_encoded_is_refused(client):
+    response = client.post(
+        "/api/turns",
+        content=b'{"message": "broken \\ud800 text"}',
+        headers={**ORIGIN, "content-type": "application/json"},
+    )
+    assert response.status_code == 422
+    assert client.get("/api/state").status_code == 200
+
+
+def test_every_error_is_json(session, monkeypatch):
+    app = create_app(session, token=TOKEN, host="127.0.0.1", port=8016)
+    with TestClient(app, base_url=BASE, raise_server_exceptions=False) as client:
+        client.get(f"/?token={TOKEN}")
+        assert client.get("/api/nope").json()["error"]["type"] == "NotFound"
+        assert client.get("/api/turns").json()["error"]["type"] == "MethodNotAllowed"
+
+        def broken():
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(session, "state", broken)
+        failed = client.get("/api/state")
+        assert failed.status_code == 500
+        assert failed.json()["error"]["type"] == "InternalError"
+        assert "boom" not in failed.text
+
+
+def test_static_files_are_revalidated(client):
+    assert client.get("/static/studio.css").headers["cache-control"] == "no-cache"

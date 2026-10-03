@@ -51,3 +51,20 @@ def describe(connector: Connector[Any]) -> dict[str, str]:
     else:
         name = str(getattr(model, "model_name", type(model).__name__))
     return {"connector": type(connector).__name__, "model": name}
+
+
+def notes(connector: Connector[Any]) -> list[str]:
+    """Say what the developer should know before trying this atom in the studio.
+
+    Args:
+        connector: A `PydanticAIConnector`.
+
+    Returns:
+        One sentence per limit that applies to this atom.
+    """
+    if "deps_type" in getattr(connector, "agent_kwargs", {}):
+        return [
+            "this atom declares deps_type; the studio runs turns without deps, "
+            "so tools and instructions that use them fail"
+        ]
+    return []

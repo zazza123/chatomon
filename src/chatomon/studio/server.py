@@ -79,6 +79,8 @@ def _start(atom: Atom[Any], *, source: str, host: str, port: int, open_browser: 
         )
     session = Session(atom, source=source)
     _check_port(host, port)
+    for note in session.notes:
+        print(f"note: {note}", file=sys.stderr)
     token = new_token()
     shown = f"[{host}]" if ":" in host else host
     url = f"http://{shown}:{port}/?token={token}"
@@ -94,7 +96,16 @@ def _start(atom: Atom[Any], *, source: str, host: str, port: int, open_browser: 
         timer.daemon = True
         timer.start()
     app = create_app(session, token=token, host=host, port=port)
-    uvicorn.run(app, host=host, port=port, log_config=None, access_log=False)
+    # Three seconds for open requests on Ctrl+C: a turn waiting on its model must not hold the exit.
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        log_config=None,
+        access_log=False,
+        timeout_graceful_shutdown=3,
+    )
+    print("chatomon studio stopped.", file=sys.stderr)
 
 
 def _check_port(host: str, port: int) -> None:

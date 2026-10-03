@@ -9,6 +9,7 @@ from importlib.resources import files
 from typing import Any
 
 from starlette.applications import Starlette
+from starlette.exceptions import HTTPException
 from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
@@ -72,18 +73,24 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
         if not isinstance(message, str) or not message.strip():
             return _error(422, "EmptyMessage", 'write a message first: {"message": "..."}')
         try:
+            message.encode("utf-8")
+        except UnicodeEncodeError:
+            return _error(422, "InvalidMessage", "the message has characters that are not text")
+        try:
             queue = session.start_turn(message)
         except StudioBusyError as exc:
             return _error(409, "Busy", str(exc))
         return StreamingResponse(_stream(queue), media_type="text/event-stream", headers=_NO_STORE)
 
     async def patch_orbital(request: Request) -> Response:
-        body = await _body(request)
-        enabled = body.get("enabled") if body is not None else None
-        if not isinstance(enabled, bool):
-            return _error(422, "InvalidBody", 'send {"enabled": true} or {"enabled": false}')
+        body = await _body(request) or {}
+        side, name, enabled = body.get("side"), body.get("name"), body.get("enabled")
+        if not isinstance(side, str) or not isinstance(name, str) or not isinstance(enabled, bool):
+            return _error(
+                422, "InvalidBody", 'send {"side": "input", "name": "...", "enabled": false}'
+            )
         try:
-            session.set_enabled(request.path_params["side"], request.path_params["name"], enabled)
+            session.set_enabled(side, name, enabled)
         except UnknownOrbitalError as exc:
             return _error(404, "UnknownOrbital", str(exc))
         except StudioBusyError as exc:
@@ -103,9 +110,21 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
         Route("/", index, methods=["GET"]),
         Route("/api/state", get_state, methods=["GET"]),
         Route("/api/turns", post_turn, methods=["POST"]),
-        Route("/api/orbitals/{side}/{name}", patch_orbital, methods=["PATCH"]),
+        Route("/api/orbitals", patch_orbital, methods=["PATCH"]),
         Route("/api/conversation/reset", post_reset, methods=["POST"]),
         Mount("/static", StaticFiles(packages=[("chatomon.studio", "static")]), name="static"),
     ]
+
+    async def http_error(request: Request, exc: Exception) -> Response:
+        status = exc.status_code if isinstance(exc, HTTPException) else 500
+        kinds = {404: "NotFound", 405: "MethodNotAllowed"}
+        detail = exc.detail if isinstance(exc, HTTPException) else "error"
+        return _error(status, kinds.get(status, "HTTPError"), str(detail))
+
+    async def server_error(request: Request, exc: Exception) -> Response:
+        # Starlette raises the exception again after this response, so the server logs it.
+        return _error(500, "InternalError", "the studio failed; the terminal has the details")
+
     middleware = [Middleware(Guard, token=token, host=host, port=port)]
-    return Starlette(routes=routes, middleware=middleware)
+    handlers = {HTTPException: http_error, Exception: server_error}
+    return Starlette(routes=routes, middleware=middleware, exception_handlers=handlers)

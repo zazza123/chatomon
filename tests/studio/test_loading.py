@@ -94,3 +94,14 @@ def test_a_factory_must_return_an_atom():
 def test_an_instance_is_returned_unchanged():
     atom = make_atom()
     assert resolve(atom, label="x") is atom
+
+
+def test_the_current_directory_wins_over_a_module_elsewhere_on_the_path(
+    project, tmp_path, monkeypatch
+):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "app.py").write_text("atom = 'not the atom'\n", encoding="utf-8")
+    project(HEADER + "atom = make()\n")
+    monkeypatch.setattr(sys, "path", [str(elsewhere), str(tmp_path), *sys.path])
+    assert load("app:atom").name == "t"

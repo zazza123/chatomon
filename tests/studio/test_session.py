@@ -218,3 +218,72 @@ def test_non_finite_numbers_in_a_config_still_serialize():
     state = Session(make_atom(input_orbitals=[slow]), source="app:atom").state()
     json.dumps(state, allow_nan=False)
     assert state["orbitals"]["input"][0]["config"]["timeout"] == "Infinity"
+
+
+class FailsToBind(ScriptedOrbital):
+    broken = False
+
+    def bind(self, connector: Any) -> None:
+        if self.broken:
+            raise RuntimeError("cannot bind")
+
+
+def test_any_failure_while_rebuilding_leaves_the_switches_as_they_were():
+    fragile = FailsToBind(name="fragile")
+    session = Session(
+        make_atom(input_orbitals=[fragile, ScriptedOrbital(name="other")]), source="app:atom"
+    )
+    fragile.broken = True
+    with pytest.raises(RuntimeError, match="cannot bind"):
+        session.set_enabled("input", "other", False)
+    assert [orbital["enabled"] for orbital in session.state()["orbitals"]["input"]] == [True, True]
+
+
+def gated_session(**kwargs: Any) -> tuple[Session, asyncio.Event]:
+    gate = asyncio.Event()
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        await gate.wait()
+        return ModelResponse(parts=[TextPart(content="Hi")])
+
+    atom = make_atom(connector=PydanticAIConnector(FunctionModel(respond)), **kwargs)
+    return Session(atom, source="app:atom"), gate
+
+
+async def test_a_cancelled_turn_still_ends_its_stream():
+    session, _ = gated_session()
+    queue = session.start_turn("hello")
+    await asyncio.sleep(0.05)
+    assert session._task is not None
+    session._task.cancel()
+    events = await asyncio.wait_for(drain(queue), timeout=2)
+    kinds = [event["type"] for event in events]
+    assert kinds[0] == "turn_started"
+    assert "turn_finished" not in kinds
+    assert session.busy is False
+
+
+async def test_the_state_names_the_running_turn_and_refuses_switches():
+    session, gate = gated_session(input_orbitals=[ScriptedOrbital(name="guard")])
+    assert session.state()["running"] is None
+    queue = session.start_turn("hello")
+    await asyncio.sleep(0.05)
+    assert session.state()["running"] == {"n": 1, "message": "hello"}
+    with pytest.raises(StudioBusyError):
+        session.set_enabled("input", "guard", False)
+    gate.set()
+    await drain(queue)
+    assert session.state()["running"] is None
+
+
+async def test_a_run_that_fails_before_the_engine_opens_a_turn_has_no_report():
+    class Broken:
+        async def run(self, *args: Any, **kwargs: Any) -> Any:
+            raise ValueError("bad history")
+
+    session = Session(make_atom(), source="app:atom")
+    session._agent = Broken()
+    events = await drain(session.start_turn("hello"))
+    turn = events[-1]["turn"]
+    assert turn["report"] is None
+    assert turn["error"] == {"type": "ValueError", "message": "bad history"}

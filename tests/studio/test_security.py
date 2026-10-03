@@ -2,8 +2,9 @@ import pytest
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.responses import PlainTextResponse
-from starlette.routing import Route
+from starlette.routing import Route, WebSocketRoute
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from chatomon.studio._security import Guard, allowed_hosts, cookie_name, is_bind_all
 
@@ -94,3 +95,45 @@ def test_every_spelling_of_a_bind_all_address_is_recognised(host):
 @pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1", "192.168.1.10"])
 def test_single_addresses_are_not_bind_all(host):
     assert not is_bind_all(host)
+
+
+def test_websocket_connections_are_refused():
+    async def echo(websocket):
+        await websocket.accept()
+        await websocket.close()
+
+    guarded = Starlette(
+        routes=[WebSocketRoute("/ws", echo)],
+        middleware=[Middleware(Guard, token=TOKEN, host="127.0.0.1", port=8016)],
+    )
+    with (
+        TestClient(guarded, base_url=BASE) as client,
+        pytest.raises(WebSocketDisconnect),
+        client.websocket_connect("/ws"),
+    ):
+        pass
+
+
+def test_every_response_carries_the_security_headers(client):
+    login(client)
+    for response in (
+        client.get("/"),
+        client.get("/api/x"),
+        client.get("/api/x", headers={"host": "x:1"}),
+    ):
+        policy = response.headers["content-security-policy"]
+        assert policy.startswith("default-src 'self'")
+        assert "frame-ancestors 'none'" in policy
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert response.headers["referrer-policy"] == "no-referrer"
+        assert response.headers["cache-control"] == "no-cache"
+
+
+def test_the_host_is_matched_without_case(client):
+    assert client.get("/", headers={"host": "LOCALHOST:8016"}).status_code == 401
+
+
+def test_port_80_is_matched_with_and_without_the_port():
+    assert {"127.0.0.1", "127.0.0.1:80", "localhost", "localhost:80"} <= allowed_hosts(
+        "127.0.0.1", 80
+    )

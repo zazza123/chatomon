@@ -27,7 +27,7 @@ def load(spec: str) -> Atom[Any]:
     if not module_name or not attribute:
         raise ChatomonConfigError(f"expected <module>:<attribute>, got {spec!r}") from None
     cwd = os.getcwd()
-    if cwd not in sys.path:
+    if not sys.path or sys.path[0] != cwd:
         sys.path.insert(0, cwd)
     try:
         value: Any = importlib.import_module(module_name)

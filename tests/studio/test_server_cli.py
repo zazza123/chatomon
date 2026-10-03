@@ -1,7 +1,12 @@
+import logging
 import socket
 import subprocess
 import sys
 import textwrap
+import threading
+import time
+import urllib.request
+from http.cookiejar import CookieJar
 
 import pytest
 from pydantic_ai.models.test import TestModel
@@ -203,3 +208,49 @@ def test_an_address_that_cannot_be_used_is_not_called_a_busy_port(runs):
 def test_other_spellings_of_a_bind_all_host_are_refused(runs, host):
     with pytest.raises(ChatomonConfigError, match="listens on one address"):
         serve(make_atom(), host=host)
+
+
+def test_stopping_does_not_wait_for_a_running_turn(runs, capsys):
+    serve(make_atom(), port=free_port(), open_browser=False)
+    assert runs["timeout_graceful_shutdown"] == 3
+    assert "chatomon studio stopped" in capsys.readouterr().err
+
+
+def test_an_atom_that_declares_deps_gets_a_note(runs, capsys):
+    atom = Atom(
+        name="t",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(TestModel(), deps_type=int),
+    )
+    serve(atom, port=free_port(), open_browser=False)
+    assert "without deps" in capsys.readouterr().err
+
+
+def test_the_token_never_reaches_the_logs_of_the_real_server(monkeypatch, caplog, capsys):
+    """Run uvicorn with exactly what serve() passes it and open the token link."""
+    captured: dict = {}
+    monkeypatch.setattr(
+        server.uvicorn, "run", lambda app, **kwargs: captured.update(app=app, **kwargs)
+    )
+    port = free_port()
+    serve(make_atom(), port=port, open_browser=False)
+    link = next(word for word in capsys.readouterr().err.split() if word.startswith("http://"))
+    token = link.split("token=")[1]
+    caplog.set_level(logging.DEBUG)
+    app = captured.pop("app")
+    running = server.uvicorn.Server(server.uvicorn.Config(app, **captured))
+    thread = threading.Thread(target=running.run, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not running.started:
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        browser = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
+        with browser.open(link) as response:
+            assert response.status == 200
+    finally:
+        running.should_exit = True
+        thread.join(timeout=10)
+    assert caplog.records
+    assert token not in caplog.text

@@ -15,7 +15,7 @@ from pydantic_core import to_json
 
 from chatomon._version import __version__
 from chatomon.atom import Atom
-from chatomon.errors import ChatomonConfigError, ChatomonError
+from chatomon.errors import ChatomonError
 from chatomon.orbitals.base import Orbital
 from chatomon.schemas import Side, TurnReport
 from chatomon.studio._events import Event, EventProcessor
@@ -89,7 +89,9 @@ class Session:
         self.provider.add_span_processor(self.processor)
         self.history: list[Any] = []
         self.turns: list[TurnRecord] = []
+        self.notes: list[str] = runner.notes(atom.connector)
         self._task: asyncio.Task[None] | None = None
+        self._running: TurnRecord | None = None
         self._report: TurnReport | None = None
         self._agent: Any = self._build()
 
@@ -145,7 +147,7 @@ class Session:
         self._enabled[key] = enabled
         try:
             self._agent = self._build()
-        except ChatomonConfigError:
+        except Exception:
             self._enabled[key] = previous
             raise
 
@@ -196,20 +198,24 @@ class Session:
     async def _run(self, record: TurnRecord, emit: Callable[[Event | None], None]) -> None:
         emit({"type": "turn_started", "n": record.n})
         self._report = None
+        self._running = record
         self.processor.attach(emit)
         try:
-            outcome = await self._runner.run_turn(self._agent, record.message, self.history)
-        except Exception as exc:
-            record.error = {"type": type(exc).__name__, "message": str(exc)}
-        else:
-            record.reply = outcome.reply
-            self.history = outcome.history
+            try:
+                outcome = await self._runner.run_turn(self._agent, record.message, self.history)
+            except Exception as exc:
+                record.error = {"type": type(exc).__name__, "message": str(exc)}
+            else:
+                record.reply = outcome.reply
+                self.history = outcome.history
+            record.report = self._report
+            self.turns.append(record)
+            emit({"type": "turn_finished", "turn": record.to_json()})
         finally:
+            # Also when the task is cancelled: the stream must end and the session be free.
             self.processor.detach()
-        record.report = self._report
-        self.turns.append(record)
-        emit({"type": "turn_finished", "turn": record.to_json()})
-        emit(None)
+            self._running = None
+            emit(None)
 
     def state(self) -> dict[str, Any]:
         """Return everything the page shows, as JSON-ready data (spec section 6)."""
@@ -232,6 +238,11 @@ class Session:
             },
             "turns": [turn.to_json() for turn in self.turns],
             "busy": self.busy,
+            "running": (
+                {"n": self._running.n, "message": self._running.message}
+                if self._running is not None
+                else None
+            ),
         }
 
     def _orbital(self, side: Side, orb: Orbital) -> dict[str, Any]:
