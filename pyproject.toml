@@ -31,6 +31,9 @@ maf-foundry = ["agent-framework-foundry>=1.13.1,<2"]
 principled = ["orbitals>=0.5,<0.6"]
 studio = ["starlette>=1.7,<2", "uvicorn>=0.54,<1", "opentelemetry-sdk>=1.28"]
 
+[project.scripts]
+chatomon = "chatomon._cli:main"
+
 [dependency-groups]
 dev = [
     "pytest>=9",

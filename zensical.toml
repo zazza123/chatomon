@@ -52,6 +52,7 @@ nav = [
       { "Microsoft Agent Framework" = "reference/connectors_maf.md" },
     ] },
     { "Observability" = "reference/observability.md" },
+    { "Studio" = "reference/studio.md" },
   ] },
   { "Changelog" = "changelog.md" },
   { "Contributing" = "https://github.com/zazza123/chatomon/blob/main/CONTRIBUTING.md" },

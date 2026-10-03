@@ -18,4 +18,6 @@ for _module, _package in (
     if importlib.util.find_spec(_module) is None:
         raise MissingExtraError("studio", _package)
 
-__all__: list[str] = []
+from chatomon.studio.server import DEFAULT_PORT, serve  # noqa: E402 - after the extra check
+
+__all__ = ["DEFAULT_PORT", "serve"]

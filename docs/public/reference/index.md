@@ -45,6 +45,12 @@ The public API of chatomon, generated from the docstrings of the code. There is 
 |------|--------|----------|
 | [Observability](observability.md) | `chatomon.observability` | The tracer, the content policy and the hashing helpers |
 
+### Studio
+
+| Page | Module | Contents |
+|------|--------|----------|
+| [Studio](studio.md) | `chatomon.studio.server` | `serve` and `DEFAULT_PORT`: the local studio (extra `studio`) |
+
 ## Exports
 
 The packages re-export their main names, so `from chatomon import Atom` works as well as `from chatomon.atom import Atom`. Each name is documented in the module that defines it.
@@ -84,6 +90,12 @@ The framework connectors are not re-exported: import them from `chatomon.connect
 | Name | Documented in |
 |------|---------------|
 | `MAFConnector`, `MAFFoundryConnector` | [Connectors / Microsoft Agent Framework](connectors_maf.md) |
+
+### `chatomon.studio`
+
+| Name | Documented in |
+|------|---------------|
+| `serve`, `DEFAULT_PORT` | [Studio](studio.md) |
 
 ## Editing the Reference
 
