@@ -164,7 +164,8 @@ code, .mono { font-family: var(--font-mono); font-size: .92em; }
 
 /* Middle: the atom on stage, the turns below it */
 .play { grid-area: play; min-height: 0; min-width: 0; overflow: auto; display: flex; flex-direction: column; }
-.column { width: 100%; max-width: 800px; margin: 0 auto; padding: 6px 24px 18px; flex: 1; display: flex; flex-direction: column; }
+/* The bottom padding leaves room for the docked atom, which floats above the composer. */
+.column { width: 100%; max-width: 800px; margin: 0 auto; padding: 6px 24px 78px; flex: 1; display: flex; flex-direction: column; }
 .stage { display: grid; justify-items: center; gap: 2px; padding: 8px 0 10px;
   background: radial-gradient(circle at 50% 50%, var(--amber-tint), transparent 60%); }
 .stage-top { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--fg-2); }
@@ -267,7 +268,7 @@ code, .mono { font-family: var(--font-mono); font-size: .92em; }
 /* Composer, with a small atom when the stage scrolls out of view */
 .composer { position: sticky; bottom: 0; z-index: 3; background: var(--bg); border-top: 1px solid var(--line); }
 .composer-inner { max-width: 800px; margin: 0 auto; padding: 10px 24px calc(14px + env(safe-area-inset-bottom, 0px)); display: grid; gap: 9px; }
-.dock { justify-self: center; display: flex; align-items: center; gap: 10px; max-width: 100%; margin-top: -34px; padding: 4px 14px 4px 4px; border: 1px solid var(--line-2); border-radius: 999px; background: var(--raised); box-shadow: var(--shadow); text-align: left; }
+.dock { position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%); display: flex; align-items: center; gap: 10px; max-width: calc(100% - 32px); padding: 4px 14px 4px 4px; border: 1px solid var(--line-2); border-radius: 999px; background: var(--raised); box-shadow: var(--shadow); text-align: left; }
 .dock svg { width: 46px; height: 46px; flex: none; }
 .dock > span { display: grid; min-width: 0; }
 .dock .t { font: 600 14px/1.2 var(--font-display); color: var(--fg); }

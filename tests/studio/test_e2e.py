@@ -210,6 +210,25 @@ def test_the_content_notice_opens_its_explanation(page: Page, studio: Studio):
     expect(notice).to_contain_text("only on this machine")
 
 
+def test_the_docked_atom_does_not_cover_the_last_turn(page: Page, studio: Studio):
+    page.set_viewport_size({"width": 1000, "height": 520})
+    open_studio(page, studio)
+    for text in ("First question", "Second question"):
+        message_box(page).fill(text)
+        page.get_by_role("button", name="Send").click()
+        expect(page.get_by_role("button", name="Send")).to_be_enabled()
+    # From the top (atom in view, no dock) to the end in one scroll, as after a new turn.
+    page.evaluate("document.getElementById('play').scrollTo(0, 0)")
+    expect(page.locator("#dock")).to_be_hidden()
+    page.evaluate("const p = document.getElementById('play'); p.scrollTo(0, p.scrollHeight)")
+    expect(page.locator("#dock")).to_be_visible()
+    page.wait_for_timeout(300)
+    meta = page.locator("article.turn .msg-meta").last.bounding_box()
+    dock = page.locator("#dock").bounding_box()
+    assert meta is not None and dock is not None
+    assert meta["y"] + meta["height"] <= dock["y"]
+
+
 SLOW_APP = """
     import asyncio
 
