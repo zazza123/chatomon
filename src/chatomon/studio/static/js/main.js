@@ -98,11 +98,26 @@ function setBusy(value) {
   drawer.sync();
 }
 
+const LOCAL_NOTE = 'The studio runs your atom with capture_content="full": it shows message text, guidance and judge explanations.';
+
 function refresh(state) {
   ui.state = state;
+  const local = state.studio.local !== false;
+  $("#chip-scope").textContent = local ? "\u00a0· local only" : "\u00a0· network address";
+  $("#content-chip").title = local
+    ? `${LOCAL_NOTE} It only listens on this machine.`
+    : `${LOCAL_NOTE} It listens on a network address: anyone who reaches it with the link can read this conversation.`;
   drawer.render(state);
   stage.setOrbitals(state.orbitals, state.atom);
   drawTurns();
+}
+
+/** The studio stopped answering: free the page and say what to do. */
+function lostStudio() {
+  ui.pending = null;
+  setBusy(false);
+  drawTurns();
+  toast("The studio is not answering. Start it again and open the link it prints.");
 }
 
 async function toggle(side, name, enabled) {
@@ -111,8 +126,10 @@ async function toggle(side, name, enabled) {
     if ($("#dlg").open) closeDialog();
   } catch (error) {
     toast(error.message);
-    refresh(await getState());
+    try { refresh(await getState()); } catch { lostStudio(); return; }
   }
+  // The drawer was drawn again: give the focus back to the switch that was used.
+  document.querySelector(`#drawer input[data-side="${side}"][data-name="${CSS.escape(name)}"]`)?.focus();
 }
 
 async function send(text) {
@@ -123,19 +140,25 @@ async function send(text) {
   drawTurns();
   scrollToEnd();
   let finished = false;
+  let failure = null;
   try {
     await sendTurn(text, (event) => {
       if (event.type === "turn_finished") finished = true;
       stage.push(event);
     });
   } catch (error) {
-    toast(error.message);
+    failure = error;
   }
   // The stream ended without the turn's last event (a refused request or a lost connection):
   // ask the server where things stand.
   if (!finished) {
     ui.pending = null;
-    await settle();
+    try {
+      await settle();
+      if (failure) toast(failure.message);
+    } catch {
+      lostStudio();
+    }
   }
 }
 
@@ -160,12 +183,19 @@ function inspect(n) {
     busy: ui.busy,
     onNav: inspect,
     onRerun: send,
-    onClose: () => { ui.inspected = null; drawTurns(); },
+    onClose: () => {
+      const last = ui.inspected;
+      ui.inspected = null;
+      drawTurns();
+      // The turns were drawn again: give the focus back to the lens that opened the report.
+      document.querySelector(`.lens[data-n="${last}"]`)?.focus();
+    },
   });
 }
 
 $("#composer").addEventListener("submit", (e) => {
   e.preventDefault();
+  if (ui.busy) return; // Enter while a turn runs: keep what was typed
   const box = $("#msg");
   const text = box.value;
   box.value = "";
@@ -204,4 +234,4 @@ async function boot() {
   await settle();
   requestAnimationFrame(() => requestAnimationFrame(() => $("#app").classList.add("ready")));
 }
-boot().catch((error) => toast(error.message));
+boot().catch(lostStudio);

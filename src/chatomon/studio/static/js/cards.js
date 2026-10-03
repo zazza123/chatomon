@@ -1,5 +1,5 @@
 import { $, esc, fmtMs, shortFp, plural } from "./util.js";
-import { results } from "./turns.js";
+import { nucleusFailed, results } from "./turns.js";
 
 const dlg = $("#dlg");
 let onCloseHook = () => {};
@@ -88,7 +88,9 @@ export function showReport(turn, { total, onNav, onRerun, onClose, busy }) {
         const rows = results(turn, "output", i);
         return `<div class="attempt"><div class="attempt-head"><strong>Attempt ${i + 1}</strong><span class="pill ${status === "sent" ? "act-allow" : "act-block"}">${status}</span></div>${rows.length ? `<div class="res-list">${rows.map(resRow).join("")}</div>` : `<p class="muted">No output orbitals were on.</p>`}</div>`;
       }).join("")}</section>`
-    : `<section class="rep-sec"><h3 class="label">Nucleus</h3><p class="muted">Not called: the input chain ${action === "orbital_response" ? "answered" : "stopped"} the turn first.</p></section>`;
+    : `<section class="rep-sec"><h3 class="label">Nucleus</h3><p class="muted">${nucleusFailed(turn)
+        ? "The nucleus was called and failed before a reply could be checked."
+        : `Not called: the input chain ${action === "orbital_response" ? "answered" : "stopped"} the turn first.`}</p></section>`;
   const sent = turn.error
     ? `<section class="rep-sec"><h3 class="label">Error</h3><div class="final error">${esc(turn.error.type)}: ${esc(turn.error.message)}</div></section>`
     : `<section class="rep-sec"><h3 class="label">Sent to the user</h3><div class="final">${esc(turn.reply)}</div></section>`;

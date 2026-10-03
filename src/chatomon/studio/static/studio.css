@@ -42,6 +42,9 @@
 body { margin: 0; }
 .phase.warn .phase-title, .dock.warn .t { color: var(--warning); }
 .turn .error { color: var(--warning); }
+/* Text from the conversation keeps its line breaks. */
+.bubble, .kv dd, .rep-msg, .res dd, .final { white-space: pre-wrap; }
+.trail b.fail { background: var(--warning); }
 
 html, body { height: 100%; }
 body { background: var(--bg); color: var(--fg); font: 14px/1.5 var(--font-body); -webkit-font-smoothing: antialiased; }

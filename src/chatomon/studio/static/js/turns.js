@@ -12,6 +12,15 @@ export function results(turn, side, attempt = -1) {
   return turn.chain[side].map((name) => byName.get(name) || { name, action: "skip" });
 }
 
+/** Whether the nucleus was called and the call failed before any reply was checked. */
+export function nucleusFailed(turn) {
+  const report = turn.report;
+  const aborted = Boolean(turn.error) || (report && report.final_action === "aborted");
+  const attempts = report ? report.output.length : 0;
+  const stopped = results(turn, "input").some((x) => x.action === "block" || x.action === "respond");
+  return aborted && !attempts && !stopped;
+}
+
 export function redacted(turn) {
   return Boolean(turn.report && turn.report.input.some((r) => r.action === "block"));
 }
@@ -22,7 +31,11 @@ function trail(turn) {
   const attempts = turn.report ? turn.report.output.length : 0;
   const ins = results(turn, "input").map(dash).join("");
   const outs = attempts ? results(turn, "output").map(dash).join("") : "";
-  const nucleus = attempts ? `<b title="nucleus"></b>` : `<b class="skip" title="nucleus not called"></b>`;
+  const nucleus = attempts
+    ? `<b title="nucleus"></b>`
+    : nucleusFailed(turn)
+      ? `<b class="fail" title="nucleus failed"></b>`
+      : `<b class="skip" title="nucleus not called"></b>`;
   const regen = attempts > 1 ? `<span class="regen" title="${plural(attempts - 1, "regeneration")}">↻${attempts - 1}</span>` : "";
   return `<button class="trail" type="button" data-act="inspect" data-n="${turn.n}" aria-label="Orbital trail of turn ${turn.n}: open the report">${ins}${nucleus}${outs}${regen}</button>`;
 }
