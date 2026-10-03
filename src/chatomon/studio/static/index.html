@@ -1,3 +1,127 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>chatomon studio</title></head>
-<body><p>chatomon studio</p></body></html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>chatomon studio</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/studio.css">
+<script type="module" src="/static/js/main.js"></script>
+</head>
+<body>
+<div class="app" id="app" data-drawer="closed">
+  <header class="top">
+    <div class="top-left">
+      <button class="btn drawer-btn" type="button" id="drawer-btn" aria-controls="drawer" aria-expanded="false" title="Show or hide the atom">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/></svg>
+        Atom<span class="badge" id="drawer-badge" hidden></span>
+      </button>
+      <div class="brand">
+        <svg class="sym" viewBox="0 0 64 64" aria-hidden="true"><path class="sym-body" fill-rule="evenodd" d="M19 32 a13 13 0 1 0 26 0 a13 13 0 1 0 -26 0ZM25.5 30 a2 3.3 0 1 0 4 0 a2 3.3 0 1 0 -4 0ZM34.5 30 a2 3.3 0 1 0 4 0 a2 3.3 0 1 0 -4 0Z"/><g fill="none" stroke-width="6" stroke-linecap="round"><path class="sym-acc" d="M20.00 11.22 A24 24 0 0 0 14.53 15.54"/><path class="sym-ink" d="M8.26 28.49 A24 24 0 0 0 8.25 35.46"/><path class="sym-ink" d="M14.50 48.43 A24 24 0 0 0 20.00 52.78"/><path class="sym-ink" d="M44.00 11.22 A24 24 0 0 1 49.47 15.54"/><path class="sym-ink" d="M55.74 28.49 A24 24 0 0 1 55.74 35.51"/><path class="sym-acc" d="M49.47 48.46 A24 24 0 0 1 44.00 52.78"/></g></svg>
+        <span class="wordmark">chatomon</span><span class="tag wordmark-tag">studio</span>
+      </div>
+    </div>
+    <div class="top-right">
+      <span class="addr mono" id="addr" title="The address the studio listens on"></span>
+      <span class="chip-warn" tabindex="0" title='The studio runs your atom with capture_content="full": it shows message text, guidance and judge explanations. It only listens on 127.0.0.1.'>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+        Content visible<span class="long">&nbsp;· local only</span>
+      </span>
+      <button class="icon-btn" id="theme" type="button" aria-label="Change theme"></button>
+    </div>
+  </header>
+
+  <aside class="drawer" id="drawer" aria-label="Atom">
+    <div class="drawer-inner">
+      <div class="pane-scroll">
+        <div class="pane-head">
+          <h2 class="label">Atom</h2>
+          <button class="icon-btn sm" type="button" data-act="collapse" aria-label="Hide the atom" title="Hide">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+          </button>
+        </div>
+        <button class="atom-card" type="button" data-act="atom">
+          <span class="t" id="atom-name"></span>
+          <span class="src" id="atom-source"></span>
+        </button>
+
+        <div class="chain">
+          <div class="chain-head">
+            <h2 class="label">Input orbitals</h2>
+            <span class="count" id="count-input"></span>
+          </div>
+          <ol class="orb-list" id="list-input"></ol>
+        </div>
+
+        <button class="nucleus-row" type="button" data-act="atom">
+          <span class="nuc-dot" aria-hidden="true"></span>
+          <span><span class="orb-name">nucleus</span><span class="orb-kind" id="nucleus-kind"></span></span>
+        </button>
+
+        <div class="chain">
+          <div class="chain-head">
+            <h2 class="label">Output orbitals</h2>
+            <span class="count" id="count-output"></span>
+          </div>
+          <ol class="orb-list" id="list-output"></ol>
+        </div>
+      </div>
+    </div>
+  </aside>
+  <div class="scrim" id="scrim" hidden></div>
+
+  <main class="play" id="play">
+    <div class="column">
+      <section class="stage" id="stage" aria-label="The atom">
+        <div class="stage-top">
+          <div class="left">
+            <span class="label" id="turn-label">Next: turn 1</span>
+            <button class="tbtn" type="button" id="new-conv">New conversation</button>
+          </div>
+          <div class="seg" role="group" aria-label="Playback speed">
+            <button type="button" id="sp-slow" aria-pressed="true">Slow motion</button>
+            <button type="button" id="sp-real" aria-pressed="false">Real time</button>
+          </div>
+        </div>
+        <svg id="atom" class="atom pose-rest" viewBox="-22 -16 244 240" role="img" aria-labelledby="phase-title"><g class="atom-root"></g></svg>
+        <p class="phase" aria-live="polite"><span class="phase-title" id="phase-title">Waiting for a message</span><span class="phase-sub" id="phase-sub"></span></p>
+        <div class="legend" aria-hidden="true">
+          <span><i class="lg pass"></i>passed</span>
+          <span><i class="lg block"></i>blocked</span>
+          <span><i class="lg skip"></i>not run</span>
+          <span>Click a dash or the nucleus to open it</span>
+        </div>
+      </section>
+      <div class="log" id="log"></div>
+    </div>
+    <form class="composer" id="composer">
+      <div class="composer-inner">
+        <button class="dock" type="button" id="dock" hidden aria-label="Scroll up to the atom">
+          <svg id="dock-atom" class="atom pose-rest" viewBox="-22 -16 244 240" aria-hidden="true"><g class="atom-root"></g></svg>
+          <span><span class="t" id="dock-title">Waiting for a message</span><span class="s" id="dock-sub"></span></span>
+        </button>
+        <div class="input-row">
+          <label class="sr" for="msg">Message</label>
+          <textarea id="msg" rows="1" placeholder="Write a message to the atom…"></textarea>
+          <button class="btn primary" id="send" type="submit">Send</button>
+        </div>
+        <p class="hint">Turn an orbital off in the atom, then send the same message again to compare.</p>
+      </div>
+    </form>
+  </main>
+</div>
+
+<dialog id="dlg" aria-labelledby="dlg-title">
+  <div class="dlg-head">
+    <div class="dlg-titles"><h2 id="dlg-title"></h2><div class="dlg-sub" id="dlg-sub"></div></div>
+    <div class="dlg-extra" id="dlg-extra"></div>
+    <button class="icon-btn" type="button" data-dlg="close" aria-label="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </div>
+  <div class="dlg-body" id="dlg-body"></div>
+  <div class="dlg-actions" id="dlg-actions"></div>
+</dialog>
+<div class="toast" id="toast" role="status"><span id="toast-text"></span><button type="button" id="toast-act" hidden></button></div>
+</body>
+</html>
