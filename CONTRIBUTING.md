@@ -88,7 +88,7 @@ Issues are classified along independent axes. Only `type:` is mandatory.
 | Axis | How many | Values |
 |---|---|---|
 | `type:` | exactly 1 on open issues | `feat` · `fix` · `refactor` · `docs` · `chore` · `epic` |
-| `area:` | 0–N | `core` · `connectors` · `orbitals` · `observability` · `docs` · `ci` |
+| `area:` | 0–N | `core` · `connectors` · `orbitals` · `observability` · `docs` · `ci` · `studio` |
 | `framework:` | 0–N | `pydantic-ai` · `langchain` · `maf` |
 | `priority:` | 0–1 | `high` · `low` — absent means normal |
 | `status:` | 0–1 | `needs-triage` · `needs-info` · `blocked` |
@@ -103,6 +103,7 @@ Issues are classified along independent axes. Only `type:` is mandatory.
 | `observability` | `observability.py` | `observability.md` |
 | `docs` | `docs/public/`, `zensical.toml`, docstrings | — |
 | `ci` | `.github/`, `scripts/`, `tests/tooling/` | — |
+| `studio` | `studio/`, `tests/studio/` | `studio.md` |
 
 **`framework:` is which agent framework is involved**, independently of
 `area:` — an OpenTelemetry problem only LangChain shows is
