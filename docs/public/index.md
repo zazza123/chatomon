@@ -23,6 +23,7 @@ chatomon ("chat" + "atom") lets you declare a chat agent once — an **atom** ma
 - **Guard models included** — an LLM judge and wrappers for Principled Intelligence's ScopeGuard (V1 and V2) and ClaimExtractor.
 - **Ready-made limits** — caps on message and reply length and on the number of turns, with no model call.
 - **Audit and privacy** — a structured report for every turn, OpenTelemetry spans and logs that carry no message content unless you allow it.
+- **A local studio** — a page on your machine to chat with an atom, watch every orbital decide and switch orbitals on and off.
 
 ## Installation
 
@@ -169,6 +170,14 @@ An atom with one input orbital that turns refund requests into a guided refusal.
 
     [:lucide-arrow-right: Observability](observability.md)
 
+-   :lucide-flask-conical:{ .lg .middle } __Studio__
+
+    ---
+
+    A local page to chat with an atom, watch its orbitals decide and inspect every turn.
+
+    [:lucide-arrow-right: Studio](studio.md)
+
 -   :lucide-server:{ .lg .middle } __Deployment__
 
     ---
@@ -204,6 +213,7 @@ The [Changelog](changelog.md) explains where release notes are published and how
 | `JudgeOrbital` | `src/chatomon/orbitals/judge.py` | An LLM that judges messages with its own instructions |
 | `MessageLengthOrbital`, `TurnLimitOrbital` | `src/chatomon/orbitals/limits.py` | Ready-made length and turn limits |
 | `ScopeGuardOrbital`, `ClaimExtractorOrbital` | `src/chatomon/orbitals/principled.py` | Principled Intelligence guard models as orbitals |
+| `serve` | `src/chatomon/studio/server.py` | Starts the local studio for an atom |
 
 ## Related Documentation
 
