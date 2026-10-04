@@ -52,6 +52,9 @@
 - name: "area:ci"
   color: "c5def5"
   description: "GitHub Actions, scripts and repository tooling"
+- name: "area:studio"
+  color: "c5def5"
+  description: "The local studio: its server, page and tests"
 
 # ─── framework: — which agent framework is involved ──────────────────────────
 - name: "framework:pydantic-ai"

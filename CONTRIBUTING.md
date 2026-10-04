@@ -88,7 +88,7 @@ Issues are classified along independent axes. Only `type:` is mandatory.
 | Axis | How many | Values |
 |---|---|---|
 | `type:` | exactly 1 on open issues | `feat` · `fix` · `refactor` · `docs` · `chore` · `epic` |
-| `area:` | 0–N | `core` · `connectors` · `orbitals` · `observability` · `docs` · `ci` |
+| `area:` | 0–N | `core` · `connectors` · `orbitals` · `observability` · `docs` · `ci` · `studio` |
 | `framework:` | 0–N | `pydantic-ai` · `langchain` · `maf` |
 | `priority:` | 0–1 | `high` · `low` — absent means normal |
 | `status:` | 0–1 | `needs-triage` · `needs-info` · `blocked` |
@@ -103,6 +103,7 @@ Issues are classified along independent axes. Only `type:` is mandatory.
 | `observability` | `observability.py` | `observability.md` |
 | `docs` | `docs/public/`, `zensical.toml`, docstrings | — |
 | `ci` | `.github/`, `scripts/`, `tests/tooling/` | — |
+| `studio` | `studio/`, `tests/studio/` | `studio.md` |
 
 **`framework:` is which agent framework is involved**, independently of
 `area:` — an OpenTelemetry problem only LangChain shows is
@@ -314,6 +315,8 @@ others — is the most likely large contribution, so its path is written down:
      pinned;
    - a harness in `tests/contract/` passes the whole contract suite, using the
      framework's fake models and no network;
+   - a studio runner in `src/chatomon/studio/_runners/` passes the event
+     scenarios of `tests/studio/test_events.py`;
    - `docs/public/connectors/` has a page for it, listed in the `nav` of
      `zensical.toml`, and `docs/public/reference/` has a page for its public
      module or package.

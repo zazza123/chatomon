@@ -94,6 +94,7 @@ body:
         - "area:observability — Logging, OpenTelemetry, turn reports"
         - "area:docs — Documentation site, docstrings"
         - "area:ci — GitHub Actions, scripts, repository tooling"
+        - "area:studio — Local studio, its page and tests"
         - "Don't know"
 
   - type: dropdown

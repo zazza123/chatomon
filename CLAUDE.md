@@ -1,6 +1,6 @@
 # chatomon
 
-chatomon ("chat" + "atom") is a Python library to declare a chat agent — an **Atom** (instructions, knowledge, connector) — wrapped by ordered chains of **Orbitals** (input/output guardrails), and build it into a **native** agent of existing frameworks (PydanticAI, LangChain/LangGraph, Microsoft Agent Framework; Google ADK next). It is not a chatbot framework: it never runs the agent itself.
+chatomon ("chat" + "atom") is a Python library to declare a chat agent — an **Atom** (instructions, knowledge, connector) — wrapped by ordered chains of **Orbitals** (input/output guardrails), and build it into a **native** agent of existing frameworks (PydanticAI, LangChain/LangGraph, Microsoft Agent Framework; Google ADK next). It is not a chatbot framework: it never runs the agent itself, except in the studio (`chatomon.studio`), a local development tool.
 
 Architecture invariants are stated in this file. The maintainer keeps the design spec outside the repository; any rule a contributor must follow lives here or in `CONTRIBUTING.md`.
 
@@ -16,7 +16,7 @@ Architecture invariants are stated in this file. The maintainer keeps the design
 
 - The engine (`engine.py`) holds all orbital-chain semantics and is pure Python — no framework imports. Connectors only translate `InputDecision`/`OutputDecision` into native hooks.
 - `schemas.py` imports nothing from chatomon.
-- Framework and `orbitals` imports live only in `connectors/<framework>.py` or `connectors/<framework>/` and `orbitals/principled.py`, imported lazily; a missing extra raises an error naming the extra to install.
+- Framework and `orbitals` imports live only in `connectors/<framework>.py` or `connectors/<framework>/`, `studio/_runners/<framework>.py` and `orbitals/principled.py`, imported lazily; a missing extra raises an error naming the extra to install. Web (`starlette`, `uvicorn`) and OpenTelemetry SDK imports live only in `studio/`; everywhere else chatomon depends only on `opentelemetry-api`.
 - `Orbital` and `Connector` are the only abstract extension points. Don't add abstractions without a second concrete use.
 - Never derive an orbital's definition/config from the Atom. Sharing (e.g. the same `Knowledge` given to a judge) is always explicit.
 - Defaults are fail-closed (`on_error="block"`) and content-free (`capture_content="none"`).
@@ -25,7 +25,7 @@ Architecture invariants are stated in this file. The maintainer keeps the design
 
 - Loggers are `logging.getLogger(__name__)` under `chatomon.*`; only a `NullHandler` on `chatomon`. Never configure handlers.
 - Never log, trace or report message content, guidance, annotations or judge explanations unless `capture_content` allows it.
-- Depend only on `opentelemetry-api`. Open and close spans within the same hook — never across hooks or across `yield`.
+- Depend only on `opentelemetry-api`; only the studio also uses the SDK, to collect the spans it shows. Open and close spans within the same hook — never across hooks or across `yield`.
 
 ## Docstrings (API reference is generated from them with Zensical + mkdocstrings)
 
@@ -49,6 +49,14 @@ Architecture invariants are stated in this file. The maintainer keeps the design
 - Every engine rule has a unit test with fake orbitals.
 - Every connector must pass the shared contract suite in `tests/contract/`, using the framework's fake models — no network.
 - Real-service tests live in `tests/integration/`, are marked `integration` and are skipped unless their environment variables are set.
+
+## Studio (`chatomon.studio`)
+
+- **Architecture.** The studio talks to the core only through the public API and the spans the engine already opens; it never changes the engine to serve the UI. It never mutates the developer's atom: it builds a copy with its own `on_turn`, `capture_content="full"` and `tracer_provider`. The server computes, the browser renders: orbital semantics, code generation, presets and tests are Python. The state and event JSON shapes are a contract tested in `tests/studio/`. `serve()` configures no logging and prints only its URL.
+- **Extending.** A new connector gets a studio runner in `studio/_runners/<framework>.py` that runs one turn with the conversation history and passes the event scenarios of `tests/studio/test_events.py`. A new orbital needs nothing in the studio, which shows any orbital through `config()` and `fingerprint()`. An orbital can be added from the studio only when its constructor takes plain values; orbitals that need objects (clients, functions) are added in code. Secrets never reach the browser, presets or generated code; only environment variable names do.
+- **Frontend.** No build step: static HTML, CSS and ES modules in `studio/static/`; no Node, framework, bundler or CDN, and no external URL. Fonts ship with their OFL licences. The brand tokens equal those of `docs/public/stylesheets/chatomon.css`, and every mascot pose or animation the studio uses is also saved, light and dark, in `docs/public/assets/brand/mascot/` (animations in `animated/`); tests check both. Both themes, keyboard access, visible focus, `aria-live` for turn phases, `prefers-reduced-motion`, phone width.
+- **Local tools.** Any chatomon tool that opens a server listens on `127.0.0.1` by default (another address only explicitly, with a printed warning; never a bind-all address), checks `Host` on every request and `Origin` on every state-changing one, requires a per-run token kept in an `HttpOnly`, `SameSite=Strict` cookie and never logged, sends a `Content-Security-Policy` that allows only its own files and forbids framing, and says on screen when content is captured.
+- **Testing.** Studio tests live in `tests/studio/`. Browser checks are Playwright smoke tests marked `e2e`, skipped unless `CHATOMON_E2E=1`, run in their own CI job.
 
 ## Workflow
 

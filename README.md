@@ -16,6 +16,7 @@ pip install 'chatomon[pydantic-ai]'   # or 'chatomon[langchain]'
 pip install 'chatomon[maf]'           # MAF core; add your provider's MAF client package
 pip install 'chatomon[maf-foundry]'   # FoundryChatClient and FoundryAgent
 pip install 'chatomon[principled]'    # Principled Intelligence ScopeGuard / ClaimExtractor orbitals
+pip install 'chatomon[studio,pydantic-ai]'  # the local studio: chatomon studio module:atom
 ```
 
 Both MAF connectors support input and output orbitals on non-streaming runs. The [MAF guide](docs/public/connectors/maf.md) covers local Foundry sessions and connector configuration.
@@ -48,6 +49,8 @@ assert agent.run_sync("I want a refund").output == "Refunds are handled by email
 ```
 
 Replace `TestModel(...)` with a real model, for example `"openai:gpt-5"`.
+
+To try an atom in the browser, run `chatomon studio speedypack.app:atom` and open the printed link: the studio shows every orbital deciding, turn by turn.
 
 ## Documentation
 
