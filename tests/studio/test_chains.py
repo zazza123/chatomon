@@ -103,7 +103,7 @@ def test_what_an_edit_may_not_do(chains):
         chains.edited("input", "message_length", {"max_words": None})
     with pytest.raises(UnknownOrbitalError, match="no input orbital named 'ghost'"):
         chains.edited("input", "ghost", {"timeout": 5})
-    with pytest.raises(UnknownOrbitalError, match="no sideways orbital named 'scope'"):
+    with pytest.raises(InvalidRequestError, match="side must be 'input' or 'output'"):
         chains.switched("sideways", "scope", False)
 
 

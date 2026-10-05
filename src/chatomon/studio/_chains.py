@@ -139,14 +139,16 @@ class Chains:
             The side and the 0-based position in its chain.
 
         Raises:
+            InvalidRequestError: If the side does not exist.
             UnknownOrbitalError: If there is no such orbital.
         """
-        if side in SIDES:
-            where = cast("Side", side)
-            for index, entry in enumerate(self.work[where]):
-                if entry.orbital.name == name:
-                    return where, index
-        raise UnknownOrbitalError(f"the atom has no {side} orbital named {name!r}")
+        if side not in SIDES:
+            raise InvalidRequestError("side must be 'input' or 'output'")
+        where = cast("Side", side)
+        for index, entry in enumerate(self.work[where]):
+            if entry.orbital.name == name:
+                return where, index
+        raise UnknownOrbitalError(f"the atom has no {where} orbital named {name!r}")
 
     def free_name(self, cls: type[Orbital]) -> str:
         """Return the first name a new orbital of that class can take."""

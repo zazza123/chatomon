@@ -428,3 +428,47 @@ def test_an_invalid_preset_lists_its_problems(tunable):
     missing = tunable.post("/api/preset", json={"preset": {}}, headers=ORIGIN)
     assert (missing.status_code, missing.json()["error"]["type"]) == (422, "InvalidBody")
     assert tunable.post("/api/preset", json={"text": "{}"}).status_code == 403
+
+
+def raw(client, method, path, body: bytes):
+    headers = {**ORIGIN, "content-type": "application/json"}
+    return client.request(method, path, content=body, headers=headers)
+
+
+def test_text_that_cannot_be_sent_back_is_refused_at_the_door(tunable):
+    bad = "\\ud800"  # a lone surrogate, as a JSON escape
+    requests = [
+        ("POST", "/api/orbitals", f'{{"side": "input", "kind": "{bad}", "settings": {{}}}}'),
+        ("PATCH", "/api/orbitals", f'{{"side": "{bad}", "name": "scope", "enabled": false}}'),
+        (
+            "PATCH",
+            "/api/orbitals",
+            f'{{"side": "input", "name": "message_length", "settings": {{"{bad}": 1}}}}',
+        ),
+        ("DELETE", "/api/orbitals", f'{{"side": "input", "name": "{bad}"}}'),
+        ("POST", "/api/orbitals/reset", f'{{"side": "input", "name": "{bad}"}}'),
+    ]
+    for method, path, body in requests:
+        response = raw(tunable, method, path, body.encode())
+        assert response.status_code == 422, body
+        assert response.json()["error"]["type"] == "InvalidBody", body
+    assert tunable.get("/api/state").status_code == 200
+
+
+def test_a_side_that_does_not_exist_is_a_malformed_request(tunable):
+    for response in (
+        patch(tunable, "scope", side="sideways", enabled=False),
+        delete(tunable, "scope", side="sideways"),
+    ):
+        assert response.status_code == 422
+        assert response.json()["error"] == {
+            "type": "InvalidBody",
+            "message": "side must be 'input' or 'output'",
+        }
+
+
+def test_a_reset_with_a_body_that_is_not_an_object_resets_nothing(tunable):
+    patch(tunable, "scope", enabled=False)
+    for body in (b"[1]", b"nonsense", b'"all"'):
+        assert raw(tunable, "POST", "/api/orbitals/reset", body).status_code == 422
+    assert len(tunable.get("/api/state").json()["changes"]) == 1

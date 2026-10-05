@@ -86,6 +86,16 @@ def _parsed(text: str) -> dict[str, Any]:
         raise InvalidPresetError([f"this is not valid JSON: {exc.msg} {where}"]) from exc
     except RecursionError as exc:
         raise InvalidPresetError(["this is not valid JSON: it is nested too deeply"]) from exc
+    except ValueError as exc:
+        # Python refuses to read an integer of thousands of digits.
+        raise InvalidPresetError(
+            ["this is not valid JSON: it has a number too large to read"]
+        ) from exc
+    try:
+        json.dumps(data, ensure_ascii=False).encode("utf-8")
+    except UnicodeEncodeError as exc:
+        # A lone surrogate from a JSON escape could not be sent back in a message.
+        raise InvalidPresetError(["this preset has text that is not valid Unicode"]) from exc
     version = data.get("chatomon_studio_preset") if isinstance(data, dict) else None
     if version is None:
         raise InvalidPresetError([_NOT_PRESET])

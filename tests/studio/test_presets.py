@@ -410,3 +410,15 @@ def test_a_preset_edited_by_hand_never_crashes_the_import(odd):
         except InvalidPresetError as exc:
             assert exc.problems
             assert all(isinstance(problem, str) for problem in exc.problems)
+
+
+def test_text_the_studio_cannot_read_or_send_back_is_a_problem_not_a_failure():
+    session = make_session()
+    with pytest.raises(InvalidPresetError) as caught:
+        session.import_preset('{"chatomon_studio_preset": ' + "9" * 5000 + "}")
+    assert caught.value.problems == ["this is not valid JSON: it has a number too large to read"]
+    odd = with_added("output", name="tone", kind="\ud800", settings=JUDGE)
+    with pytest.raises(InvalidPresetError) as caught:
+        session.import_preset(json.dumps(odd))
+    assert caught.value.problems == ["this preset has text that is not valid Unicode"]
+    assert session.state()["changes"] == []

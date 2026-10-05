@@ -61,7 +61,10 @@ def _refusal(exc: ChatomonError) -> JSONResponse:
 async def _body(request: Request) -> dict[str, Any] | None:
     try:
         body = await request.json()
-    except ValueError:
+        # Text that cannot be encoded, such as a lone surrogate from a JSON escape,
+        # could not be sent back in a message either: refuse it here, for every route.
+        json.dumps(body, ensure_ascii=False).encode("utf-8")
+    except (ValueError, RecursionError):
         return None
     return body if isinstance(body, dict) else None
 
@@ -156,10 +159,10 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
         return JSONResponse(state())
 
     async def reset_orbitals(request: Request) -> Response:
-        body = await _body(request) or {}
-        side, name = body.get("side"), body.get("name")
+        body = await _body(request)
+        side, name = (body or {}).get("side"), (body or {}).get("name")
         one = isinstance(side, str) and isinstance(name, str)
-        if not one and (side is not None or name is not None):
+        if body is None or (not one and (side is not None or name is not None)):
             return _error(422, "InvalidBody", 'send {} or {"side": "input", "name": "..."}')
         try:
             session.reset_orbitals(side, name) if one else session.reset_orbitals()
