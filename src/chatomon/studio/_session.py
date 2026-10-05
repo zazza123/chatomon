@@ -15,10 +15,11 @@ from pydantic_core import to_json
 
 from chatomon._version import __version__
 from chatomon.atom import Atom
-from chatomon.errors import ChatomonError
+from chatomon.errors import ChatomonConfigError, ChatomonError
 from chatomon.schemas import Side, TurnReport
 from chatomon.studio import _codegen as codegen
 from chatomon.studio import _kinds as kinds
+from chatomon.studio import _presets as presets
 from chatomon.studio._chains import SIDES, Chains, Entry, RefusedError
 from chatomon.studio._events import Event, EventProcessor
 from chatomon.studio._runners import check_supported
@@ -220,6 +221,33 @@ class Session:
             "placeholders": result.placeholders,
             "notes": result.notes,
         }
+
+    def export_preset(self) -> dict[str, Any]:
+        """Return the session's orbital changes as a preset."""
+        return presets.exported(self.chains, atom=self.atom.name)
+
+    def import_preset(self, text: str) -> list[str]:
+        """Replace the session's orbital changes with a preset's; it can be undone.
+
+        Args:
+            text: The preset, as JSON text.
+
+        Returns:
+            The warnings: what differs from the exported session.
+
+        Raises:
+            StudioBusyError: While a turn runs.
+            InvalidPresetError: With every problem; nothing changes.
+        """  # noqa: DOC502 - raised by the helpers
+        self._require_idle()
+        candidate, warnings = presets.applied(
+            text, self.chains, atom=self.atom.name, source=self.source
+        )
+        try:
+            self._adopt(candidate, undo="Preset imported")
+        except ChatomonConfigError as exc:
+            raise presets.InvalidPresetError([str(exc)]) from exc
+        return warnings
 
     def reset_conversation(self) -> None:
         """Start a new conversation.

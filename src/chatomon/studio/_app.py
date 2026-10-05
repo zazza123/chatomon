@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import AsyncIterator
 from importlib.resources import files
 from typing import Any
@@ -20,6 +21,7 @@ from chatomon.errors import ChatomonError
 from chatomon.studio._chains import InvalidRequestError, UnknownOrbitalError
 from chatomon.studio._events import Event
 from chatomon.studio._kinds import InvalidSettingError
+from chatomon.studio._presets import InvalidPresetError
 from chatomon.studio._security import LOOPBACK, Guard
 from chatomon.studio._session import Session, StudioBusyError
 
@@ -50,6 +52,8 @@ def _refusal(exc: ChatomonError) -> JSONResponse:
     if isinstance(exc, InvalidSettingError):
         extra = {} if exc.setting is None else {"setting": exc.setting}
         return _error(422, "InvalidSetting", str(exc), **extra)
+    if isinstance(exc, InvalidPresetError):
+        return _error(422, "InvalidPreset", str(exc), problems=exc.problems)
     # A refusal by the orbital or the session, or by the chain when the atom is built.
     return _error(409, "Refused", str(exc))
 
@@ -173,6 +177,25 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
     async def get_code(request: Request) -> Response:
         return JSONResponse(session.code(), headers=_NO_STORE)
 
+    async def get_preset(request: Request) -> Response:
+        text = json.dumps(session.export_preset(), indent=2, ensure_ascii=False) + "\n"
+        headers = dict(_NO_STORE)
+        if request.query_params.get("download") == "1":
+            name = re.sub(r"[^A-Za-z0-9_.-]", "_", session.atom.name) or "atom"
+            headers["Content-Disposition"] = f'attachment; filename="{name}.preset.json"'
+        return Response(text, media_type="application/json", headers=headers)
+
+    async def post_preset(request: Request) -> Response:
+        body = await _body(request) or {}
+        text = body.get("text")
+        if not isinstance(text, str):
+            return _error(422, "InvalidBody", 'send {"text": "<the preset>"}')
+        try:
+            warnings = session.import_preset(text)
+        except ChatomonError as exc:
+            return _refusal(exc)
+        return JSONResponse({"state": state(), "warnings": warnings})
+
     async def post_reset(request: Request) -> Response:
         try:
             session.reset_conversation()
@@ -185,6 +208,8 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
         Route("/api/state", get_state, methods=["GET"]),
         Route("/api/turns", post_turn, methods=["POST"]),
         Route("/api/code", get_code, methods=["GET"]),
+        Route("/api/preset", get_preset, methods=["GET"]),
+        Route("/api/preset", post_preset, methods=["POST"]),
         Route("/api/orbitals", patch_orbital, methods=["PATCH"]),
         Route("/api/orbitals", post_orbital, methods=["POST"]),
         Route("/api/orbitals", delete_orbital, methods=["DELETE"]),

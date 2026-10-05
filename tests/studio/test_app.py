@@ -376,3 +376,55 @@ def test_copy_as_code(tunable):
     assert "MessageLengthOrbital(max_words=80)," in body["code"]
     assert body["placeholders"] == ["scope: a ScriptedOrbital from your code"]
     assert response.headers["cache-control"] == "no-store"
+
+
+def test_exporting_a_preset(tunable):
+    patch(tunable, "message_length", settings={"max_words": 80})
+    response = tunable.get("/api/preset")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    assert "content-disposition" not in response.headers
+    assert response.text.startswith('{\n  "chatomon_studio_preset": 1,')
+    assert response.json()["input_orbitals"][0]["settings"] == {"max_words": 80}
+    download = tunable.get("/api/preset?download=1")
+    assert download.headers["content-disposition"] == (
+        'attachment; filename="speedypack.preset.json"'
+    )
+    assert download.json() == response.json()
+
+
+def test_the_downloaded_file_has_a_safe_name():
+    atom = Atom(
+        name='my atom/"1"',
+        instructions="Be brief.",
+        connector=PydanticAIConnector(TestModel()),
+    )
+    app = create_app(Session(atom, source="app:atom"), token=TOKEN, host="127.0.0.1", port=8016)
+    with TestClient(app, base_url=BASE) as client:
+        client.get(f"/?token={TOKEN}")
+        header = client.get("/api/preset?download=1").headers["content-disposition"]
+    assert header == 'attachment; filename="my_atom__1_.preset.json"'
+
+
+def test_importing_a_preset(tunable):
+    patch(tunable, "scope", enabled=False)
+    text = tunable.get("/api/preset").text
+    tunable.post("/api/orbitals/reset", json={}, headers=ORIGIN)
+    response = tunable.post("/api/preset", json={"text": text}, headers=ORIGIN)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["warnings"] == []
+    assert [change["text"] for change in body["state"]["changes"]] == ["scope turned off"]
+    assert body["state"]["undo"] == "Preset imported"
+
+
+def test_an_invalid_preset_lists_its_problems(tunable):
+    response = tunable.post("/api/preset", json={"text": "{oops"}, headers=ORIGIN)
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert (error["type"], error["message"]) == ("InvalidPreset", "the preset was not applied")
+    assert len(error["problems"]) == 1
+    assert error["problems"][0].startswith("this is not valid JSON: ")
+    missing = tunable.post("/api/preset", json={"preset": {}}, headers=ORIGIN)
+    assert (missing.status_code, missing.json()["error"]["type"]) == (422, "InvalidBody")
+    assert tunable.post("/api/preset", json={"text": "{}"}).status_code == 403
