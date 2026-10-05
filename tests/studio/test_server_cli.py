@@ -122,6 +122,8 @@ def test_the_command_starts_the_studio(project, monkeypatch):
         "port": 9000,
         "open_browser": False,
     }
+    # Copy as code looks names up in the module the atom was loaded from.
+    assert started["namespace"]["atom"] is started["atom"]
 
 
 def test_the_command_uses_the_default_port(project, monkeypatch):
@@ -254,3 +256,12 @@ def test_the_token_never_reaches_the_logs_of_the_real_server(monkeypatch, caplog
         thread.join(timeout=10)
     assert caplog.records
     assert token not in caplog.text
+
+
+def test_serve_has_no_module_to_look_names_up_in(monkeypatch):
+    started: dict = {}
+    monkeypatch.setattr(
+        server, "_start", lambda atom, **kwargs: started.update(atom=atom, **kwargs)
+    )
+    server.serve(make_atom(), open_browser=False)
+    assert "namespace" not in started

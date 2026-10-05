@@ -365,3 +365,14 @@ def test_every_change_is_refused_while_a_turn_runs(tunable, monkeypatch):
         tunable.post("/api/orbitals/undo", json={}, headers=ORIGIN),
     ]
     assert [(r.status_code, r.json()["error"]["type"]) for r in responses] == [(409, "Busy")] * 7
+
+
+def test_copy_as_code(tunable):
+    patch(tunable, "message_length", settings={"max_words": 80})
+    response = tunable.get("/api/code")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["changes"] == ["message_length.max_words changed"]
+    assert "MessageLengthOrbital(max_words=80)," in body["code"]
+    assert body["placeholders"] == ["scope: a ScriptedOrbital from your code"]
+    assert response.headers["cache-control"] == "no-store"

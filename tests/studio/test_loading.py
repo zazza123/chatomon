@@ -6,7 +6,7 @@ from pydantic_ai.models.test import TestModel
 
 from chatomon import Atom, ChatomonConfigError
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
-from chatomon.studio._loading import load, resolve
+from chatomon.studio._loading import load, namespace, resolve
 
 
 def make_atom() -> Atom:
@@ -105,3 +105,12 @@ def test_the_current_directory_wins_over_a_module_elsewhere_on_the_path(
     project(HEADER + "atom = make()\n")
     monkeypatch.setattr(sys, "path", [str(elsewhere), str(tmp_path), *sys.path])
     assert load("app:atom").name == "t"
+
+
+def test_the_namespace_of_the_loaded_module(project):
+    project(HEADER + "atom = make()\nlimit = 3\n")
+    atom = load("app:atom")
+    found = namespace("app:atom")
+    assert found["atom"] is atom
+    assert found["limit"] == 3
+    assert namespace("not_imported_anywhere:atom") == {}

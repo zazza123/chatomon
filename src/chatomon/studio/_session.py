@@ -17,6 +17,7 @@ from chatomon._version import __version__
 from chatomon.atom import Atom
 from chatomon.errors import ChatomonError
 from chatomon.schemas import Side, TurnReport
+from chatomon.studio import _codegen as codegen
 from chatomon.studio import _kinds as kinds
 from chatomon.studio._chains import SIDES, Chains, Entry, RefusedError
 from chatomon.studio._events import Event, EventProcessor
@@ -69,12 +70,19 @@ class TurnRecord:
 class Session:
     """Runs turns on a copy of the developer's atom; one conversation, one turn at a time."""
 
-    def __init__(self, atom: Atom[Any], *, source: str) -> None:
+    def __init__(
+        self,
+        atom: Atom[Any],
+        *,
+        source: str,
+        namespace: Mapping[str, object] | None = None,
+    ) -> None:
         check_supported(atom.connector)
         from chatomon.studio._runners import pydantic_ai as runner
 
         self.atom = atom
         self.source = source
+        self.namespace = namespace
         self._runner = runner
         self.processor = EventProcessor()
         self.provider = _always_recording_provider()
@@ -202,6 +210,16 @@ class Session:
         if self._undo is None:
             raise RefusedError("nothing to undo")
         self._adopt(self._undo[0])
+
+    def code(self) -> dict[str, Any]:
+        """Return Copy as code: the text, the changes, the placeholders and the notes."""
+        result = codegen.generate(self.chains, self.namespace)
+        return {
+            "code": result.code,
+            "changes": [change.text for change in self.chains.changes()],
+            "placeholders": result.placeholders,
+            "notes": result.notes,
+        }
 
     def reset_conversation(self) -> None:
         """Start a new conversation.
@@ -339,11 +357,14 @@ class Session:
                 }
                 for setting in kind.settings
             ]
+            known = codegen.names(self.namespace)
             for key in kind.objects:
                 value = kinds.read(orb, key, self.atom.connector)
                 if value is not None:
                     # The class name only: an object's repr could carry a secret.
-                    fixed.append({"key": key, "type": type(value).__name__, "name": None})
+                    fixed.append(
+                        {"key": key, "type": type(value).__name__, "name": known.get(id(value))}
+                    )
         data = {
             "name": orb.name,
             "kind": type(orb).__name__,

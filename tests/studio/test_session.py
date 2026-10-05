@@ -452,3 +452,20 @@ async def test_an_instance_in_both_chains_is_edited_as_one():
     assert orbitals["output"][0]["settings"][0]["value"] == 80
     events = await drain(session.start_turn("hello"))
     assert events[-1]["turn"]["report"]["final_action"] == "answered"
+
+
+def test_the_session_writes_its_code_and_names_objects_from_the_namespace():
+    own = PydanticAIConnector(TestModel())
+    judge = JudgeOrbital(model="test:judge", instructions="Check facts.", connector=own)
+    atom = make_atom(input_orbitals=[MessageLengthOrbital(max_words=60)], output_orbitals=[judge])
+    session = Session(atom, source="app:atom", namespace={"spare": own, "facts": judge})
+    session.edit("input", "message_length", {"max_words": 80})
+    assert session.state()["orbitals"]["output"][0]["fixed"] == [
+        {"key": "connector", "type": "PydanticAIConnector", "name": "spare"}
+    ]
+    code = session.code()
+    assert sorted(code) == ["changes", "code", "notes", "placeholders"]
+    assert code["changes"] == ["message_length.max_words changed"]
+    assert "MessageLengthOrbital(max_words=80)" in code["code"]
+    assert "output_orbitals=[facts]," in code["code"]
+    assert (code["placeholders"], code["notes"]) == ([], [])

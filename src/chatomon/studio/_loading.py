@@ -41,6 +41,21 @@ def load(spec: str) -> Atom[Any]:
     return resolve(value, label=spec)
 
 
+def namespace(spec: str) -> dict[str, object]:
+    """Return the variables of the module a spec names, where Copy as code looks names up.
+
+    Call it after [load][chatomon.studio._loading.load], which imports the module.
+
+    Args:
+        spec: `module:attribute`.
+
+    Returns:
+        The module's namespace; empty when the module is not imported.
+    """
+    module = sys.modules.get(spec.partition(":")[0])
+    return vars(module) if module is not None else {}
+
+
 def resolve(value: object, *, label: str) -> Atom[Any]:
     """Return `value` if it is an atom, or call it and return the atom it builds.
 

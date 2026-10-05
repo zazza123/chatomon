@@ -170,6 +170,9 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
             return _refusal(exc)
         return JSONResponse(state())
 
+    async def get_code(request: Request) -> Response:
+        return JSONResponse(session.code(), headers=_NO_STORE)
+
     async def post_reset(request: Request) -> Response:
         try:
             session.reset_conversation()
@@ -181,6 +184,7 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
         Route("/", index, methods=["GET"]),
         Route("/api/state", get_state, methods=["GET"]),
         Route("/api/turns", post_turn, methods=["POST"]),
+        Route("/api/code", get_code, methods=["GET"]),
         Route("/api/orbitals", patch_orbital, methods=["PATCH"]),
         Route("/api/orbitals", post_orbital, methods=["POST"]),
         Route("/api/orbitals", delete_orbital, methods=["DELETE"]),

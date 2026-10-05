@@ -8,7 +8,7 @@ import socket
 import sys
 import threading
 import webbrowser
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import uvicorn
@@ -72,12 +72,20 @@ def serve(
     )
 
 
-def _start(atom: Atom[Any], *, source: str, host: str, port: int, open_browser: bool) -> None:
+def _start(
+    atom: Atom[Any],
+    *,
+    source: str,
+    host: str,
+    port: int,
+    open_browser: bool,
+    namespace: Mapping[str, object] | None = None,
+) -> None:
     if is_bind_all(host):
         raise ChatomonConfigError(
             f"the studio listens on one address; pass the address to use instead of {host!r}"
         )
-    session = Session(atom, source=source)
+    session = Session(atom, source=source, namespace=namespace)
     _check_port(host, port)
     for note in session.notes:
         print(f"note: {note}", file=sys.stderr)
