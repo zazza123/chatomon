@@ -1,7 +1,7 @@
 import pytest
 
 from chatomon import ChatomonConfigError, Orbital, Verdict, orbital
-from chatomon.orbitals import FunctionOrbital
+from chatomon.orbitals import FunctionOrbital, JudgeOrbital, MessageLengthOrbital
 from chatomon.schemas import OrbitalContext
 from tests.fakes import ScriptedOrbital
 
@@ -90,3 +90,19 @@ def test_function_orbital_config_names_the_function():
         return Verdict.allow()
 
     assert checker.config()["function"].endswith("checker")
+
+
+def test_the_default_name_is_known_without_an_instance():
+    assert ScopeGuardOrbital.default_name() == "scope_guard"
+    assert ScriptedOrbital.default_name() == "scripted"
+    assert JudgeOrbital.default_name() == "judge"
+    assert MessageLengthOrbital.default_name() == "message_length"
+
+
+def test_a_class_can_choose_its_default_name():
+    class Renamed(ScriptedOrbital):
+        @classmethod
+        def default_name(cls) -> str:
+            return "custom"
+
+    assert Renamed().name == "custom"

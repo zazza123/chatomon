@@ -24,13 +24,6 @@ OrbitalFunction = Callable[[OrbitalContext], Verdict | Awaitable[Verdict]]
 _NAME_PATTERN = re.compile(r"[A-Za-z0-9_.\-]+")
 
 
-def _default_name(cls: type) -> str:
-    base = cls.__name__
-    if base.endswith("Orbital") and base != "Orbital":
-        base = base[: -len("Orbital")]
-    return re.sub(r"(?<!^)(?=[A-Z])", "_", base).lower()
-
-
 class Orbital(ABC):
     """A check on a user message before the nucleus, or on a reply before the user.
 
@@ -39,9 +32,10 @@ class Orbital(ABC):
     and turns failures into a verdict according to `on_error`.
 
     Args:
-        name: Unique name inside an atom. Defaults to the class name in snake
-            case without the `Orbital` suffix (`ScopeGuardOrbital` becomes
-            `scope_guard`).
+        name: Unique name inside an atom. Defaults to
+            [default_name][chatomon.orbitals.base.Orbital.default_name]: the class
+            name in snake case without the `Orbital` suffix (`ScopeGuardOrbital`
+            becomes `scope_guard`).
         reads: Names of earlier orbitals whose annotations this orbital needs.
         timeout: Seconds the engine waits for `check` before treating it as failed.
         on_error: What the engine does when `check` fails or times out: `"block"`
@@ -78,7 +72,7 @@ class Orbital(ABC):
         timeout: float = 30.0,
         on_error: ErrorPolicy = "block",
     ) -> None:
-        resolved = name if name is not None else _default_name(type(self))
+        resolved = name if name is not None else type(self).default_name()
         if not _NAME_PATTERN.fullmatch(resolved):
             raise ChatomonConfigError(
                 f"invalid orbital name {resolved!r}: use letters, digits, '_', '-' or '.'"
@@ -93,6 +87,21 @@ class Orbital(ABC):
         self.reads: tuple[str, ...] = tuple(reads)
         self.timeout: float = float(timeout)
         self.on_error: ErrorPolicy = on_error
+
+    @classmethod
+    def default_name(cls) -> str:
+        """Return the name an instance gets when none is given.
+
+        It is the class name in snake case without the `Orbital` suffix:
+        `ScopeGuardOrbital` becomes `scope_guard`. A subclass may override it.
+
+        Returns:
+            The default name.
+        """
+        base = cls.__name__
+        if base.endswith("Orbital") and base != "Orbital":
+            base = base[: -len("Orbital")]
+        return re.sub(r"(?<!^)(?=[A-Z])", "_", base).lower()
 
     @abstractmethod
     async def check(self, ctx: OrbitalContext) -> Verdict:
