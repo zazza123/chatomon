@@ -17,9 +17,10 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from chatomon.errors import ChatomonConfigError
+from chatomon.studio._chains import UnknownOrbitalError
 from chatomon.studio._events import Event
 from chatomon.studio._security import LOOPBACK, Guard
-from chatomon.studio._session import Session, StudioBusyError, UnknownOrbitalError
+from chatomon.studio._session import Session, StudioBusyError
 
 _STATIC = files("chatomon.studio") / "static"
 _NO_STORE = {"Cache-Control": "no-store"}
@@ -90,7 +91,7 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
                 422, "InvalidBody", 'send {"side": "input", "name": "...", "enabled": false}'
             )
         try:
-            session.set_enabled(side, name, enabled)
+            session.switch(side, name, enabled)
         except UnknownOrbitalError as exc:
             return _error(404, "UnknownOrbital", str(exc))
         except StudioBusyError as exc:
@@ -101,7 +102,7 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
 
     async def post_reset(request: Request) -> Response:
         try:
-            session.reset()
+            session.reset_conversation()
         except StudioBusyError as exc:
             return _error(409, "Busy", str(exc))
         return JSONResponse(state())

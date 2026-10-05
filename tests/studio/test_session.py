@@ -10,8 +10,10 @@ from pydantic_ai.models.test import TestModel
 
 from chatomon import Atom, ChatomonConfigError, Verdict
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
+from chatomon.orbitals import JudgeOrbital, MessageLengthOrbital
 from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER
-from chatomon.studio._session import Session, StudioBusyError, UnknownOrbitalError
+from chatomon.studio._chains import RefusedError, UnknownOrbitalError
+from chatomon.studio._session import Session, StudioBusyError
 from tests.fakes import FakeConnector, ScriptedOrbital
 
 
@@ -84,7 +86,7 @@ async def test_one_turn_at_a_time_and_busy_in_the_state():
     with pytest.raises(StudioBusyError):
         session.start_turn("again")
     with pytest.raises(StudioBusyError):
-        session.reset()
+        session.reset_conversation()
     gate.set()
     await drain(queue)
     assert session.state()["busy"] is False
@@ -116,7 +118,7 @@ async def test_turning_an_orbital_off_rebuilds_without_it():
     guard = ScriptedOrbital(name="guard")
     session = Session(make_atom(input_orbitals=[guard]), source="app:atom")
     fingerprint = session.state()["orbitals"]["input"][0]["fingerprint"]
-    session.set_enabled("input", "guard", False)
+    session.switch("input", "guard", False)
     await drain(session.start_turn("hello"))
     assert guard.contexts == []
     orbital = session.state()["orbitals"]["input"][0]
@@ -129,20 +131,20 @@ def test_a_refused_change_leaves_the_state_as_it_was():
     reader = ScriptedOrbital(name="reader", reads=["first"])
     session = Session(make_atom(input_orbitals=[first, reader]), source="app:atom")
     with pytest.raises(ChatomonConfigError, match="reads 'first'"):
-        session.set_enabled("input", "first", False)
+        session.switch("input", "first", False)
     assert [orbital["enabled"] for orbital in session.state()["orbitals"]["input"]] == [True, True]
 
 
 def test_an_unknown_orbital_is_reported():
     session = Session(make_atom(), source="app:atom")
     with pytest.raises(UnknownOrbitalError, match="no output orbital named 'judge'"):
-        session.set_enabled("output", "judge", False)
+        session.switch("output", "judge", False)
 
 
 def test_the_same_instance_in_both_chains_is_switched_per_side():
     both = ScriptedOrbital(name="both")
     session = Session(make_atom(input_orbitals=[both], output_orbitals=[both]), source="app:atom")
-    session.set_enabled("input", "both", False)
+    session.switch("input", "both", False)
     orbitals = session.state()["orbitals"]
     assert orbitals["input"][0]["enabled"] is False
     assert orbitals["output"][0]["enabled"] is True
@@ -172,7 +174,7 @@ def test_the_state_describes_the_atom():
 async def test_reset_clears_the_conversation():
     session = Session(make_atom(), source="app:atom")
     await drain(session.start_turn("hello"))
-    session.reset()
+    session.reset_conversation()
     assert session.history == []
     assert session.turns == []
 
@@ -235,7 +237,7 @@ def test_any_failure_while_rebuilding_leaves_the_switches_as_they_were():
     )
     fragile.broken = True
     with pytest.raises(RuntimeError, match="cannot bind"):
-        session.set_enabled("input", "other", False)
+        session.switch("input", "other", False)
     assert [orbital["enabled"] for orbital in session.state()["orbitals"]["input"]] == [True, True]
 
 
@@ -269,8 +271,17 @@ async def test_the_state_names_the_running_turn_and_refuses_switches():
     queue = session.start_turn("hello")
     await asyncio.sleep(0.05)
     assert session.state()["running"] == {"n": 1, "message": "hello"}
-    with pytest.raises(StudioBusyError):
-        session.set_enabled("input", "guard", False)
+    for change in (
+        lambda: session.switch("input", "guard", False),
+        lambda: session.edit("input", "guard", {"timeout": 5}),
+        lambda: session.move("input", "guard", 0),
+        lambda: session.add("input", "TurnLimitOrbital", {"max_turns": 3}),
+        lambda: session.delete("input", "guard"),
+        lambda: session.reset_orbitals(),
+        session.undo,
+    ):
+        with pytest.raises(StudioBusyError):
+            change()
     gate.set()
     await drain(queue)
     assert session.state()["running"] is None
@@ -287,3 +298,157 @@ async def test_a_run_that_fails_before_the_engine_opens_a_turn_has_no_report():
     turn = events[-1]["turn"]
     assert turn["report"] is None
     assert turn["error"] == {"type": "ValueError", "message": "bad history"}
+
+
+async def test_an_edit_takes_effect_on_the_next_turn():
+    atom = make_atom(input_orbitals=[MessageLengthOrbital(max_words=3)])
+    session = Session(atom, source="app:atom")
+    blocked = await drain(session.start_turn("one two three four"))
+    assert blocked[-1]["turn"]["report"]["final_action"] == "blocked"
+    session.edit("input", "message_length", {"max_words": 10})
+    answered = await drain(session.start_turn("one two three four"))
+    assert answered[-1]["turn"]["report"]["final_action"] == "answered"
+    assert atom.input_orbitals[0].max_words == 3  # type: ignore[attr-defined]
+
+
+def test_a_change_the_chain_refuses_leaves_everything_as_it_was():
+    first = ScriptedOrbital(Verdict.allow(annotations={"x": 1}), name="first")
+    reader = ScriptedOrbital(name="reader", reads=["first"])
+    session = Session(make_atom(input_orbitals=[first, reader]), source="app:atom")
+    agent, chains = session._agent, session.chains
+    with pytest.raises(ChatomonConfigError, match="reads 'first'"):
+        session.move("input", "reader", 0)
+    assert session._agent is agent
+    assert session.chains is chains
+
+
+def test_undo_brings_back_what_a_deletion_or_a_reset_removed():
+    session = Session(
+        make_atom(input_orbitals=[MessageLengthOrbital(max_words=3)]), source="app:atom"
+    )
+
+    def input_names() -> list[str]:
+        return [orbital["name"] for orbital in session.state()["orbitals"]["input"]]
+
+    assert session.state()["undo"] is None
+    session.add("input", "TurnLimitOrbital", {"max_turns": 3})
+    session.delete("input", "turn_limit")
+    assert session.state()["undo"] == "turn_limit deleted"
+    session.undo()
+    assert input_names() == ["message_length", "turn_limit"]
+    assert session.state()["undo"] is None
+    with pytest.raises(RefusedError, match="nothing to undo"):
+        session.undo()
+    session.edit("input", "message_length", {"max_words": 9})
+    session.reset_orbitals("input", "message_length")
+    assert session.state()["undo"] == "message_length reset to code"
+    session.reset_orbitals()
+    assert session.state()["undo"] == "Reset to code"
+    assert input_names() == ["message_length"]
+    session.undo()
+    assert input_names() == ["message_length", "turn_limit"]
+
+
+def test_any_other_change_drops_the_undo():
+    session = Session(
+        make_atom(input_orbitals=[MessageLengthOrbital(max_words=3)]), source="app:atom"
+    )
+    session.add("input", "TurnLimitOrbital", {"max_turns": 3})
+    session.delete("input", "turn_limit")
+    session.switch("input", "message_length", False)
+    assert session.state()["undo"] is None
+    with pytest.raises(RefusedError, match="nothing to undo"):
+        session.undo()
+
+
+def test_the_state_describes_what_can_be_edited():
+    limit = MessageLengthOrbital(max_words=60)
+    session = Session(
+        make_atom(input_orbitals=[limit, ScriptedOrbital(name="scope")]), source="app:atom"
+    )
+    session.edit("input", "message_length", {"max_words": 80})
+    state = json.loads(json.dumps(session.state()))
+    edited, scope = state["orbitals"]["input"]
+    assert {key: edited[key] for key in ("origin", "modified", "editable", "note", "fixed")} == {
+        "origin": "code",
+        "modified": True,
+        "editable": True,
+        "note": None,
+        "fixed": [],
+    }
+    assert edited["settings"][0] == {
+        "key": "max_words",
+        "type": "int",
+        "optional": True,
+        "required": False,
+        "default": None,
+        "value": 80,
+        "changed": True,
+    }
+    assert [setting["key"] for setting in edited["settings"]] == [
+        "max_words",
+        "max_chars",
+        "reply",
+        "guidance",
+        "timeout",
+        "on_error",
+    ]
+    assert edited["settings"][-1]["options"] == ["block", "allow"]
+    assert edited["settings"][2]["changed"] is False
+    assert edited["fingerprint"] != limit.fingerprint()
+    assert (scope["editable"], scope["settings"], scope["fixed"]) == (False, [], [])
+    assert scope["note"] == "ScriptedOrbital is your own class: change its settings in your code."
+    assert scope["config"]["name"] == "scope"
+    assert state["changes"] == [
+        {
+            "type": "setting",
+            "side": "input",
+            "name": "message_length",
+            "setting": "max_words",
+            "text": "message_length.max_words changed",
+        }
+    ]
+
+
+def test_the_state_lists_what_can_be_added():
+    session = Session(
+        make_atom(input_orbitals=[MessageLengthOrbital(max_words=3)]), source="app:atom"
+    )
+    kinds = session.state()["kinds"]
+    assert [kind["kind"] for kind in kinds] == [
+        "JudgeOrbital",
+        "MessageLengthOrbital",
+        "TurnLimitOrbital",
+    ]
+    judge, length, turns = kinds
+    assert judge["sides"] == ["input", "output"]
+    assert turns["sides"] == ["input"]
+    assert judge["summary"] == "A small LLM agent that judges messages following your instructions."
+    assert (judge["name"], length["name"]) == ("judge", "message_length_2")
+    assert judge["settings"][0] == {
+        "key": "model",
+        "type": "text",
+        "optional": False,
+        "required": True,
+        "default": None,
+    }
+
+
+def test_the_state_names_the_objects_an_orbital_takes_from_code():
+    own = PydanticAIConnector(TestModel())
+    judge = JudgeOrbital(model="test:judge", instructions="Check facts.", connector=own)
+    state = Session(make_atom(output_orbitals=[judge]), source="app:atom").state()
+    assert state["orbitals"]["output"][0]["fixed"] == [
+        {"key": "connector", "type": "PydanticAIConnector", "name": None}
+    ]
+
+
+async def test_an_instance_in_both_chains_is_edited_as_one():
+    both = MessageLengthOrbital(max_words=60)
+    session = Session(make_atom(input_orbitals=[both], output_orbitals=[both]), source="app:atom")
+    session.edit("input", "message_length", {"max_words": 80})
+    orbitals = session.state()["orbitals"]
+    assert orbitals["input"][0]["fingerprint"] == orbitals["output"][0]["fingerprint"]
+    assert orbitals["output"][0]["settings"][0]["value"] == 80
+    events = await drain(session.start_turn("hello"))
+    assert events[-1]["turn"]["report"]["final_action"] == "answered"

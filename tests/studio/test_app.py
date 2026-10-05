@@ -127,7 +127,7 @@ def test_switching_errors(client, session, monkeypatch):
     def busy(side, name, enabled):
         raise StudioBusyError("a turn is running; wait for it to finish")
 
-    monkeypatch.setattr(session, "set_enabled", busy)
+    monkeypatch.setattr(session, "switch", busy)
     assert switch(client, "first", False).status_code == 409
 
 
