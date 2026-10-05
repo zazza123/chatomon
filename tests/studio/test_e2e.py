@@ -23,6 +23,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from chatomon import Atom
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
+from chatomon.orbitals import MessageLengthOrbital
 from chatomon.studio._app import create_app
 from chatomon.studio._session import Session
 from tests.fakes import ScriptedOrbital
@@ -63,16 +64,9 @@ class Studio:
         self.thread.join(timeout=10)
 
 
-@pytest.fixture
-def studio() -> Iterator[Studio]:
+@contextlib.contextmanager
+def running(atom: Atom) -> Iterator[Studio]:
     port = free_port()
-    atom = Atom(
-        name="speedypack",
-        instructions="Be brief.",
-        connector=PydanticAIConnector(FunctionModel(respond)),
-        input_orbitals=[ScriptedOrbital(name="guard")],
-        output_orbitals=[ScriptedOrbital(name="judge")],
-    )
     app = create_app(Session(atom, source="tests:atom"), token=TOKEN, host="127.0.0.1", port=port)
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, access_log=False)
     server = uvicorn.Server(config)
@@ -83,8 +77,43 @@ def studio() -> Iterator[Studio]:
         assert time.monotonic() < deadline, "the studio did not start"
         time.sleep(0.05)
     handle = Studio(url=f"http://127.0.0.1:{port}", server=server, thread=thread)
-    yield handle
-    handle.stop()
+    try:
+        yield handle
+    finally:
+        handle.stop()
+
+
+@pytest.fixture
+def studio() -> Iterator[Studio]:
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(FunctionModel(respond)),
+        input_orbitals=[ScriptedOrbital(name="guard")],
+        output_orbitals=[ScriptedOrbital(name="judge")],
+    )
+    with running(atom) as handle:
+        yield handle
+
+
+@pytest.fixture
+def tunable() -> Iterator[Studio]:
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(FunctionModel(respond)),
+        input_orbitals=[MessageLengthOrbital(max_words=60), ScriptedOrbital(name="scope")],
+    )
+    with running(atom) as handle:
+        yield handle
+
+
+def row(page: Page, name: str):
+    return page.locator(f'#drawer li.orb[data-name="{name}"]')
+
+
+def input_order(page: Page) -> list[str]:
+    return page.locator("#list-input li.orb").evaluate_all("rows => rows.map(r => r.dataset.name)")
 
 
 def open_studio(page: Page, studio: Studio, *, real_time: bool = True) -> None:
@@ -293,3 +322,78 @@ def test_stopping_during_a_turn_does_not_wait_for_the_model(tmp_path):
     finally:
         if process.poll() is None:
             process.kill()
+
+
+def test_the_drawer_counts_changes_and_resets_them(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    changes = page.locator("#changes-text")
+    expect(changes).to_have_text("Same as tests:atom")
+    expect(page.locator("#drawer-badge")).to_be_hidden()
+    expect(row(page, "scope").locator(".mod-dot")).to_be_hidden()
+
+    row(page, "scope").get_by_role("switch").focus()
+    page.keyboard.press("Space")
+    expect(changes).to_have_text("1 change vs code")
+    expect(page.locator("#drawer-badge")).to_be_visible()
+    expect(row(page, "scope").locator(".mod-dot")).to_be_visible()
+    changes.click()
+    expect(page.locator("#changes-list")).to_have_text("scope turned off")
+
+    page.get_by_role("button", name="Reset to code").click()
+    expect(changes).to_have_text("Same as tests:atom")
+    toast = page.locator("#toast")
+    expect(toast).to_contain_text("Reset to code")
+    toast.get_by_role("button", name="Undo").click()
+    expect(changes).to_have_text("1 change vs code")
+    expect(row(page, "scope").get_by_role("switch")).not_to_be_checked()
+
+
+def test_dragging_an_orbital_reorders_the_chain(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    assert input_order(page) == ["message_length", "scope"]
+    row(page, "scope").locator(".orb-row").drag_to(
+        row(page, "message_length").locator(".orb-row"), target_position={"x": 40, "y": 2}
+    )
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    assert input_order(page) == ["scope", "message_length"]
+    page.locator("#changes-text").click()
+    expect(page.locator("#changes-list")).to_have_text("input order changed")
+
+
+def test_a_page_that_is_out_of_date_reloads_the_state(page: Page, tunable: Studio):
+    origin = {"origin": tunable.url}
+    open_studio(page, tunable)  # the page's requests carry the cookie only after this
+    added = page.request.post(
+        f"{tunable.url}/api/orbitals",
+        data={"side": "input", "kind": "TurnLimitOrbital", "settings": {"max_turns": 3}},
+        headers=origin,
+    )
+    assert added.ok
+    page.reload()
+    expect(row(page, "turn_limit")).to_contain_text("added in the studio")
+
+    # Another tab deletes the orbital; this page still shows it.
+    gone = page.request.delete(
+        f"{tunable.url}/api/orbitals", data={"side": "input", "name": "turn_limit"}, headers=origin
+    )
+    assert gone.ok
+    row(page, "turn_limit").get_by_role("switch").click()
+    expect(page.locator("#toast")).to_contain_text("no input orbital named 'turn_limit'")
+    expect(row(page, "turn_limit")).to_have_count(0)
+
+
+def test_deleting_an_added_orbital_and_undoing(page: Page, tunable: Studio):
+    page.goto(f"{tunable.url}/?token={TOKEN}")
+    page.request.post(
+        f"{tunable.url}/api/orbitals",
+        data={"side": "input", "kind": "TurnLimitOrbital", "settings": {"max_turns": 3}},
+        headers={"origin": tunable.url},
+    )
+    page.reload()
+    expect(row(page, "scope").get_by_role("button", name="Delete scope")).to_have_count(0)
+    row(page, "turn_limit").get_by_role("button", name="Delete turn_limit").click()
+    expect(row(page, "turn_limit")).to_have_count(0)
+    toast = page.locator("#toast")
+    expect(toast).to_contain_text("turn_limit deleted")
+    toast.get_by_role("button", name="Undo").click()
+    expect(row(page, "turn_limit")).to_have_count(1)

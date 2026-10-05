@@ -1,5 +1,5 @@
 import { $, reduceMotion, storage } from "./util.js";
-import { getState, resetConversation, sendTurn, setOrbital } from "./api.js";
+import { deleteOrbital, getState, patchOrbital, resetConversation, resetOrbitals, sendTurn, undoOrbitals } from "./api.js";
 import { createStage } from "./stage.js";
 import { renderTurns } from "./turns.js";
 import { createDrawer } from "./drawer.js";
@@ -62,10 +62,48 @@ function setCaption(title, sub = "", warn = false) {
 }
 
 const orbital = (side, name) => ui.state.orbitals[side].find((o) => o.name === name);
+
+/** Send a change to the orbitals: the page shows the new state, which is returned. */
+async function apply(request) {
+  const state = await request();
+  refresh(state);
+  return state;
+}
+
+/** A change was refused, or the page is out of date: say why and show the state as it is. */
+async function refused(error) {
+  toast(error.message);
+  try { refresh(await getState()); } catch { lostStudio(); }
+}
+
+async function change(request, focus) {
+  try { await apply(request); } catch (error) { await refused(error); return false; }
+  // The drawer was drawn again: give the focus back to what was used.
+  if (focus) document.querySelector(focus)?.focus();
+  return true;
+}
+
+function offerUndo() {
+  if (ui.state.undo) toast(ui.state.undo, "Undo", () => change(undoOrbitals));
+}
+
+const rowOf = (side, name) => `#drawer li.orb[data-side="${side}"][data-name="${CSS.escape(name)}"]`;
+const toggle = (side, name, enabled) => change(() => patchOrbital(side, name, { enabled }), `${rowOf(side, name)} input`);
+const move = (side, name, position) => change(() => patchOrbital(side, name, { position }), `${rowOf(side, name)} .orb-main`);
+async function remove(side, name) { if (await change(() => deleteOrbital(side, name))) offerUndo(); }
+async function resetAll() { if (await change(() => resetOrbitals())) offerUndo(); }
+
+const cards = { state: () => ui.state, apply, refused, refresh, toast, offerUndo, undo: () => change(undoOrbitals), remove };
+
+const openOrbital = (side, name) => showOrbital(orbital(side, name), {
+  source: ui.state.atom.source,
+  onToggle: async (s, n, enabled) => { await toggle(s, n, enabled); closeDialog(); },
+});
+
 const stage = createStage({
   svgs: [$("#atom"), $("#dock-atom")],
   setCaption,
-  onOrbital: (side, name) => showOrbital(orbital(side, name), { source: ui.state.atom.source, onToggle: toggle }),
+  onOrbital: openOrbital,
   onAtom: () => showAtom(ui.state),
   onFinished(turn) {
     ui.state.turns.push(turn);
@@ -77,8 +115,15 @@ const stage = createStage({
 });
 const drawer = createDrawer({
   onToggle: toggle,
-  onOrbital: (side, name) => showOrbital(orbital(side, name), { source: ui.state.atom.source, onToggle: toggle }),
+  onOrbital: openOrbital,
   onAtom: () => showAtom(ui.state),
+  onMove: move,
+  onDelete: remove,
+  onAdd: () => {},
+  onResetAll: resetAll,
+  onCode: () => {},
+  onExport: () => {},
+  onImport: () => {},
   isBusy: () => ui.busy,
 });
 
@@ -118,18 +163,6 @@ function lostStudio() {
   setBusy(false);
   drawTurns();
   toast("The studio is not answering. Start it again and open the link it prints.");
-}
-
-async function toggle(side, name, enabled) {
-  try {
-    refresh(await setOrbital(side, name, enabled));
-    if ($("#dlg").open) closeDialog();
-  } catch (error) {
-    toast(error.message);
-    try { refresh(await getState()); } catch { lostStudio(); return; }
-  }
-  // The drawer was drawn again: give the focus back to the switch that was used.
-  document.querySelector(`#drawer input[data-side="${side}"][data-name="${CSS.escape(name)}"]`)?.focus();
 }
 
 async function send(text) {
