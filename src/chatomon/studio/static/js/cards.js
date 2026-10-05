@@ -17,14 +17,25 @@ export function openDialog({ title, sub = "", extra = "", body, actions, size = 
   $("#dlg-body").onclick = null;
   $("#dlg-body").onchange = null;
   $("#dlg-body").oninput = null;
+  $("#dlg-body").onkeydown = null;
   dlg.dataset.size = size;
   $("#dlg-body").scrollTop = 0;
   if (!dlg.open) dlg.showModal();
+  // A modal card blurs and blocks everything outside it: the toast goes inside, to stay
+  // readable and usable (Undo, the reason of a refusal).
+  dlg.append($("#toast"));
 }
 export function closeDialog() { if (dlg.open) dlg.close(); }
-dlg.addEventListener("close", () => onCloseHook());
+dlg.addEventListener("close", () => {
+  document.body.append($("#toast"));
+  onCloseHook();
+});
+// A click on the backdrop closes the card, but not the end of a drag that started inside it,
+// such as selecting the text of a field.
+let pressedOnBackdrop = false;
+dlg.addEventListener("pointerdown", (e) => { pressedOnBackdrop = e.target === dlg; });
 dlg.addEventListener("click", (e) => {
-  if (e.target === dlg || e.target.closest('[data-dlg="close"]')) closeDialog();
+  if ((e.target === dlg && pressedOnBackdrop) || e.target.closest('[data-dlg="close"]')) closeDialog();
 });
 
 export const kv = (rows) => `<dl class="kv">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`;

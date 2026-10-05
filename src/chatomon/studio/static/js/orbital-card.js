@@ -24,7 +24,8 @@ function control(s, value, names) {
   }
   const none = s.optional ? ' placeholder="None"' : "";
   if (s.type === "text") return `<textarea ${attrs} rows="1"${none}>${esc(value ?? "")}</textarea>`;
-  return `<input type="number" ${attrs} step="${s.type === "int" ? "1" : "any"}" value="${esc(value ?? "")}"${none}>`;
+  // A text field, not a number field: whatever is typed reaches the server, which says if it is a number.
+  return `<input type="text" inputmode="${s.type === "int" ? "numeric" : "decimal"}" autocomplete="off" ${attrs} value="${esc(value ?? "")}"${none}>`;
 }
 
 function field(s, value, names, changed = false) {
@@ -42,7 +43,9 @@ function read(el) {
   if (type === "names") return $$("input:checked", el).map((box) => box.value);
   if (type === "choice" || type === "name") return el.value;
   if (el.value.trim() === "") return null;
-  return type === "text" ? el.value : Number(el.value);
+  if (type === "text") return el.value;
+  const number = Number(el.value.trim());
+  return Number.isFinite(number) ? number : el.value;
 }
 
 function fail(el, message) {
@@ -80,11 +83,25 @@ function draw(state) {
     extra: `<span class="sw-label">${o.enabled ? "On" : "Off"}</span><label class="switch big"><input type="checkbox" role="switch" id="card-switch"${o.enabled ? " checked" : ""} aria-label="${esc(o.name)}"><span></span></label>`,
     body: `${body}${position}<div class="fp" id="card-fp" title="${esc(o.fingerprint)}">fingerprint ${esc(shortFp(o.fingerprint))} · changes with every setting and is recorded in each turn report</div>`,
     actions: `${left}<span class="spacer"></span>${added ? "" : `<button class="btn" type="button" data-dlg="reset-one"${o.modified ? "" : " disabled"}>Reset to code</button>`}<button class="btn primary" type="button" data-dlg="close">Done</button>`,
+    onClose: () => ctx.closed(view.side, view.name),
   });
   $$("textarea", dlg).forEach(grow);
   $("#card-switch").onchange = (e) => act(() => patchOrbital(view.side, view.name, { enabled: e.target.checked }), "#card-switch");
   $("#dlg-body").oninput = (e) => { if (e.target.tagName === "TEXTAREA") grow(e.target); };
-  $("#dlg-body").onchange = (e) => { const el = e.target.closest("[data-key]"); if (el) commit(el); };
+  $("#dlg-body").onchange = (e) => {
+    const el = e.target.closest("[data-key]");
+    if (!el) return;
+    // Enter already sent this value: leaving the field afterwards is not a second change.
+    if (el.dataset.entered === el.value) { delete el.dataset.entered; return; }
+    commit(el);
+  };
+  // In a text area Enter applies the setting, as in the other fields; Shift+Enter breaks the line.
+  $("#dlg-body").onkeydown = (e) => {
+    if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.target.tagName !== "TEXTAREA") return;
+    e.preventDefault();
+    e.target.dataset.entered = e.target.value;
+    commit(e.target);
+  };
   $("#dlg-body").onclick = (e) => {
     const b = e.target.closest('[data-dlg="up"], [data-dlg="down"]');
     if (!b || b.disabled) return;
@@ -118,17 +135,24 @@ async function act(request, focus) {
 async function commit(el) {
   const key = el.dataset.key;
   const value = read(el);
+  const { side, name } = view;
   clear(el);
   let state;
   try {
-    state = await ctx.apply(() => patchOrbital(view.side, view.name, { settings: { [key]: value } }));
+    state = await ctx.apply(() => patchOrbital(side, name, { settings: { [key]: value } }));
   } catch (error) {
-    // 422: the value; 409: the chain refuses it. Both belong under the field.
-    if (error.status === 422 || error.status === 409) { fail(el, error.message); return; }
+    // 422: the value; 409: the chain refuses it. Both belong under the field. When the card
+    // was closed in the meantime (Done right after typing), the refusal is said in the toast.
+    if (error.status === 422 || error.status === 409) {
+      if (dlg.open && el.isConnected) fail(el, error.message);
+      else ctx.toast(`${name}: ${error.message}`);
+      return;
+    }
     closeDialog();
     await ctx.refused(error);
     return;
   }
+  if (!dlg.open || !el.isConnected) return;
   if (key === "name") view.name = value;
   const o = find(state, view.side, view.name);
   if (!o) { closeDialog(); return; }
@@ -139,6 +163,11 @@ async function commit(el) {
   const reset = $('[data-dlg="reset-one"]', dlg);
   if (reset) reset.disabled = !o.modified;
   for (const s of o.settings) $(`#${CSS.escape(fieldId(s.key))}`, dlg)?.closest(".field").classList.toggle("changed", s.changed);
+}
+
+/** Draw the open orbital card again after a change made outside it, such as Undo. */
+export function redrawOrbital(state) {
+  if (dlg.open && $("#card-switch", dlg)) draw(state);
 }
 
 export function showOrbital(side, name, context) {
@@ -175,6 +204,12 @@ function showAddForm(side, kind) {
   $$("textarea", dlg).forEach(grow);
   $("#dlg-body").oninput = (e) => { if (e.target.tagName === "TEXTAREA") grow(e.target); };
   $("#dlg-actions").onclick = (e) => { if (e.target.closest('[data-dlg="back"]')) showPicker(side, ctx); };
+  // Enter adds the orbital from a text area too; Shift+Enter breaks the line.
+  $("#dlg-body").onkeydown = (e) => {
+    if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.target.tagName !== "TEXTAREA") return;
+    e.preventDefault();
+    $("#add-form").requestSubmit();
+  };
   ($(`#${CSS.escape(fieldId((kind.settings.find((s) => s.required) || {}).key || "name"))}`, dlg) || $("#f-name")).focus();
   $("#add-form").onsubmit = async (e) => {
     e.preventDefault();

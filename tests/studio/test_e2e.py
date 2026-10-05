@@ -22,7 +22,7 @@ from playwright.sync_api import Page, expect
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from chatomon import Atom
+from chatomon import Atom, Verdict
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.orbitals import MessageLengthOrbital
 from chatomon.studio._app import create_app
@@ -573,4 +573,153 @@ def test_a_preset_applied_with_notes_lists_them(page: Page, tunable: Studio):
         ]
     )
     card(page).get_by_role("button", name="Undo").click()
+    expect(card(page)).to_have_count(0)
+
+
+@pytest.fixture
+def readers() -> Iterator[Studio]:
+    """An atom whose second orbital reads the first, so some changes are refused."""
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(FunctionModel(respond)),
+        input_orbitals=[
+            ScriptedOrbital(Verdict.allow(annotations={"x": 1}), name="first"),
+            ScriptedOrbital(name="reader", reads=["first"]),
+        ],
+    )
+    with running(atom) as handle:
+        yield handle
+
+
+def on_top(locator) -> bool:
+    """Whether a click at the element's centre would reach it, not something over it."""
+    return locator.evaluate(
+        """el => {
+          const box = el.getBoundingClientRect();
+          const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+          return el === hit || el.contains(hit);
+        }"""
+    )
+
+
+def test_undo_after_a_reset_from_the_card_can_be_clicked(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    open_card(page, "message_length")
+    words = card(page).get_by_label("max_words")
+    words.fill("80")
+    words.press("Tab")
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    card(page).get_by_role("button", name="Reset to code").click()
+    expect(card(page).get_by_label("max_words")).to_have_value("60")
+
+    undo = page.locator("#toast").get_by_role("button", name="Undo")
+    assert on_top(undo)
+    undo.click(timeout=3000)
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    expect(card(page).get_by_label("max_words")).to_have_value("80")
+
+
+def test_a_refusal_from_the_card_can_be_read(page: Page, readers: Studio):
+    open_studio(page, readers)
+    open_card(page, "first")
+    card(page).get_by_role("switch").click()
+    reason = page.locator("#toast-text")
+    expect(reason).to_contain_text("reads 'first'")
+    assert on_top(reason)
+    expect(card(page).get_by_role("switch")).to_be_checked()
+    card(page).get_by_role("button", name="Move down").click()
+    expect(reason).to_contain_text("reads 'first'")
+    expect(card(page).locator("#card-pos")).to_have_text("1 of 2 in the input chain")
+
+
+def test_a_refused_value_followed_by_done_is_reported(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    open_card(page, "message_length")
+    card(page).get_by_label("max_words").fill("0")
+    card(page).get_by_role("button", name="Done").click()
+    expect(card(page)).to_have_count(0)
+    expect(page.locator("#toast")).to_contain_text("max_words must be a positive integer, got 0")
+    expect(page.locator("#changes-text")).to_have_text("Same as tests:atom")
+
+
+def reply_on_the_server(page: Page, studio: Studio) -> str:
+    state = page.request.get(f"{studio.url}/api/state").json()
+    settings = state["orbitals"]["input"][0]["settings"]
+    return next(setting["value"] for setting in settings if setting["key"] == "reply")
+
+
+def test_enter_applies_a_text_setting_and_shift_enter_breaks_the_line(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    open_card(page, "message_length")
+    reply = card(page).get_by_label("reply")
+    reply.fill("Too long.")
+    reply.press("Enter")
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    expect(reply).to_have_value("Too long.")
+    assert reply_on_the_server(page, tunable) == "Too long."
+
+    reply.press("Shift+Enter")
+    reply.press_sequentially("Shorten it.")
+    expect(reply).to_have_value("Too long.\nShorten it.")
+    assert reply_on_the_server(page, tunable) == "Too long."
+    fingerprint = card(page).locator("#card-fp").get_attribute("title")
+    reply.press("Enter")
+    expect(card(page).locator("#card-fp")).not_to_have_attribute("title", fingerprint or "")
+    assert reply_on_the_server(page, tunable) == "Too long.\nShorten it."
+
+
+def test_text_that_is_not_a_number_is_refused_not_read_as_none(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    open_card(page, "message_length")
+    chars = card(page).get_by_label("max_chars")
+    chars.fill("500")
+    chars.press("Tab")
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    words = card(page).get_by_label("max_words")
+    words.fill("")
+    words.press_sequentially("3e")
+    words.press("Tab")
+    expect(card(page).locator("#f-max_words-err")).to_have_text(
+        "`max_words` must be a whole number"
+    )
+    state = page.request.get(f"{tunable.url}/api/state").json()
+    assert state["orbitals"]["input"][0]["settings"][0]["value"] == 60
+
+
+def test_undo_stays_in_the_drawer_and_focus_is_never_lost(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    undo = page.locator("#undo")
+    expect(undo).to_be_hidden()
+    row(page, "scope").get_by_role("switch").click()
+    page.get_by_role("button", name="Reset to code").click()
+    expect(undo).to_have_text("Undo: Reset to code")
+    expect(undo).to_be_focused()
+
+    # The toast fades after five seconds; its button must not stay as an invisible stop.
+    expect(page.locator("#toast-act")).to_be_hidden(timeout=8000)
+    page.keyboard.press("Enter")
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    expect(undo).to_be_hidden()
+    expect(page.get_by_role("button", name="Reset to code")).to_be_focused()
+
+    open_card(page, "message_length")
+    words = card(page).get_by_label("max_words")
+    words.fill("80")
+    words.press("Tab")
+    card(page).get_by_role("button", name="Done").click()
+    expect(row(page, "message_length").locator('[data-act="card"]')).to_be_focused()
+
+
+def test_selecting_text_past_the_edge_of_a_card_does_not_close_it(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    open_card(page, "message_length")
+    box = card(page).get_by_label("reply").bounding_box()
+    assert box is not None
+    page.mouse.move(box["x"] + 30, box["y"] + box["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(8, 8, steps=5)
+    page.mouse.up()
+    expect(card(page)).to_be_visible()
+    page.mouse.click(8, 8)
     expect(card(page)).to_have_count(0)

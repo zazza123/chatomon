@@ -4,7 +4,7 @@ import { createStage } from "./stage.js";
 import { renderTurns } from "./turns.js";
 import { createDrawer } from "./drawer.js";
 import { showAtom, showNotice, showReport } from "./cards.js";
-import { showOrbital, showPicker } from "./orbital-card.js";
+import { redrawOrbital, showOrbital, showPicker } from "./orbital-card.js";
 import { showCode, showExport, showImport } from "./export-cards.js";
 
 let toastTimer = 0;
@@ -18,7 +18,12 @@ function toast(text, actionLabel, fn) {
   toastFn = fn || null;
   t.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove("show"), actionLabel ? 5000 : 2200);
+  toastTimer = setTimeout(() => {
+    t.classList.remove("show");
+    // A faded toast must not leave a button that can still be reached with Tab.
+    act.hidden = true;
+    toastFn = null;
+  }, actionLabel ? 5000 : 2200);
 }
 $("#toast-act").addEventListener("click", () => {
   const fn = toastFn;
@@ -78,22 +83,36 @@ async function refused(error) {
 
 async function change(request, focus) {
   try { await apply(request); } catch (error) { await refused(error); return false; }
-  // The drawer was drawn again: give the focus back to what was used.
-  if (focus) document.querySelector(focus)?.focus();
+  // The drawer was drawn again: give the focus back to what was used, or to what follows it.
+  const target = typeof focus === "function" ? focus() : focus && document.querySelector(focus);
+  if (target) target.focus();
   return true;
 }
 
+/** Undo the last deletion, reset or import; an open orbital card shows the result. */
+async function undo() {
+  const next = () => ($("#reset-all").hidden ? $('#drawer [data-act="atom"]') : $("#reset-all"));
+  if (await change(undoOrbitals, next)) redrawOrbital(ui.state);
+}
+
+/** Undo is offered in the toast for a few seconds, and in the drawer until the next change. */
 function offerUndo() {
-  if (ui.state.undo) toast(ui.state.undo, "Undo", () => change(undoOrbitals));
+  if (ui.state.undo) toast(ui.state.undo, "Undo", undo);
+}
+
+/** A card closed and the drawer was drawn again: the focus goes to the orbital's row. */
+function closed(side, name) {
+  const target = document.querySelector(`${rowOf(side, name)} .orb-main`) || $(`#drawer [data-act="add"][data-side="${side}"]`);
+  if (target) target.focus();
 }
 
 const rowOf = (side, name) => `#drawer li.orb[data-side="${side}"][data-name="${CSS.escape(name)}"]`;
 const toggle = (side, name, enabled) => change(() => patchOrbital(side, name, { enabled }), `${rowOf(side, name)} input`);
 const move = (side, name, position) => change(() => patchOrbital(side, name, { position }), `${rowOf(side, name)} .orb-main`);
-async function remove(side, name) { if (await change(() => deleteOrbital(side, name))) offerUndo(); }
-async function resetAll() { if (await change(() => resetOrbitals())) offerUndo(); }
+async function remove(side, name) { if (await change(() => deleteOrbital(side, name), "#undo")) offerUndo(); }
+async function resetAll() { if (await change(() => resetOrbitals(), "#undo")) offerUndo(); }
 
-const cards = { state: () => ui.state, apply, refused, refresh, toast, offerUndo, undo: () => change(undoOrbitals), remove };
+const cards = { state: () => ui.state, apply, refused, refresh, toast, offerUndo, undo, remove, closed };
 
 const openOrbital = (side, name) => showOrbital(side, name, cards);
 
@@ -118,6 +137,7 @@ const drawer = createDrawer({
   onDelete: remove,
   onAdd: (side) => showPicker(side, cards),
   onResetAll: resetAll,
+  onUndo: undo,
   onCode: () => showCode(cards).catch(refused),
   onExport: () => showExport(cards).catch(refused),
   onImport: () => showImport(cards),

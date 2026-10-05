@@ -4,7 +4,7 @@ const wide = window.matchMedia("(min-width: 1000px)");
 const GRIP = `<svg viewBox="0 0 8 14" aria-hidden="true"><g fill="currentColor"><circle cx="2" cy="2" r="1.3"/><circle cx="6" cy="2" r="1.3"/><circle cx="2" cy="7" r="1.3"/><circle cx="6" cy="7" r="1.3"/><circle cx="2" cy="12" r="1.3"/><circle cx="6" cy="12" r="1.3"/></g></svg>`;
 const TRASH = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>`;
 
-export function createDrawer({ onToggle, onOrbital, onAtom, onMove, onDelete, onAdd, onResetAll, onCode, onExport, onImport, isBusy }) {
+export function createDrawer({ onToggle, onOrbital, onAtom, onMove, onDelete, onAdd, onResetAll, onUndo, onCode, onExport, onImport, isBusy }) {
   const app = $("#app");
   let open = wide.matches ? storage.get("chatomon-studio-drawer") !== "closed" : false;
 
@@ -37,6 +37,7 @@ export function createDrawer({ onToggle, onOrbital, onAtom, onMove, onDelete, on
       case "atom": onAtom(); break;
       case "collapse": set(false); $("#drawer-btn").focus(); break;
       case "reset-all": onResetAll(); break;
+      case "undo": onUndo(); break;
       case "copy-code": onCode(); break;
       case "export": onExport(); break;
       case "import": onImport(); break;
@@ -119,6 +120,9 @@ export function createDrawer({ onToggle, onOrbital, onAtom, onMove, onDelete, on
       $("#changes-list").innerHTML = changes.map((change) => `<li>${esc(change.text)}</li>`).join("");
       if (!changes.length) $("#changes-details").open = false;
       $("#reset-all").hidden = !changes.length;
+      // The server keeps one thing to undo until the next change: so does the drawer.
+      $("#undo").hidden = !state.undo;
+      $("#undo").textContent = state.undo ? `Undo: ${state.undo}` : "";
       $("#drawer-badge").hidden = !changes.length;
       $("#drawer-btn").title = changes.length ? `Show or hide the atom (${count})` : "Show or hide the atom";
       sync();
