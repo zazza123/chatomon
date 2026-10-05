@@ -15,7 +15,7 @@ from chatomon._version import __version__
 from chatomon.errors import ChatomonError
 from chatomon.schemas import Side
 from chatomon.studio import _kinds as kinds
-from chatomon.studio._chains import SIDES, Chains, Entry, UnknownOrbitalError
+from chatomon.studio._chains import SIDES, Chains, Entry, RefusedError, UnknownOrbitalError
 
 VERSION = 1
 """The schema version this studio writes and reads."""
@@ -126,7 +126,6 @@ def _from_code(
     raw: dict[str, Any],
     settings: dict[str, Any],
     shared: dict[int, dict[str, Any]],
-    source: str,
 ) -> Chains:
     """Apply an entry to the orbital the code defines with that side and name.
 
@@ -134,7 +133,7 @@ def _from_code(
         The chains with the entry's settings applied.
 
     Raises:
-        ChatomonError: With the reason the entry cannot be applied.
+        RefusedError: With the reason the entry cannot be applied.
     """
     name = raw["name"]
     try:
@@ -143,16 +142,16 @@ def _from_code(
     except UnknownOrbitalError:
         base = None
     if base is None:
-        raise ChatomonError(
-            f"it is not in {source}, so a preset cannot bring it back: add it to your code first"
+        raise RefusedError(
+            "it is not in your code, so a preset cannot bring it back: add it to your code first"
         )
     if type(base).__name__ != raw["kind"]:
-        raise ChatomonError(
+        raise RefusedError(
             f"it is a {type(base).__name__} in your code, a {raw['kind']} in the preset"
         )
     if id(base) in shared:
         if shared[id(base)] != settings:
-            raise ChatomonError(
+            raise RefusedError(
                 "it is one orbital in both chains of your code, "
                 "but the preset gives it different settings"
             )
@@ -161,14 +160,13 @@ def _from_code(
     return result.edited(side, name, settings) if settings else result
 
 
-def applied(text: str, chains: Chains, *, atom: str, source: str) -> tuple[Chains, list[str]]:
+def applied(text: str, chains: Chains, *, atom: str) -> tuple[Chains, list[str]]:
     """Apply a preset to the atom's own chains.
 
     Args:
         text: The preset, as JSON text.
         chains: The session's chains; only the atom's own are used.
         atom: The loaded atom's name.
-        source: Where the atom comes from, for the messages.
 
     Returns:
         The new chains and the warnings: orbitals that differ from the exported
@@ -201,9 +199,12 @@ def applied(text: str, chains: Chains, *, atom: str, source: str) -> tuple[Chain
             if name in wanted[side]:
                 problems.append(f"{name!r} appears twice in {side}_orbitals")
                 continue
+            if raw["from"] == "studio" and "name" in settings:
+                problems.append(f"{name!r}: `name` is the entry's own field, not a setting")
+                continue
             try:
                 if raw["from"] == "code":
-                    result = _from_code(result, side, raw, settings, shared, source)
+                    result = _from_code(result, side, raw, settings, shared)
                 else:
                     result = result.added(side, raw["kind"], {**settings, "name": name})
                 if not raw["enabled"]:

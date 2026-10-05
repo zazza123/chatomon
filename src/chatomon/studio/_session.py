@@ -240,9 +240,7 @@ class Session:
             InvalidPresetError: With every problem; nothing changes.
         """  # noqa: DOC502 - raised by the helpers
         self._require_idle()
-        candidate, warnings = presets.applied(
-            text, self.chains, atom=self.atom.name, source=self.source
-        )
+        candidate, warnings = presets.applied(text, self.chains, atom=self.atom.name)
         try:
             self._adopt(candidate, undo="Preset imported")
         except ChatomonConfigError as exc:

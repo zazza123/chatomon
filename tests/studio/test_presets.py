@@ -221,7 +221,7 @@ PROBLEMS: list[tuple[str, Any, list[str]]] = [
         "gone from the code",
         with_entry(name="ghost"),
         [
-            "'ghost': it is not in app:atom, so a preset cannot bring it back: "
+            "'ghost': it is not in your code, so a preset cannot bring it back: "
             "add it to your code first"
         ],
     ),
@@ -249,6 +249,11 @@ PROBLEMS: list[tuple[str, Any, list[str]]] = [
         "a name the code uses",
         with_added("output", name="scope", settings=JUDGE),
         ["'scope': an orbital named 'scope' is already in the atom"],
+    ),
+    (
+        "a name among the settings",
+        with_added("output", name="tone", settings={**JUDGE, "name": "other"}),
+        ["'tone': `name` is the entry's own field, not a setting"],
     ),
     (
         "the same orbital twice",
