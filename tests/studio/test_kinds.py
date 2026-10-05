@@ -322,3 +322,13 @@ def test_principled_orbitals_are_read_through_their_instances():
     )
     assert shapes(ClaimExtractorOrbital)["intents_only"] == ("bool", False, False)
     assert kinds.read_only(extractor, CONNECTOR) is None
+
+
+def test_a_switch_takes_true_or_false():
+    flag = kinds.Setting("intents_only", "bool", False, False, False)
+    kinds.check_shape(flag, True)
+    kinds.check_shape(flag, False)
+    for value in ("yes", 1, 0):
+        with pytest.raises(InvalidSettingError) as caught:
+            kinds.check_shape(flag, value)
+        assert str(caught.value) == "`intents_only` must be true or false"
