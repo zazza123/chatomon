@@ -38,6 +38,8 @@ The studio sees the objects your code built, not your source, so it writes each 
 | One of chatomon's own that was edited, added, or built inline in your list | A constructor call with the arguments that differ from the defaults |
 | Anything else | `...` and a comment that names the orbital to keep from your code |
 
+An orbital that your code puts in both chains is one object. When the studio writes it as a call, it assigns it to a variable under `# Before the atom` and uses that variable in both lists, because two calls would build two orbitals with one name.
+
 An orbital that is off stays in its place as a comment. An argument that is an object is written with its variable's name when the module has one, otherwise as `...`. The card lists every `...` it wrote, so nothing is left out silently.
 
 Two situations produce more of them:

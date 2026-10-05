@@ -18,9 +18,9 @@ chatomon's own orbitals are those of `chatomon.orbitals` and `chatomon.orbitals.
 
 ## Editing a Setting
 
-Clicking an orbital opens its card, with one field per setting. A field is applied when you leave it or press ++enter++; a choice or a switch is applied at once. The fingerprint at the bottom of the card changes with every accepted setting, and a field that differs from your code is marked as changed.
+Clicking an orbital opens its card, with one field per setting. A field is applied when you leave it or press ++enter++; a choice or a switch is applied at once. In a text field ++shift+enter++ starts a new line. The fingerprint at the bottom of the card changes with every accepted setting, and a field that differs from your code is marked as changed.
 
-A value the orbital does not accept is refused: the message appears under the field, which keeps what you typed, and the session stays as it was. The message is the orbital's own, the one its constructor raises in your code, for example `set max_words, max_chars or both`. When two settings depend on each other, change them in the order the message suggests: to lower `max_turns` below `warn_before`, lower `warn_before` first.
+A value the orbital does not accept is refused: the message appears under the field, which keeps what you typed, and the session stays as it was. If you close the card before the answer arrives, the message appears at the bottom of the page instead. The message is the orbital's own, the one its constructor raises in your code, for example `set max_words, max_chars or both`. When two settings depend on each other, change them in the order the message suggests: to lower `max_turns` below `warn_before`, lower `warn_before` first.
 
 Arguments that are objects are listed as **from code**, with the name of the variable that holds them when the studio finds it in the atom's module. Change them in your code.
 
@@ -43,9 +43,9 @@ An added orbital goes at the end of its chain, can be renamed from its card, and
 
 ## Changes Against the Code
 
-The foot of the drawer counts how the session differs from your code and lists the differences: an orbital turned off, a setting changed, an orbital added, a chain in another order. A dot marks every row that differs, and another marks the **Atom** button in the header.
+The foot of the drawer counts how the session differs from your code and lists the differences: an orbital turned off, a setting changed, an orbital added, a chain in another order. A dot marks every orbital that was added, turned off or edited, and another marks the **Atom** button in the header.
 
-**Reset to code** in the drawer goes back to the atom as your code defines it. The same button in a card resets that orbital alone: its settings and its switch, not its position. Both offer **Undo**, which is kept until the next change.
+**Reset to code** in the drawer goes back to the atom as your code defines it. The same button in a card resets that orbital alone: its settings and its switch, not its position. Both offer **Undo**, as deleting an orbital and importing a preset do: in the message at the bottom of the page for a few seconds, and at the foot of the drawer until the next change.
 
 Stopping the studio discards the session. To keep what you tuned, copy it as code or export a preset first.
 
