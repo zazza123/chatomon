@@ -94,6 +94,8 @@ class Orbital(ABC):
 
         It is the class name in snake case without the `Orbital` suffix:
         `ScopeGuardOrbital` becomes `scope_guard`. A subclass may override it.
+        [FunctionOrbital][chatomon.orbitals.base.FunctionOrbital] does not use
+        it: each instance is named after its function.
 
         Returns:
             The default name.
