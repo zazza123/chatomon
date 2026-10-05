@@ -10,7 +10,9 @@ settings are written, never the `repr` of an object.
 from __future__ import annotations
 
 import json
+import keyword
 import math
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -44,16 +46,20 @@ class Code:
     """The generated code and what the developer should know about it."""
 
     imports: str
+    setup: str
+    """Assignments that go before the atom: orbitals the code puts in both chains."""
     orbitals: str
     placeholders: list[str]
     notes: list[str]
 
     @property
     def code(self) -> str:
-        """The imports and the two lists, as the card shows them."""
+        """The imports, the assignments and the two lists, as the card shows them."""
         parts = []
         if self.imports:
             parts.append(f"# Imports\n{self.imports}")
+        if self.setup:
+            parts.append(f"# Before the atom\n{self.setup}")
         if self.orbitals:
             parts.append(f"# Inside Atom(...)\n{self.orbitals}")
         return "\n\n".join(parts)
@@ -140,12 +146,16 @@ def _layout(name: str, args: list[Argument]) -> list[str]:
 class _Writer:
     chains: Chains
     known: dict[int, str]
+    shared: dict[int, str] = field(default_factory=dict)
+    """Variables for the orbitals written once and used in both chains, by object id."""
     placeholders: list[str] = field(default_factory=list)
 
     def entry(self, entry: Entry) -> tuple[list[str], str | None, set[Import]]:
         """Return an orbital's lines, a trailing comment and the imports they need."""
         orb = entry.orbital
         name = self.known.get(id(orb)) if orb is entry.base else None
+        if name is None:
+            name = self.shared.get(id(orb))
         if name is not None:
             return [name], None, set()
         if self.chains.note(entry) is None:
@@ -227,6 +237,49 @@ def _side(side: Side, rendered: list[tuple[Entry, list[str], str | None]]) -> li
     return [*out, "],"]
 
 
+def _variable(name: str, taken: set[str]) -> str:
+    """Turn an orbital's name into a variable that nothing else uses.
+
+    Returns:
+        A Python identifier, added to `taken`.
+    """
+    base = re.sub(r"\W", "_", name)
+    if not base or base[0].isdigit():
+        base = f"_{base}"
+    candidate, number = base, 2
+    while candidate in taken or keyword.iskeyword(candidate):
+        candidate, number = f"{base}_{number}", number + 1
+    taken.add(candidate)
+    return candidate
+
+
+def _assignments(writer: _Writer, taken: set[str]) -> tuple[list[str], set[Import]]:
+    """Write once every orbital that both chains hold and that needs a constructor call.
+
+    Two calls would build two orbitals with one name, which an atom refuses: the
+    orbital is assigned to a variable and both lists use it.
+
+    Returns:
+        The assignment lines and the imports they need.
+    """
+    chains = writer.chains
+    first: dict[int, Entry] = {id(entry.orbital): entry for entry in chains.work["input"]}
+    lines: list[str] = []
+    needs: set[Import] = set()
+    for entry in chains.work["output"]:
+        orb = entry.orbital
+        twin = first.get(id(orb))
+        named = orb is entry.base and id(orb) in writer.known
+        if twin is None or named or chains.note(entry) is not None or id(orb) in writer.shared:
+            continue
+        call, more = writer._call(orb)
+        variable = _variable(orb.name, taken)
+        writer.shared[id(orb)] = variable
+        lines += [f"{variable} = {call[0]}", *call[1:]]
+        needs |= more
+    return lines, needs
+
+
 def generate(chains: Chains, namespace: Mapping[str, object] | None) -> Code:
     """Write the session's orbitals as the atom's two lists.
 
@@ -238,7 +291,7 @@ def generate(chains: Chains, namespace: Mapping[str, object] | None) -> Code:
         The code, one sentence per placeholder, and the notes that apply.
     """
     writer = _Writer(chains, names(namespace))
-    needs: set[Import] = set()
+    setup, needs = _assignments(writer, set(namespace or ()))
     blocks: list[str] = []
     for side in SIDES:
         rendered: list[tuple[Entry, list[str], str | None]] = []
@@ -259,4 +312,4 @@ def generate(chains: Chains, namespace: Mapping[str, object] | None) -> Code:
         notes.append(EMPTY)
     if writer.placeholders:
         notes.append(NO_MODULE if namespace is None else NO_NAME)
-    return Code(imports, "\n".join(blocks), writer.placeholders, notes)
+    return Code(imports, "\n".join(setup), "\n".join(blocks), writer.placeholders, notes)

@@ -64,6 +64,36 @@ def make():
     )
 """
 
+SHARED = """
+from pydantic_ai.models.test import TestModel
+
+from chatomon import Atom
+from chatomon.connectors.pydantic_ai import PydanticAIConnector
+from chatomon.orbitals import MessageLengthOrbital
+
+connector = PydanticAIConnector(TestModel(custom_output_text="Hi"))
+limit = MessageLengthOrbital(max_words=60)
+
+atom = Atom(
+    name="speedypack",
+    instructions="Be brief.",
+    connector=connector,
+    input_orbitals=[limit],
+    output_orbitals=[limit],
+)
+
+
+def inline():
+    both = MessageLengthOrbital(max_words=60, name="limit.v2")
+    return Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=connector,
+        input_orbitals=[both],
+        output_orbitals=[both],
+    )
+"""
+
 TONE = {
     "name": "tone",
     "model": "test:judge",
@@ -78,9 +108,11 @@ def project(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "path", list(sys.path))
     for name in [name for name in sys.modules if name == "app" or name.startswith("app.")]:
         monkeypatch.delitem(sys.modules, name)
-    (tmp_path / "app.py").write_text(MODULE, encoding="utf-8")
 
-    def open_session(spec: str = "app:atom") -> tuple[Session, dict[str, object]]:
+    def open_session(
+        spec: str = "app:atom", *, module: str = MODULE
+    ) -> tuple[Session, dict[str, object]]:
+        (tmp_path / "app.py").write_text(module, encoding="utf-8")
         atom = load(spec)  # the namespace exists once the module is imported
         names = namespace(spec)
         return Session(atom, source=spec, namespace=names), names
@@ -92,6 +124,7 @@ def lists(code: Code, names: dict[str, object]) -> dict[str, list[Any]]:
     """Run the generated code in the module's namespace and return the two lists."""
     scope = dict(names)
     exec(code.imports, scope)
+    exec(code.setup, scope)
     return eval(f"dict(\n{code.orbitals}\n)", scope)
 
 
@@ -285,3 +318,59 @@ def test_plain_values_are_never_looked_up_by_name():
     marker = object()
     assert codegen.names({"first": marker, "second": marker}) == {id(marker): "first"}
     assert codegen.names(None) == {}
+
+
+def rebuilt(session: Session, code: Code, names: dict[str, object]) -> Atom:
+    """Build the atom from code with the generated lists, as a developer who pasted them."""
+    atom, built = session.atom, lists(code, names)
+    again = Atom(
+        name=atom.name,
+        instructions=atom.instructions,
+        connector=atom.connector,
+        input_orbitals=built["input_orbitals"],
+        output_orbitals=built["output_orbitals"],
+    )
+    again.validate()
+    return again
+
+
+def test_an_orbital_in_both_chains_is_written_once_and_used_twice(project):
+    session, names = project(module=SHARED)
+    session.edit("input", "message_length", {"max_words": 80})
+    code = codegen.generate(session.chains, names)
+    assert code.code == textwrap.dedent("""\
+        # Imports
+        from chatomon.orbitals import MessageLengthOrbital
+
+        # Before the atom
+        message_length = MessageLengthOrbital(max_words=80)
+
+        # Inside Atom(...)
+        input_orbitals=[message_length],
+        output_orbitals=[message_length],""")
+    atom = rebuilt(session, code, names)
+    assert atom.input_orbitals[0] is atom.output_orbitals[0]
+    assert fingerprints(atom.input_orbitals) == fingerprints(session.chains.enabled("input"))
+    assert fingerprints(atom.output_orbitals) == fingerprints(session.chains.enabled("output"))
+
+
+def test_an_untouched_orbital_in_both_chains_keeps_its_name(project):
+    session, names = project(module=SHARED)
+    code = codegen.generate(session.chains, names)
+    assert code.setup == ""
+    assert code.orbitals == "input_orbitals=[limit],\noutput_orbitals=[limit],"
+
+
+def test_a_shared_orbital_without_a_name_gets_a_variable_nothing_else_uses(project):
+    session, names = project("app:inline", module=SHARED)
+    session.switch("output", "limit.v2", False)
+    code = codegen.generate(session.chains, {**names, "limit_v2": "taken"})
+    assert code.setup == 'limit_v2_2 = MessageLengthOrbital(name="limit.v2", max_words=60)'
+    assert code.orbitals == (
+        "input_orbitals=[limit_v2_2],\n"
+        "output_orbitals=[\n    # Off in the studio:\n    # limit_v2_2,\n],"
+    )
+    assert code.imports == "from chatomon.orbitals import MessageLengthOrbital"
+    atom = rebuilt(session, code, names)
+    assert fingerprints(atom.input_orbitals) == fingerprints(session.chains.enabled("input"))
+    assert atom.output_orbitals == ()
