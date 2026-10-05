@@ -103,7 +103,7 @@ Issues are classified along independent axes. Only `type:` is mandatory.
 | `observability` | `observability.py` | `observability.md` |
 | `docs` | `docs/public/`, `zensical.toml`, docstrings | — |
 | `ci` | `.github/`, `scripts/`, `tests/tooling/` | — |
-| `studio` | `studio/`, `tests/studio/` | `studio.md` |
+| `studio` | `studio/`, `tests/studio/` | `studio/` |
 
 **`framework:` is which agent framework is involved**, independently of
 `area:` — an OpenTelemetry problem only LangChain shows is
