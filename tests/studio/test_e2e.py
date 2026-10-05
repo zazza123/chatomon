@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import http.client
+import json
 import signal
 import socket
 import subprocess
@@ -491,3 +492,84 @@ def test_adding_an_orbital_with_a_name_renaming_and_deleting_it(page: Page, tuna
     expect(row(page, "turns")).to_have_count(0)
     page.locator("#toast").get_by_role("button", name="Undo").click()
     expect(row(page, "turns")).to_have_count(1)
+
+
+def test_copy_as_code_shows_the_lists_and_what_it_could_not_write(page: Page, tunable: Studio):
+    page.context.grant_permissions(["clipboard-read", "clipboard-write"])
+    open_studio(page, tunable)
+    open_card(page, "message_length")
+    words = card(page).get_by_label("max_words")
+    words.fill("80")
+    words.press("Tab")
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    card(page).get_by_role("button", name="Done").click()
+
+    page.get_by_role("button", name="Copy as code").click()
+    expect(card(page)).to_contain_text("Studio changes: message_length.max_words changed.")
+    expect(card(page).locator("pre.code")).to_contain_text("MessageLengthOrbital(max_words=80),")
+    expect(card(page)).to_contain_text("scope: a ScriptedOrbital from your code")
+    card(page).get_by_role("button", name="Copy", exact=True).click()
+    expect(page.locator("#toast")).to_contain_text("Copied")
+    assert "MessageLengthOrbital(max_words=80)," in page.evaluate("navigator.clipboard.readText()")
+
+
+def test_exporting_resetting_and_importing_restores_the_session(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    row(page, "scope").get_by_role("switch").click()
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+
+    page.get_by_role("button", name="Export preset").click()
+    expect(card(page).locator("pre.code")).to_contain_text('"chatomon_studio_preset": 1')
+    text = card(page).locator("pre.code").inner_text()
+    with page.expect_download() as download:
+        card(page).get_by_role("link", name="Download").click()
+    assert download.value.suggested_filename == "speedypack.preset.json"
+    card(page).get_by_role("button", name="Close").first.click()
+
+    page.get_by_role("button", name="Reset to code").click()
+    expect(page.locator("#changes-text")).to_have_text("Same as tests:atom")
+
+    page.get_by_role("button", name="Import preset").click()
+    card(page).locator("#import-file").set_input_files(
+        {"name": "speedypack.preset.json", "mimeType": "application/json", "buffer": text.encode()}
+    )
+    expect(card(page).get_by_label("Preset JSON")).to_have_value(text)
+    card(page).get_by_role("button", name="Apply preset").click()
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    expect(row(page, "scope").get_by_role("switch")).not_to_be_checked()
+    toast = page.locator("#toast")
+    expect(toast).to_contain_text("Preset imported")
+    toast.get_by_role("button", name="Undo").click()
+    expect(page.locator("#changes-text")).to_have_text("Same as tests:atom")
+
+
+def test_an_invalid_preset_lists_its_problems_and_changes_nothing(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    page.get_by_role("button", name="Import preset").click()
+    card(page).get_by_label("Preset JSON").fill('{"chatomon_studio_preset": 2}')
+    card(page).get_by_role("button", name="Apply preset").click()
+    problems = card(page).locator("#import-problems")
+    expect(problems).to_contain_text("The preset was not applied")
+    expect(problems.locator("li")).to_have_text(
+        ["this preset has schema version 2; this studio reads version 1"]
+    )
+    expect(page.locator("#changes-text")).to_have_text("Same as tests:atom")
+
+
+def test_a_preset_applied_with_notes_lists_them(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    preset = page.request.get(f"{tunable.url}/api/preset").json()
+    preset["input_orbitals"][0]["fingerprint"] = "sha256:another"
+    del preset["input_orbitals"][1]
+    page.get_by_role("button", name="Import preset").click()
+    card(page).get_by_label("Preset JSON").fill(json.dumps(preset))
+    card(page).get_by_role("button", name="Apply preset").click()
+    expect(card(page)).to_contain_text("Preset applied")
+    expect(card(page).locator("li")).to_have_text(
+        [
+            "'scope' is in your code but not in the preset: it was added at the end, turned on.",
+            "'message_length' differs from the exported preset: your code or chatomon changed since.",
+        ]
+    )
+    card(page).get_by_role("button", name="Undo").click()
+    expect(card(page)).to_have_count(0)

@@ -5,6 +5,7 @@ import { renderTurns } from "./turns.js";
 import { createDrawer } from "./drawer.js";
 import { showAtom, showNotice, showReport } from "./cards.js";
 import { showOrbital, showPicker } from "./orbital-card.js";
+import { showCode, showExport, showImport } from "./export-cards.js";
 
 let toastTimer = 0;
 let toastFn = null;
@@ -117,9 +118,9 @@ const drawer = createDrawer({
   onDelete: remove,
   onAdd: (side) => showPicker(side, cards),
   onResetAll: resetAll,
-  onCode: () => {},
-  onExport: () => {},
-  onImport: () => {},
+  onCode: () => showCode(cards).catch(refused),
+  onExport: () => showExport(cards).catch(refused),
+  onImport: () => showImport(cards),
   isBusy: () => ui.busy,
 });
 

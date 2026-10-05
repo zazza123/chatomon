@@ -343,6 +343,14 @@ dialog::backdrop { background: rgba(18, 19, 25, .34); backdrop-filter: blur(7px)
 .note.warn { color: var(--warning); background: color-mix(in srgb, var(--warning) 9%, transparent); padding: 8px 11px; border-radius: 10px; }
 .note.err { color: var(--blocked); background: color-mix(in srgb, var(--blocked) 9%, transparent); padding: 8px 11px; border-radius: 10px; }
 .note ul { margin: 4px 0 0; padding-left: 18px; }
+pre.code { margin: 0; padding: 14px 16px; border-radius: 12px; background: var(--code-bg); overflow: auto; font: 12.5px/1.6 var(--font-mono); tab-size: 4; }
+pre.code .k, pre.code .d { color: var(--c-kw); }
+pre.code .s { color: var(--c-str); }
+pre.code .n { color: var(--c-num); }
+pre.code .c { color: var(--fg-2); font-style: italic; }
+#import-text { width: 100%; min-height: 220px; padding: 12px 14px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--code-bg); font: 12.5px/1.55 var(--font-mono); resize: vertical; }
+#import-text:focus { outline: none; border-color: var(--amber); box-shadow: 0 0 0 3px var(--amber-tint); }
+#import-file { font-size: 13px; max-width: 100%; }
 
 /* Turn report inside its card */
 .rep-msg { margin: 0; padding: 9px 12px; border-radius: 10px; background: var(--code-bg); font-size: 14px; overflow-wrap: anywhere; }
