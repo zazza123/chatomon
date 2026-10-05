@@ -397,3 +397,97 @@ def test_deleting_an_added_orbital_and_undoing(page: Page, tunable: Studio):
     expect(toast).to_contain_text("turn_limit deleted")
     toast.get_by_role("button", name="Undo").click()
     expect(row(page, "turn_limit")).to_have_count(1)
+
+
+def card(page: Page):
+    return page.locator("dialog[open]")
+
+
+def open_card(page: Page, name: str) -> None:
+    # The row's button is named by its content (name and class); "Open <name>" is its tooltip.
+    row(page, name).locator('[data-act="card"]').click()
+
+
+def test_editing_a_setting_and_a_value_the_orbital_refuses(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    open_card(page, "message_length")
+    words = card(page).get_by_label("max_words")
+    expect(words).to_have_value("60")
+    fingerprint = card(page).locator("#card-fp").get_attribute("title")
+    reset = card(page).get_by_role("button", name="Reset to code")
+    expect(reset).to_be_disabled()
+
+    words.fill("80")
+    words.press("Tab")
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    expect(card(page).locator("#card-fp")).not_to_have_attribute("title", fingerprint or "")
+    expect(reset).to_be_enabled()
+    expect(row(page, "message_length").locator(".mod-dot")).to_be_visible()
+
+    words.fill("")
+    words.press("Tab")
+    error = card(page).locator("#f-max_words-err")
+    expect(error).to_have_text("set max_words, max_chars or both")
+    expect(words).to_have_attribute("aria-invalid", "true")
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+
+    words.fill("1.5")
+    words.press("Tab")
+    expect(error).to_have_text("`max_words` must be a whole number")
+
+    reset.click()
+    expect(card(page).get_by_label("max_words")).to_have_value("60")
+    expect(page.locator("#changes-text")).to_have_text("Same as tests:atom")
+    expect(page.locator("#toast")).to_contain_text("message_length reset to code")
+
+
+def test_an_orbital_from_code_that_the_studio_does_not_edit(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    open_card(page, "scope")
+    expect(card(page)).to_contain_text("ScriptedOrbital is your own class")
+    expect(card(page).locator(".field")).to_have_count(0)
+    expect(card(page).get_by_role("button", name="Delete orbital")).to_have_count(0)
+
+    card(page).get_by_role("button", name="Move up").click()
+    expect(card(page).locator("#card-pos")).to_have_text("1 of 2 in the input chain")
+    expect(card(page).get_by_role("button", name="Move down")).to_be_focused()
+    assert input_order(page) == ["scope", "message_length"]
+
+    card(page).get_by_role("switch").click()
+    expect(row(page, "scope").get_by_role("switch")).not_to_be_checked()
+    expect(card(page)).to_be_visible()
+
+
+def test_adding_an_orbital_with_a_name_renaming_and_deleting_it(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    page.locator('#drawer [data-act="add"][data-side="input"]').click()
+    expect(card(page)).to_contain_text("Closes the conversation after a number of turns.")
+    expect(card(page)).to_contain_text("added in code")
+    card(page).get_by_role("button", name="TurnLimitOrbital").click()
+
+    name = card(page).get_by_label("name", exact=True)
+    expect(name).to_have_value("turn_limit")
+    card(page).get_by_role("button", name="Add", exact=True).click()
+    expect(card(page).locator("#f-max_turns-err")).to_have_text("`max_turns` needs a value")
+    assert input_order(page) == ["message_length", "scope"]
+
+    name.fill("limit")
+    card(page).get_by_label("max_turns").fill("3")
+    card(page).get_by_role("button", name="Add", exact=True).click()
+    expect(card(page).locator("#card-title")).to_have_text("limit")
+    expect(row(page, "limit")).to_contain_text("added in the studio")
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+
+    renamed = card(page).get_by_label("name", exact=True)
+    renamed.fill("Limit")
+    renamed.press("Enter")
+    expect(card(page).locator("#f-name-err")).to_contain_text("invalid name 'Limit'")
+    renamed.fill("turns")
+    renamed.press("Enter")
+    expect(card(page).locator("#card-title")).to_have_text("turns")
+    expect(row(page, "turns")).to_have_count(1)
+
+    card(page).get_by_role("button", name="Delete orbital").click()
+    expect(row(page, "turns")).to_have_count(0)
+    page.locator("#toast").get_by_role("button", name="Undo").click()
+    expect(row(page, "turns")).to_have_count(1)

@@ -308,6 +308,8 @@ dialog::backdrop { background: rgba(18, 19, 25, .34); backdrop-filter: blur(7px)
 .dlg-extra { display: flex; align-items: center; gap: 6px; flex: none; }
 .dlg-body { display: grid; gap: 16px; padding: 16px 20px; overflow: auto; min-height: 0; align-content: start; }
 .dlg-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
+.dlg-actions .hint { flex: 1 1 0; min-width: 150px; }
+.dlg-actions .hint + .spacer { display: none; }
 .dlg-glyph { display: inline-block; width: 18px; height: 7px; border-radius: 4px; background: var(--amber); }
 .dlg-glyph.off { background: var(--line-2); }
 .switch.big { width: 40px; height: 22px; }
@@ -318,6 +320,24 @@ dialog::backdrop { background: rgba(18, 19, 25, .34); backdrop-filter: blur(7px)
 .kv dt { font: 500 12px/1.6 var(--font-mono); color: var(--fg-2); }
 .kv dd { margin: 0; overflow-wrap: anywhere; }
 .kv .from { color: var(--fg-3); font-size: 12px; }
+.fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.field { display: grid; gap: 5px; align-content: start; min-width: 0; }
+.field.wide { grid-column: 1 / -1; }
+.field label, .field legend { font: 500 12px/1.2 var(--font-mono); color: var(--fg-2); padding: 0; }
+.field.changed label::after, .field.changed legend::after { content: " · changed"; color: var(--link); }
+.field input[type="number"], .field input[type="text"], .field select, .field textarea { width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 9px; background: var(--raised); font-size: 13.5px; }
+.field textarea { resize: vertical; line-height: 1.45; max-height: 40vh; }
+.field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--amber); box-shadow: 0 0 0 3px var(--amber-tint); }
+.field [aria-invalid="true"] { border-color: var(--blocked); }
+.field-err { margin: 0; font-size: 12.5px; color: var(--blocked); }
+.field fieldset { margin: 0; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 9px; display: flex; flex-wrap: wrap; gap: 6px 14px; min-width: 0; }
+.field fieldset label { display: inline-flex; align-items: center; gap: 6px; font: 13px/1.3 var(--font-mono); color: var(--fg); }
+.card-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.card-row .label { min-width: 72px; }
+.card-row .pos { font-size: 13px; flex: 1; }
+.picks { display: grid; gap: 8px; }
+.pick { display: grid; gap: 3px; text-align: left; padding: 12px 14px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--raised); }
+.pick:hover { border-color: var(--amber); background: var(--amber-tint); }
 .fp { font: 11.5px/1.4 var(--font-mono); color: var(--fg-3); overflow-wrap: anywhere; }
 .note { margin: 0; font-size: 13px; color: var(--fg-2); }
 .note.warn { color: var(--warning); background: color-mix(in srgb, var(--warning) 9%, transparent); padding: 8px 11px; border-radius: 10px; }
@@ -369,6 +389,7 @@ details.res > summary:hover { background: var(--line); }
   .scrim { display: block; position: fixed; inset: 0; z-index: 19; background: rgba(18, 19, 25, .34); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
 }
 @media (max-width: 720px) {
+  .fields { grid-template-columns: minmax(0, 1fr); }
   .top { padding: 10px 16px; }
   .addr { display: none; }
   .column { padding-inline: 16px; }

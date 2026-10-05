@@ -3,7 +3,8 @@ import { deleteOrbital, getState, patchOrbital, resetConversation, resetOrbitals
 import { createStage } from "./stage.js";
 import { renderTurns } from "./turns.js";
 import { createDrawer } from "./drawer.js";
-import { closeDialog, showAtom, showNotice, showOrbital, showReport } from "./cards.js";
+import { showAtom, showNotice, showReport } from "./cards.js";
+import { showOrbital, showPicker } from "./orbital-card.js";
 
 let toastTimer = 0;
 let toastFn = null;
@@ -61,8 +62,6 @@ function setCaption(title, sub = "", warn = false) {
   $("#dock").classList.toggle("warn", warn);
 }
 
-const orbital = (side, name) => ui.state.orbitals[side].find((o) => o.name === name);
-
 /** Send a change to the orbitals: the page shows the new state, which is returned. */
 async function apply(request) {
   const state = await request();
@@ -95,10 +94,7 @@ async function resetAll() { if (await change(() => resetOrbitals())) offerUndo()
 
 const cards = { state: () => ui.state, apply, refused, refresh, toast, offerUndo, undo: () => change(undoOrbitals), remove };
 
-const openOrbital = (side, name) => showOrbital(orbital(side, name), {
-  source: ui.state.atom.source,
-  onToggle: async (s, n, enabled) => { await toggle(s, n, enabled); closeDialog(); },
-});
+const openOrbital = (side, name) => showOrbital(side, name, cards);
 
 const stage = createStage({
   svgs: [$("#atom"), $("#dock-atom")],
@@ -119,7 +115,7 @@ const drawer = createDrawer({
   onAtom: () => showAtom(ui.state),
   onMove: move,
   onDelete: remove,
-  onAdd: () => {},
+  onAdd: (side) => showPicker(side, cards),
   onResetAll: resetAll,
   onCode: () => {},
   onExport: () => {},
