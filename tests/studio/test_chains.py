@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 
-from chatomon import Atom
+from chatomon import Atom, Knowledge
 from chatomon.orbitals import JudgeOrbital, MessageLengthOrbital
 from chatomon.studio._chains import (
     Chains,
@@ -211,3 +211,19 @@ def test_an_instance_in_both_chains_stays_one_orbital():
     reset = off.reset("input", "message_length")
     assert reset.work["input"][0].orbital is both and reset.work["output"][0].orbital is both
     assert texts(reset) == ["message_length turned off"]  # the other side keeps its switch
+
+
+def test_a_knowledge_changed_back_is_the_developers_object_again():
+    faq = Knowledge("Open 9-18.", title="FAQ")
+    judge = JudgeOrbital(model="test:judge", instructions="Check facts.", context=faq)
+    chains = Chains.from_atom(make_atom(output_orbitals=[judge]))
+    changed = chains.edited("output", "judge", {"context": "Open 9-17.", "history_window": 2})
+    back = changed.edited("output", "judge", {"context": "Open 9-18."})
+    orbital = back.work["output"][0].orbital
+    assert isinstance(orbital, JudgeOrbital) and orbital is not judge
+    assert orbital.context is faq
+    cleared = changed.edited("output", "judge", {"context": None})
+    again = cleared.edited("output", "judge", {"context": "Opens at 9."})
+    retitled = again.work["output"][0].orbital
+    assert isinstance(retitled, JudgeOrbital) and retitled.context is not None
+    assert retitled.context.title == "FAQ"  # the title comes back from the code's knowledge

@@ -362,31 +362,41 @@ def _setting(kind: Kind, key: str) -> Setting:
     return setting
 
 
-def _written(orb: Orbital, key: str, value: Any) -> Any:
+def _written(orb: Orbital, key: str, value: Any, base: Orbital | None) -> Any:
     """Turn a setting's new value into the constructor argument.
 
-    A knowledge the developer shared stays the same object while its text is
-    unchanged, and keeps its title when the text changes.
+    A knowledge the developer shared is the same object again whenever the text
+    is the one it has, now or in the code, and keeps its title when the text
+    changes.
 
     Returns:
         The value to pass to the constructor.
     """
-    current = getattr(orb, key, None)
-    if isinstance(current, Knowledge) and isinstance(value, str):
-        if value == current.text:
-            return current
-        if current.title is not None:
-            return Knowledge(value, title=current.title)
-    return value
+    if not isinstance(value, str):
+        return value
+    held = [getattr(source, key, None) for source in (orb, base) if source is not None]
+    shared = [knowledge for knowledge in held if isinstance(knowledge, Knowledge)]
+    for knowledge in shared:
+        if value == knowledge.text:
+            return knowledge
+    title = next((knowledge.title for knowledge in shared if knowledge.title is not None), None)
+    return Knowledge(value, title=title) if title is not None else value
 
 
-def rebuilt(orb: Orbital, changes: Mapping[str, Any], connector: Connector[Any]) -> Orbital:
+def rebuilt(
+    orb: Orbital,
+    changes: Mapping[str, Any],
+    connector: Connector[Any],
+    *,
+    base: Orbital | None = None,
+) -> Orbital:
     """Build a new orbital like `orb` with some settings changed.
 
     Args:
         orb: The orbital to start from; it is not changed.
         changes: Setting keys and their new values; `name` renames it.
         connector: The atom's connector.
+        base: The developer's instance, when `orb` is an edited copy of it.
 
     Returns:
         The new orbital.
@@ -405,7 +415,7 @@ def rebuilt(orb: Orbital, changes: Mapping[str, Any], connector: Connector[Any])
     try:
         args = arguments(orb, connector)
         for key, value in changes.items():
-            args[key] = value if key == "name" else _written(orb, key, value)
+            args[key] = value if key == "name" else _written(orb, key, value, base)
         return type(orb)(**args)
     except _REFUSALS as exc:
         raise InvalidSettingError(str(exc), setting=only) from exc

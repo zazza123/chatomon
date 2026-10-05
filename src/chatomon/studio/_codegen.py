@@ -32,9 +32,11 @@ NO_MODULE = (
     "objects from your code are marked `...`."
 )
 NO_NAME = (
-    "What is marked `...` has no name in the atom's module: it is created inline or "
-    "inside a function. Keep it as it is in your code."
+    "What is marked `...` could not be named: it is created inline or inside a function, "
+    "or the orbital keeps its own copy of it. Keep it as it is in your code."
 )
+# Characters that are valid inside a Python literal but that editors show as line breaks.
+_BREAKS = {chr(code): f"\\u{code:04x}" for code in (0x85, 0x2028, 0x2029)}
 
 Import = tuple[str, str]
 Argument = tuple[str, str, str | None]
@@ -95,7 +97,10 @@ def literal(value: Any) -> str:
             value.encode("utf-8")
         except UnicodeEncodeError:
             return json.dumps(value)
-        return json.dumps(value, ensure_ascii=False)
+        written = json.dumps(value, ensure_ascii=False)
+        for char, escape in _BREAKS.items():
+            written = written.replace(char, escape)
+        return written
     if isinstance(value, float) and not math.isfinite(value):
         return f'float("{value}")'
     if isinstance(value, list | tuple):

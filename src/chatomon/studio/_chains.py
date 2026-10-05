@@ -220,7 +220,7 @@ class Chains:
             if entry.base is not None:
                 raise RefusedError(f"{name!r} is defined in your code: rename it there")
             self._require_free(kinds.check_name(settings["name"]), besides=entry.orbital)
-        new = kinds.rebuilt(entry.orbital, settings, self.connector)
+        new = kinds.rebuilt(entry.orbital, settings, self.connector, base=entry.base)
         if entry.base is not None and kinds.values(new) == kinds.values(entry.base):
             new = entry.base
         return self._swapped(entry.orbital, new)
