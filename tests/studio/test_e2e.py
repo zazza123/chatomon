@@ -568,7 +568,8 @@ def test_a_preset_applied_with_notes_lists_them(page: Page, tunable: Studio):
     expect(card(page).locator("li")).to_have_text(
         [
             "'scope' is in your code but not in the preset: it was added at the end, turned on.",
-            "'message_length' differs from the exported preset: your code or chatomon changed since.",
+            "'message_length' differs from the exported preset: "
+            "your code or chatomon changed since.",
         ]
     )
     card(page).get_by_role("button", name="Undo").click()
