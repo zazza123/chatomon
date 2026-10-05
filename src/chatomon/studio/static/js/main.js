@@ -1,4 +1,4 @@
-import { $, reduceMotion, storage } from "./util.js";
+import { $, reduceMotion, rich, storage } from "./util.js";
 import { deleteOrbital, getState, patchOrbital, resetConversation, resetOrbitals, sendTurn, undoOrbitals } from "./api.js";
 import { createStage } from "./stage.js";
 import { renderTurns } from "./turns.js";
@@ -11,7 +11,7 @@ let toastTimer = 0;
 let toastFn = null;
 function toast(text, actionLabel, fn) {
   const t = $("#toast");
-  $("#toast-text").textContent = text;
+  $("#toast-text").innerHTML = rich(text);
   const act = $("#toast-act");
   act.hidden = !actionLabel;
   act.textContent = actionLabel || "";

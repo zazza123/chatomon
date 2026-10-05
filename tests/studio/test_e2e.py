@@ -15,6 +15,7 @@ import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass
 from http.cookiejar import CookieJar
+from typing import Any, Literal
 
 import pytest
 import uvicorn
@@ -25,6 +26,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from chatomon import Atom, Verdict
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.orbitals import MessageLengthOrbital
+from chatomon.studio import _kinds as kinds
 from chatomon.studio._app import create_app
 from chatomon.studio._session import Session
 from tests.fakes import ScriptedOrbital
@@ -434,7 +436,8 @@ def test_editing_a_setting_and_a_value_the_orbital_refuses(page: Page, tunable: 
 
     words.fill("1.5")
     words.press("Tab")
-    expect(error).to_have_text("`max_words` must be a whole number")
+    expect(error).to_have_text("max_words must be a whole number")
+    expect(error.locator("code")).to_have_text("max_words")
 
     reset.click()
     expect(card(page).get_by_label("max_words")).to_have_value("60")
@@ -469,7 +472,7 @@ def test_adding_an_orbital_with_a_name_renaming_and_deleting_it(page: Page, tuna
     name = card(page).get_by_label("name", exact=True)
     expect(name).to_have_value("turn_limit")
     card(page).get_by_role("button", name="Add", exact=True).click()
-    expect(card(page).locator("#f-max_turns-err")).to_have_text("`max_turns` needs a value")
+    expect(card(page).locator("#f-max_turns-err")).to_have_text("max_turns needs a value")
     assert input_order(page) == ["message_length", "scope"]
 
     name.fill("limit")
@@ -508,6 +511,7 @@ def test_copy_as_code_shows_the_lists_and_what_it_could_not_write(page: Page, tu
     expect(card(page)).to_contain_text("Studio changes: message_length.max_words changed.")
     expect(card(page).locator("pre.code")).to_contain_text("MessageLengthOrbital(max_words=80),")
     expect(card(page)).to_contain_text("scope: a ScriptedOrbital from your code")
+    expect(card(page).locator("p.note code")).to_have_text(["..."])
     card(page).get_by_role("button", name="Copy", exact=True).click()
     expect(page.locator("#toast")).to_contain_text("Copied")
     assert "MessageLengthOrbital(max_words=80)," in page.evaluate("navigator.clipboard.readText()")
@@ -680,9 +684,7 @@ def test_text_that_is_not_a_number_is_refused_not_read_as_none(page: Page, tunab
     words.fill("")
     words.press_sequentially("3e")
     words.press("Tab")
-    expect(card(page).locator("#f-max_words-err")).to_have_text(
-        "`max_words` must be a whole number"
-    )
+    expect(card(page).locator("#f-max_words-err")).to_have_text("max_words must be a whole number")
     state = page.request.get(f"{tunable.url}/api/state").json()
     assert state["orbitals"]["input"][0]["settings"][0]["value"] == 60
 
@@ -723,3 +725,84 @@ def test_selecting_text_past_the_edge_of_a_card_does_not_close_it(page: Page, tu
     expect(card(page)).to_be_visible()
     page.mouse.click(8, 8)
     expect(card(page)).to_have_count(0)
+
+
+def test_the_tab_key_skips_the_list_of_changes_when_there_are_none(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    last_add = page.locator('#drawer [data-act="add"][data-side="output"]')
+    last_add.focus()
+    page.keyboard.press("Tab")
+    expect(page.get_by_role("button", name="Copy as code")).to_be_focused()
+
+    row(page, "scope").get_by_role("switch").click()
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    last_add.focus()
+    page.keyboard.press("Tab")
+    expect(page.locator("#changes-text")).to_be_focused()
+
+
+def test_each_add_button_says_which_chain_it_adds_to(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    page.get_by_role("button", name="Add an output orbital").click()
+    expect(card(page).locator("#dlg-title")).to_have_text("Add an output orbital")
+    card(page).get_by_role("button", name="Cancel").click()
+    page.get_by_role("button", name="Add an input orbital").click()
+    expect(card(page).locator("#dlg-title")).to_have_text("Add an input orbital")
+
+
+class TriOrbital(ScriptedOrbital):
+    """A choice and a switch that may be none: no built-in orbital has one yet."""
+
+    def __init__(
+        self,
+        *,
+        mode: Literal["strict", "loose"] | None = None,
+        careful: bool | None = None,
+        name: str | None = None,
+    ) -> None:
+        super().__init__(name=name)
+        self.mode = mode
+        self.careful = careful
+
+    def config(self) -> dict[str, Any]:
+        return {**super().config(), "mode": self.mode, "careful": self.careful}
+
+
+@pytest.fixture
+def optional(monkeypatch) -> Iterator[Studio]:
+    """A studio that reads TriOrbital as one of chatomon's own, so its card can be edited."""
+    builtin = kinds.is_builtin
+    monkeypatch.setattr(kinds, "is_builtin", lambda cls: cls is TriOrbital or builtin(cls))
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(FunctionModel(respond)),
+        input_orbitals=[TriOrbital(mode="strict", careful=True)],
+    )
+    with running(atom) as handle:
+        yield handle
+
+
+def test_a_choice_and_a_switch_that_may_be_none(page: Page, optional: Studio):
+    def values() -> dict[str, Any]:
+        state = page.request.get(f"{optional.url}/api/state").json()
+        return {s["key"]: s["value"] for s in state["orbitals"]["input"][0]["settings"]}
+
+    open_studio(page, optional)
+    open_card(page, "tri")
+    mode = card(page).get_by_label("mode")
+    careful = card(page).get_by_label("careful")
+    expect(mode).to_have_value("strict")
+    expect(careful).to_have_value("true")
+
+    mode.select_option("")
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    careful.select_option("")
+    expect(page.locator("#changes-text")).to_have_text("2 changes vs code")
+    assert values() == {"mode": None, "careful": None}
+
+    mode.select_option("loose")
+    careful.select_option("false")
+    expect(card(page).locator(".field.changed")).to_have_count(2)
+    page.wait_for_function("() => document.querySelectorAll('[aria-invalid]').length === 0")
+    assert values() == {"mode": "loose", "careful": False}

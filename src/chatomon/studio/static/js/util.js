@@ -2,6 +2,8 @@ export const $ = (selector, root = document) => root.querySelector(selector);
 export const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 export const esc = (value) =>
   String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+/** A sentence from the server: escaped, with what it puts between backticks shown as code. */
+export const rich = (text) => esc(text).replace(/`([^`]+)`/g, "<code>$1</code>");
 export const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 export const fmtMs = (ms) => (ms < 10 ? `${ms.toFixed(1)} ms` : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(2)} s`);

@@ -119,6 +119,9 @@ export function createDrawer({ onToggle, onOrbital, onAtom, onMove, onDelete, on
       $("#changes-text").textContent = changes.length ? count : `Same as ${state.atom.source}`;
       $("#changes-list").innerHTML = changes.map((change) => `<li>${esc(change.text)}</li>`).join("");
       if (!changes.length) $("#changes-details").open = false;
+      // With nothing to list, the line is plain text: Tab does not stop on it.
+      if (changes.length) $("#changes-text").removeAttribute("tabindex");
+      else $("#changes-text").setAttribute("tabindex", "-1");
       $("#reset-all").hidden = !changes.length;
       // The server keeps one thing to undo until the next change: so does the drawer.
       $("#undo").hidden = !state.undo;

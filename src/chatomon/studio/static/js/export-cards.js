@@ -1,9 +1,9 @@
-import { $, esc, plural } from "./util.js";
+import { $, esc, plural, rich } from "./util.js";
 import { getCode, getPresetText, importPreset } from "./api.js";
 import { closeDialog, openDialog } from "./cards.js";
 
 const dlg = $("#dlg");
-const list = (items) => `<ul>${items.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>`;
+const list = (items) => `<ul>${items.map((item) => `<li>${rich(item)}</li>`).join("")}</ul>`;
 const CLOSE = `<button class="btn" type="button" data-dlg="close">Close</button>`;
 const COPY = `<button class="btn primary" type="button" data-dlg="copy">Copy</button>`;
 
@@ -62,7 +62,7 @@ export async function showCode(ctx) {
     size: "l",
     title: "Copy as code",
     sub: `The orbitals of <code>${esc(ctx.state().atom.source)}</code> as they are in the studio`,
-    body: `${changes}${marks}${data.notes.map((note) => `<p class="note">${esc(note)}</p>`).join("")}${data.code ? `<pre class="code"><code>${highlight(data.code, "python")}</code></pre>` : ""}`,
+    body: `${changes}${marks}${data.notes.map((note) => `<p class="note">${rich(note)}</p>`).join("")}${data.code ? `<pre class="code"><code>${highlight(data.code, "python")}</code></pre>` : ""}`,
     actions: `<span class="hint spacer">Paste the lists over the ones in your atom.</span>${CLOSE}${data.code ? COPY : ""}`,
   });
   onCopy(data.code, ctx);
@@ -105,7 +105,7 @@ export function showImport(ctx) {
     try {
       result = await importPreset($("#import-text").value);
     } catch (error) {
-      box.innerHTML = error.problems ? `The preset was not applied:${list(error.problems)}` : esc(error.message);
+      box.innerHTML = error.problems ? `The preset was not applied:${list(error.problems)}` : rich(error.message);
       box.hidden = false;
       return;
     }

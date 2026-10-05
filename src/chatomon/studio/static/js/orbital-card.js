@@ -1,4 +1,4 @@
-import { $, $$, esc, shortFp } from "./util.js";
+import { $, $$, esc, rich, shortFp } from "./util.js";
 import { addOrbital, patchOrbital, resetOrbitals } from "./api.js";
 import { closeDialog, kv, openDialog } from "./cards.js";
 
@@ -16,7 +16,11 @@ const others = (state, name) => [...new Set([...state.orbitals.input, ...state.o
 function control(s, value, names) {
   const id = fieldId(s.key);
   const attrs = `id="${id}" data-key="${esc(s.key)}" data-type="${s.type}" aria-describedby="${id}-err"`;
-  if (s.type === "choice") return `<select ${attrs}>${s.options.map((o) => `<option${o === value ? " selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+  // A choice or a switch that may be none gets a "None" entry; a switch then becomes a select.
+  const empty = (selected) => `<option value=""${selected ? " selected" : ""}>None</option>`;
+  const option = (o, selected) => `<option${selected ? " selected" : ""}>${esc(o)}</option>`;
+  if (s.type === "choice") return `<select ${attrs}>${s.optional ? empty(value == null) : ""}${s.options.map((o) => option(o, o === value)).join("")}</select>`;
+  if (s.type === "bool" && s.optional) return `<select ${attrs}>${empty(value == null)}${option("true", value === true)}${option("false", value === false)}</select>`;
   if (s.type === "bool") return `<label class="switch"><input type="checkbox" role="switch" ${attrs}${value ? " checked" : ""}><span></span></label>`;
   if (s.type === "names") {
     const boxes = names.map((n) => `<label><input type="checkbox" value="${esc(n)}"${(value || []).includes(n) ? " checked" : ""}>${esc(n)}</label>`).join("");
@@ -39,7 +43,8 @@ const nameField = (value) => `<div class="field wide"><label for="f-name">name</
 /** The JSON value of a control; an empty field means none, and the server says if that is allowed. */
 function read(el) {
   const type = el.dataset.type;
-  if (type === "bool") return el.checked;
+  if (el.tagName === "SELECT" && el.value === "") return null;
+  if (type === "bool") return el.tagName === "SELECT" ? el.value === "true" : el.checked;
   if (type === "names") return $$("input:checked", el).map((box) => box.value);
   if (type === "choice" || type === "name") return el.value;
   if (el.value.trim() === "") return null;
@@ -50,7 +55,7 @@ function read(el) {
 
 function fail(el, message) {
   const err = errorOf(el);
-  err.textContent = message;
+  err.innerHTML = rich(message);
   err.hidden = false;
   el.setAttribute("aria-invalid", "true");
 }
@@ -221,7 +226,7 @@ function showAddForm(side, kind) {
     } catch (error) {
       const el = error.setting ? $(`#${CSS.escape(fieldId(error.setting))}`, dlg) : null;
       if (el) { fail(el, error.message); el.focus(); return; }
-      $("#add-err").textContent = error.message;
+      $("#add-err").innerHTML = rich(error.message);
       $("#add-err").hidden = false;
       return;
     }
