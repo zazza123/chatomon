@@ -323,6 +323,29 @@ others — is the most likely large contribution, so its path is written down:
 
 What a connector may and may not do is in [`CLAUDE.md`](CLAUDE.md).
 
+## Adding an orbital
+
+A ready-made orbital is the other likely contribution, so its path is written
+down too:
+
+1. **Request.** A `type:feat` issue with `area:orbitals`.
+2. **Done when:**
+   - the class lives in `src/chatomon/orbitals/`, subclasses `Orbital` and is in
+     its module's `__all__`, and in `chatomon.orbitals` when it needs no extra;
+   - its constructor takes keyword arguments, validates them and raises
+     `ChatomonConfigError` with a message that says what to fix; `config()`
+     returns every setting; `sides` is narrowed when it supports one side only;
+   - it keeps to the studio's convention, so the studio edits it with no studio
+     code: a parameter annotated with a plain type is a setting, any other
+     parameter is an object, and each is kept in a public attribute of the same
+     name. A sample of its arguments in `tests/studio/test_kinds.py` passes;
+   - unit tests in `tests/unit/` cover its verdicts with no network; tests
+     against a real service go in `tests/integration/`;
+   - `docs/public/orbitals/` has a page for it, listed in the `nav` of
+     `zensical.toml`, and `docs/public/reference/` has a page for its module.
+
+What an orbital may and may not do is in [`CLAUDE.md`](CLAUDE.md).
+
 ## Versioning and releases
 
 chatomon follows [Semantic Versioning](https://semver.org/). While the version
