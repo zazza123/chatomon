@@ -46,14 +46,16 @@ class Runner(Protocol):
             conversation: `None` in the first turn of a conversation, then what
                 the turn before returned.
 
+        The conversation that is given is never changed: a turn that fails, or
+        that the session does not keep, leaves it as it was.
+
         Returns:
             The reply and the conversation after it, blocked messages already
             replaced by the placeholder.
 
         Raises:
             InterruptedTurnError: If the agent stopped to wait for an answer.
-            Exception: Whatever the model or a tool raised; the conversation that
-                was given is then left as it was.
+            Exception: Whatever the model or a tool raised.
         """
         ...
 

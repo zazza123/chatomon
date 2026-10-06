@@ -12,6 +12,7 @@ from chatomon.studio._runners import InterruptedTurnError
 from chatomon.studio._runners.maf import describe, notes, run_turn, saved_test
 from tests.contract.harness import ToolCall
 from tests.contract.harness_maf import FakeProjectClient, ScriptedMAFClient
+from tests.fakes import ScriptedOrbital
 from tests.studio.frameworks import ScriptedClient
 
 FOUNDRY = (
@@ -48,8 +49,8 @@ class Named(ScriptedMAFClient):
     model = "gpt-5"
 
 
-def built(connector: Any) -> Any:
-    return Atom(name="t", instructions="Be brief.", connector=connector).build()
+def built(connector: Any, **kwargs: Any) -> Any:
+    return Atom(name="t", instructions="Be brief.", connector=connector, **kwargs).build()
 
 
 def test_describe_names_the_clients_model_or_its_class():
@@ -79,12 +80,30 @@ def lookup() -> str:
     return "Monday to Friday, 9-18"
 
 
-async def test_a_request_for_an_approval_is_a_failed_turn():
+async def test_a_request_for_an_approval_is_a_failed_turn_and_the_conversation_goes_on():
+    guard = ScriptedOrbital(name="guard")
     client = ScriptedClient(["one", ToolCall(), "three"], [])
-    agent = built(MAFConnector(client, tools=[lookup]))
+    agent = built(MAFConnector(client, tools=[lookup]), input_orbitals=[guard])
     first = await run_turn(agent, "hello", None)
-    with pytest.raises(InterruptedTurnError, match="start a new one"):
+    with pytest.raises(InterruptedTurnError, match="the turn is left unfinished"):
         await run_turn(agent, "what are your hours?", first.conversation)
+    assert (await run_turn(agent, "again", first.conversation)).reply == "three"
+    # The request without an answer is not in the conversation the next turn runs on.
+    assert [(m.role, m.content) for m in guard.contexts[2].history] == [
+        ("user", "hello"),
+        ("assistant", "one"),
+    ]
+
+
+async def test_the_copy_a_turn_runs_on_is_still_the_same_conversation():
+    seen: list[str | None] = []
+    client = ScriptedClient(["one", "two"], [])
+    agent = built(MAFConnector(client), on_turn=lambda report: seen.append(report.conversation_id))
+    first = await run_turn(agent, "hello", None)
+    second = await run_turn(agent, "again", first.conversation)
+    assert second.conversation is not first.conversation
+    assert seen[0] is not None
+    assert seen[0] == seen[1] == second.conversation.session_id
 
 
 def test_a_saved_test_awaits_its_turns_on_a_session_and_swaps_the_built_agents_client():

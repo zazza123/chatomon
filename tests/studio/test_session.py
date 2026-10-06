@@ -4,6 +4,7 @@ import math
 from typing import Any
 
 import pytest
+from langchain_core.tools import tool
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -14,7 +15,9 @@ from chatomon.orbitals import JudgeOrbital, MessageLengthOrbital
 from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER
 from chatomon.studio._chains import RefusedError, UnknownOrbitalError
 from chatomon.studio._session import Session, StudioBusyError, UnknownTurnError
+from tests.contract.harness import ToolCall
 from tests.fakes import FakeConnector, ScriptedOrbital
+from tests.studio import frameworks
 from tests.studio.frameworks import Reply, StudioHarness
 
 
@@ -691,3 +694,49 @@ def test_the_notes_of_the_atoms_framework_are_kept_for_the_start(framework: Stud
     assert [note[: len(foundry)] for note in session.notes] == (
         [foundry] if framework.name == "maf_foundry" else []
     )
+
+
+@pytest.mark.parametrize("name", ["maf", "maf_foundry"])
+async def test_a_turn_the_nucleus_leaves_without_a_reply_stays_out_of_the_conversation(
+    monkeypatch: pytest.MonkeyPatch, name: str
+):
+    guard = ScriptedOrbital(name="guard")
+    atom = framework_atom(
+        frameworks.harness(name, monkeypatch), "one", "", "three", input_orbitals=[guard]
+    )
+    session = Session(atom, source="app:atom")
+    await drain(session.start_turn("hello"))
+    events = await drain(session.start_turn("say nothing"))
+    turn = events[-1]["turn"]
+    # No exception: the framework returned, and the engine closed the turn as aborted.
+    assert (turn["error"], turn["report"]["final_action"]) == (None, "aborted")
+    assert turn["cannot_save"] == "A turn that failed cannot be saved as a test."
+    await drain(session.start_turn("again"))
+    assert [(m.role, m.content) for m in guard.contexts[2].history] == [
+        ("user", "hello"),
+        ("assistant", "one"),
+    ]
+
+
+@tool(return_direct=True)
+def lookup() -> str:
+    """Look up the opening hours."""
+    return "Monday to Friday, 9-18"
+
+
+async def test_a_langchain_turn_that_ends_on_a_tool_stays_out_of_the_conversation(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    guard = ScriptedOrbital(name="guard")
+    connector = frameworks.harness("langchain", monkeypatch).connector(
+        ToolCall(), "two", tools=[lookup]
+    )
+    atom = Atom(
+        name="speedypack", instructions="Be brief.", connector=connector, input_orbitals=[guard]
+    )
+    session = Session(atom, source="app:atom")
+    events = await drain(session.start_turn("what are your hours?"))
+    # The graph ended on the tool's result: no reply of the nucleus, so the turn is aborted.
+    assert events[-1]["turn"]["report"]["final_action"] == "aborted"
+    await drain(session.start_turn("again"))
+    assert guard.contexts[1].history == ()

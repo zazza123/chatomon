@@ -85,6 +85,16 @@ async def test_a_first_turn_that_fails_leaves_no_conversation(framework: StudioH
     assert seen(guard, 1) == []
 
 
+async def test_a_turn_never_changes_the_conversation_it_was_given(framework: StudioHarness):
+    guard = ScriptedOrbital(name="guard")
+    agent = make_atom(framework, "one", "two", "three", input_orbitals=[guard]).build()
+    first = await framework.runner.run_turn(agent, "hello", None)
+    await framework.runner.run_turn(agent, "second", first.conversation)
+    # Once more from the conversation of the first turn: the second turn is not in it.
+    await framework.runner.run_turn(agent, "third", first.conversation)
+    assert seen(guard, 2) == [("user", "hello"), ("assistant", "one")]
+
+
 async def test_a_turn_in_which_the_nucleus_calls_a_tool_stays_in_the_conversation(
     framework: StudioHarness,
 ):

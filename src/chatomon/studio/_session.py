@@ -449,7 +449,10 @@ class Session:
                 record.error = {"type": type(exc).__name__, "message": str(exc)}
             else:
                 record.reply = outcome.reply
-                self.conversation = outcome.conversation
+                # A framework can return from a turn the engine closed as aborted, one that
+                # ended with no reply of the nucleus: it leaves nothing, like one that raised.
+                if self._report is None or self._report.final_action != "aborted":
+                    self.conversation = outcome.conversation
             record.report = self._report
             self.turns.append(record)
             emit({"type": "turn_finished", "turn": record.to_json()})
