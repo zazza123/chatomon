@@ -125,7 +125,7 @@ class Session:
         self._undo: tuple[Chains, str] | None = None
         self._agent: Any = self._build(self.chains)
         if preset is not None:
-            self.notes += self.import_preset(preset)
+            self.notes = [*self.notes, *self.import_preset(preset)]
             # The session starts here: there is no earlier state of it to go back to.
             self._undo = None
 

@@ -11,6 +11,7 @@ from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.orbitals import JudgeOrbital, MessageLengthOrbital
 from chatomon.studio._chains import RefusedError
 from chatomon.studio._presets import InvalidPresetError
+from chatomon.studio._runners import pydantic_ai as pydantic_ai_runner
 from chatomon.studio._session import Session
 from tests.fakes import ScriptedOrbital
 
@@ -577,3 +578,16 @@ def test_starting_with_a_preset_leaves_the_developers_atom_untouched():
         orb.fingerprint() for orb in (*atom.input_orbitals, *atom.output_orbitals)
     ] == fingerprints
     assert limit.max_words == 60
+
+
+def test_the_list_of_notes_a_runner_returns_is_not_changed_by_a_preset(monkeypatch):
+    kept = ["a note the runner keeps"]
+    monkeypatch.setattr(pydantic_ai_runner, "notes", lambda connector: kept)
+    old = make_session()
+    old.switch("input", "scope", False)
+    started = make_session(context="Open 9-17.", preset=json.dumps(old.export_preset()))
+    assert started.notes == [
+        "a note the runner keeps",
+        "'faithfulness' differs from the exported preset: your code or chatomon changed since.",
+    ]
+    assert kept == ["a note the runner keeps"]
