@@ -18,6 +18,7 @@ nav = [
       { "Tuning orbitals" = "studio/tuning.md" },
       { "Back to code" = "studio/export.md" },
       { "Saving a turn as a test" = "studio/testing.md" },
+      { "Frameworks" = "studio/frameworks.md" },
     ] },
     { "Deployment" = [
       { "Overview" = "deployment/index.md" },

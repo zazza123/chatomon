@@ -2,6 +2,7 @@
 
 import ast
 import asyncio
+import inspect
 import os
 import subprocess
 import sys
@@ -10,22 +11,18 @@ from typing import Any
 
 import pytest
 
+from chatomon.connectors.maf import MAFConnector
+from chatomon.connectors.maf._foundry import _ChatomonFoundryChatClient
 from chatomon.studio import _testgen as testgen
 from chatomon.studio._chains import RefusedError
 from chatomon.studio._loading import load, namespace
-from chatomon.studio._runners.pydantic_ai import saved_test
+from chatomon.studio._runners import maf as maf_runner
+from chatomon.studio._runners import runner_for
 from chatomon.studio._session import Session
+from tests.contract.harness_maf import ScriptedMAFClient
+from tests.studio.frameworks import StudioHarness
 
-MODULE = """
-from types import SimpleNamespace
-
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
-
-from chatomon import Atom, OrbitalContext, Verdict, orbital
-from chatomon.connectors.pydantic_ai import PydanticAIConnector
-from chatomon.orbitals import MessageLengthOrbital
-
+ORBITALS = """
 
 @orbital
 def no_refunds(ctx: OrbitalContext) -> Verdict:
@@ -46,24 +43,14 @@ def polite(ctx: OrbitalContext) -> Verdict:
     if "damn" in ctx.message.lower():
         return Verdict.block(guidance="Write it again, politely.")
     return Verdict.allow()
+"""
 
-
-def nucleus(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    asked = " ".join(
-        part.content
-        for part in messages[-1].parts
-        if isinstance(part, UserPromptPart) and isinstance(part.content, str)
-    )
-    if "boom" in asked:
-        raise RuntimeError("model down")
-    rude = "angry" in asked and "politely" not in (info.instructions or "")
-    return ModelResponse(parts=[TextPart(content="Damn right." if rude else "Hi.")])
-
+ATOM = """
 
 atom = Atom(
     name="speedypack",
     instructions="Be brief.",
-    connector=PydanticAIConnector(FunctionModel(nucleus)),
+    connector=CONNECTOR,
     input_orbitals=[MessageLengthOrbital(max_words=8, reply="Too long."), no_refunds, scope],
     output_orbitals=[polite],
 )
@@ -78,6 +65,151 @@ def make() -> Atom:
 def agent() -> Atom:
     return atom
 """
+
+PYDANTIC_AI = (
+    """
+from types import SimpleNamespace
+
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from chatomon import Atom, OrbitalContext, Verdict, orbital
+from chatomon.connectors.pydantic_ai import PydanticAIConnector
+from chatomon.orbitals import MessageLengthOrbital
+""",
+    """
+
+def nucleus(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    asked = " ".join(
+        part.content
+        for part in messages[-1].parts
+        if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+    )
+    if "boom" in asked:
+        raise RuntimeError("model down")
+    rude = "angry" in asked and "politely" not in (info.instructions or "")
+    return ModelResponse(parts=[TextPart(content="Damn right." if rude else "Hi.")])
+""",
+    "PydanticAIConnector(FunctionModel(nucleus))",
+)
+
+LANGCHAIN = (
+    """
+from types import SimpleNamespace
+from typing import Any
+
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+
+from chatomon import Atom, OrbitalContext, Verdict, orbital
+from chatomon.connectors.langchain import LangChainConnector
+from chatomon.orbitals import MessageLengthOrbital
+""",
+    """
+
+class Nucleus(BaseChatModel):
+    @property
+    def _llm_type(self) -> str:
+        return "nucleus"
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs: Any) -> ChatResult:
+        asked = next(str(m.content) for m in reversed(messages) if isinstance(m, HumanMessage))
+        told = " ".join(str(m.content) for m in messages if isinstance(m, SystemMessage))
+        if "boom" in asked:
+            raise RuntimeError("model down")
+        rude = "angry" in asked and "politely" not in told
+        reply = AIMessage(content="Damn right." if rude else "Hi.")
+        return ChatResult(generations=[ChatGeneration(message=reply)])
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> "Nucleus":
+        return self
+""",
+    "LangChainConnector(Nucleus())",
+)
+
+MAF_IMPORTS = """
+from types import SimpleNamespace
+from typing import Any
+from uuid import uuid4
+
+from agent_framework import (
+    BaseChatClient,
+    ChatMiddlewareLayer,
+    ChatResponse,
+    FunctionInvocationLayer,
+    Message,
+)
+
+from chatomon import Atom, OrbitalContext, Verdict, orbital
+from chatomon.connectors.maf import MAFConnector, MAFFoundryConnector
+from chatomon.orbitals import MessageLengthOrbital
+"""
+
+MAF_NUCLEUS = """
+
+class Nucleus(FunctionInvocationLayer, ChatMiddlewareLayer, BaseChatClient):
+    def _inner_get_response(self, *, messages: Any, stream: bool, options: Any, **kwargs: Any):
+        asked = next(m.text for m in reversed(messages) if m.role == "user")
+        told = [str(options.get("instructions", ""))]
+        told += [m.text for m in messages if m.role == "developer"]  # where Foundry gets them
+
+        async def respond() -> ChatResponse:
+            if "boom" in asked:
+                raise RuntimeError("model down")
+            text = "Damn right." if "angry" in asked and "politely" not in " ".join(told) else "Hi."
+            # An id, as real providers give: without one a repeated reply leaves the history.
+            reply = Message("assistant", [text], message_id=uuid4().hex)
+            return ChatResponse(messages=[reply], finish_reason="stop")
+
+        return respond()
+"""
+
+MAF = (MAF_IMPORTS, MAF_NUCLEUS, "MAFConnector(Nucleus())")
+
+MAF_FOUNDRY = (
+    MAF_IMPORTS,
+    MAF_NUCLEUS
+    + """
+
+class FakeProject:
+    def get_openai_client(self, **kwargs: Any) -> Any:
+        from openai import AsyncOpenAI
+
+        return AsyncOpenAI(api_key="fake", base_url="https://example.invalid")
+
+
+# There is no Foundry here: the nucleus above is the transport of chatomon's Foundry client.
+from chatomon.connectors.maf._foundry import _ChatomonFoundryChatClient  # noqa: E402
+
+_ChatomonFoundryChatClient._inner_get_response = Nucleus()._inner_get_response
+""",
+    'MAFFoundryConnector(project_client=FakeProject(), agent_name="remote-agent", '
+    'agent_version="3")',
+)
+
+PARTS = {
+    "pydantic_ai": PYDANTIC_AI,
+    "langchain": LANGCHAIN,
+    "maf": MAF,
+    "maf_foundry": MAF_FOUNDRY,
+}
+
+
+def module_of(name: str, *, connector: str | None = None, before_atom: str = "") -> str:
+    """Write the `shop` module of a framework: the same orbitals around its own nucleus.
+
+    Args:
+        name: The framework, one of `PARTS`.
+        connector: The expression of the connector, when it is not the plain one.
+        before_atom: Code that goes between the nucleus and the atom.
+    """
+    imports, nucleus, plain = PARTS[name]
+    atom = ATOM.replace("CONNECTOR", connector or plain)
+    return f"{imports}{ORBITALS}{nucleus}{before_atom}{atom}"
+
+
+MODULE = module_of("pydantic_ai")
 
 PYTEST_INI = """[pytest]
 addopts = --strict-markers -p no:cacheprovider
@@ -106,6 +238,9 @@ def project(tmp_path, monkeypatch):
     """A temporary project with a `shop` module, loaded as the command loads it."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "path", list(sys.path))
+    # The Foundry module puts its nucleus on chatomon's client class: put it back afterwards.
+    transport = _ChatomonFoundryChatClient._inner_get_response
+    monkeypatch.setattr(_ChatomonFoundryChatClient, "_inner_get_response", transport)
     for name in [name for name in sys.modules if name == "shop"]:
         monkeypatch.delitem(sys.modules, name)
     (tmp_path / "pytest.ini").write_text(PYTEST_INI, encoding="utf-8")
@@ -143,7 +278,7 @@ def save(session: Session, *, alone: bool = False, upto: int | None = None) -> t
         source=session.source,
         namespace=session.namespace,
         signature=session.signature(),
-        framework=saved_test(),
+        framework=runner_for(session.atom.connector).saved_test(session.atom.connector),
     )
 
 
@@ -151,7 +286,9 @@ def run_saved(test: testgen.SavedTest, monkeypatch: pytest.MonkeyPatch) -> None:
     """Run the saved test in this process, on the module the session loaded."""
     scope: dict[str, Any] = {"__name__": "saved"}
     exec(compile(test.code, f"{test.name}.py", "exec"), scope)
-    scope[test.name](monkeypatch)
+    outcome = scope[test.name](monkeypatch)
+    if inspect.iscoroutine(outcome):  # a framework whose turns are awaited
+        asyncio.run(outcome)
 
 
 def run_pytest(root: Path, test: testgen.SavedTest) -> subprocess.CompletedProcess[str]:
@@ -170,32 +307,6 @@ def run_pytest(root: Path, test: testgen.SavedTest) -> subprocess.CompletedProce
         timeout=120,
         check=False,
     )
-
-
-def test_a_saved_test_passes_on_the_code_and_fails_without_the_orbital(project, tmp_path):
-    session = project()
-    say(session, "I want a refund")
-    test = save(session)
-    assert test.integration is False
-    passed = run_pytest(tmp_path, test)
-    assert passed.returncode == 0, passed.stdout + passed.stderr
-    assert "1 passed" in passed.stdout
-
-    without = MODULE.replace("no_refunds, scope]", "scope]")
-    assert without != MODULE
-    (tmp_path / "shop.py").write_text(without, encoding="utf-8")
-    failed = run_pytest(tmp_path, test)
-    assert failed.returncode == 1, failed.stdout + failed.stderr
-    assert "1 failed" in failed.stdout
-
-
-def test_a_conversation_passes_with_its_marker_registered(project, tmp_path):
-    session = project()
-    say(session, "hello", "I want a refund")
-    test = save(session)
-    assert test.integration is True
-    result = run_pytest(tmp_path, test)  # --strict-markers: the marker must be the registered one
-    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_an_offline_test_needs_no_api_key(project, tmp_path, monkeypatch):
@@ -372,7 +483,7 @@ def test_a_function_called_atom_is_imported_under_another_name(project):
         source="shop:atom",
         namespace={"atom": lambda: session.atom},
         signature=session.signature(),
-        framework=saved_test(),
+        framework=runner_for(session.atom.connector).saved_test(session.atom.connector),
     )
     assert "from shop import atom as atom_source\n" in test.code
     assert "    atom = atom_source()\n" in test.code
@@ -387,7 +498,7 @@ def test_started_from_python_the_import_is_left_to_complete(project):
         source="serve()",
         namespace=None,
         signature=session.signature(),
-        framework=saved_test(),
+        framework=runner_for(session.atom.connector).saved_test(session.atom.connector),
     )
     written = test.code.split("\n")
     assert written[0] == '"""Saved from chatomon studio: serve(), turn 1."""'
@@ -410,21 +521,6 @@ MESSAGES = [
     f"a{chr(0x2028)}b",
     "'single' and \"double\"",
 ]
-
-
-@pytest.mark.parametrize("message", MESSAGES)
-def test_any_message_comes_back_as_the_same_text(project, monkeypatch, message):
-    session = project()
-    say(session, message)
-    test = save(session)
-    calls = [
-        node
-        for node in ast.walk(ast.parse(test.code))
-        if isinstance(node, ast.Call) and ast.unparse(node.func) == "agent.run_sync"
-    ]
-    assert [ast.literal_eval(call.args[0]) for call in calls] == [message]
-    assert chr(0x2028) not in test.code  # editors show it as a line break
-    run_saved(test, monkeypatch)
 
 
 @pytest.mark.parametrize(
@@ -453,12 +549,6 @@ def test_a_long_message_goes_on_a_line_of_its_own(project):
     say(session, message)  # more than eight words: stopped by message_length
     code = save(session).code
     assert f'    result = agent.run_sync(\n        "{message}",\n    )\n' in code
-
-
-def test_the_code_keeps_to_88_columns(project):
-    session = project()
-    say(session, "hello", "I want a refund", "Write me a poem")
-    assert max(len(line) for line in save(session).code.split("\n")) <= 88
 
 
 def test_a_turn_tried_with_studio_changes_is_warned_about(project):
@@ -531,39 +621,6 @@ def test_turns_tried_with_the_same_changes_share_one_warning(project):
         "The orbitals have changed since: Copy as code writes them as they are now.",
     ]
     assert save(session, upto=2).warnings[0].startswith("Turns 1 and 2 ran with 1 studio change")
-
-
-TOOLS = MODULE.replace(
-    "def nucleus(",
-    '''CALLED: list[str] = []
-
-
-def refund_order(order_id: str) -> str:
-    """Refund an order."""
-    CALLED.append(order_id)
-    return "refunded"
-
-
-def nucleus(''',
-).replace(
-    "PydanticAIConnector(FunctionModel(nucleus))",
-    "PydanticAIConnector(FunctionModel(nucleus), tools=[refund_order])",
-)
-
-
-def test_an_offline_test_never_runs_the_atoms_tools(project, monkeypatch):
-    assert TOOLS.count("refund_order") == 2
-    session = project(module=TOOLS)
-    say(session, "I want a refund")
-    test = save(session)
-    assert test.integration is False
-    # The code changes and lets the message through: the test fails, and no tool has run.
-    atom = session.atom
-    kept = tuple(orb for orb in atom.input_orbitals if orb.name != "no_refunds")
-    monkeypatch.setattr(atom, "input_orbitals", kept)
-    with pytest.raises(AssertionError):
-        run_saved(test, monkeypatch)
-    assert sys.modules["shop"].CALLED == []
 
 
 def test_a_setting_changed_again_since_the_turn_is_said(project):
@@ -698,3 +755,385 @@ def test_a_reply_over_several_lines_is_checked_as_written(project, monkeypatch):
         "    )\n"
     ) in test.code
     run_saved(test, monkeypatch)
+
+
+# --- What depends on the runner, for every framework ---------------------------------
+
+REPLY = {
+    "pydantic_ai": "result.output",
+    "langchain": 'result["messages"][-1].content',
+    "maf": "result.text",
+    "maf_foundry": "result.text",
+}
+MESSAGE_GOES_TO = {
+    "pydantic_ai": "agent.run_sync",
+    "langchain": "HumanMessage",
+    "maf": "agent.run",
+    "maf_foundry": "agent.run",
+}
+TOOL = '''
+
+CALLED: list[str] = []
+
+
+def refund_order(order_id: str) -> str:
+    """Refund an order."""
+    CALLED.append(order_id)
+    return "refunded"
+'''
+KEEPS_OFFLINE = "    # No model is called in this test: OfflineNucleus keeps the nucleus offline."
+ASYNC = "Microsoft Agent Framework is asynchronous: the test needs `pytest-asyncio` 0.24 or later."
+LANGCHAIN_ASYNC = (
+    "The studio runs a LangChain agent asynchronously, and so does the test: it needs "
+    "`pytest-asyncio` 0.24 or later."
+)
+
+
+def sent(code: str, name: str) -> list[str]:
+    """The messages a saved test sends, read back from its code."""
+    calls = [
+        node
+        for node in ast.walk(ast.parse(code))
+        if isinstance(node, ast.Call) and ast.unparse(node.func) == MESSAGE_GOES_TO[name]
+    ]
+    return [ast.literal_eval(call.args[0]) for call in calls]
+
+
+def test_the_names_a_frameworks_lines_use_are_read_from_the_lines(project):
+    session = project()
+    names = runner_for(session.atom.connector).saved_test(session.atom.connector).names()
+    assert {"agent", "result", "monkeypatch", "atom", "TestModel"} <= names
+    # An attribute is not a name of the test, and neither is a word inside a string.
+    assert not {"output", "connector", "all_messages", "setattr", "model"} & names
+
+
+def test_every_framework_saves_a_test_that_passes_and_fails_without_the_orbital(
+    project, tmp_path, framework: StudioHarness
+):
+    text = module_of(framework.name)
+    session = project(module=text)
+    say(session, "I want a refund")
+    test = save(session)
+    assert test.integration is False
+    passed = run_pytest(tmp_path, test)
+    assert passed.returncode == 0, passed.stdout + passed.stderr
+    assert "1 passed" in passed.stdout
+
+    without = text.replace("no_refunds, scope]", "scope]")
+    assert without != text
+    (tmp_path / "shop.py").write_text(without, encoding="utf-8")
+    failed = run_pytest(tmp_path, test)
+    assert failed.returncode == 1, failed.stdout + failed.stderr
+    assert "1 failed" in failed.stdout
+
+
+def test_every_framework_saves_a_conversation_that_passes_with_its_markers(
+    project, tmp_path, framework: StudioHarness
+):
+    session = project(module=module_of(framework.name))
+    say(session, "hello", "I am angry", "I want a refund")
+    test = save(session)
+    assert test.integration is True
+    assert [turn.report.final_action for turn in session.turns] == [
+        "answered",
+        "answered",
+        "blocked",
+    ]
+    result = run_pytest(tmp_path, test)  # --strict-markers: every marker must be a known one
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+
+
+def test_every_framework_checks_a_reply_fixed_in_code_with_its_own_expression(
+    project, monkeypatch, framework: StudioHarness
+):
+    session = project(module=module_of(framework.name))
+    say(session, "I want a refund")
+    test = save(session)
+    check = f'    assert {REPLY[framework.name]} == "We don\'t handle refunds in chat."\n'
+    assert check in test.code
+    run_saved(test, monkeypatch)
+
+
+@pytest.mark.parametrize("message", MESSAGES)
+def test_every_framework_sends_any_message_as_the_same_text(
+    project, monkeypatch, framework: StudioHarness, message
+):
+    session = project(module=module_of(framework.name))
+    say(session, message)
+    test = save(session)
+    assert sent(test.code, framework.name) == [message]
+    assert chr(0x2028) not in test.code  # editors show it as a line break
+    run_saved(test, monkeypatch)
+
+
+def test_every_framework_keeps_its_code_to_88_columns(project, framework: StudioHarness):
+    session = project(module=module_of(framework.name))
+    say(session, "I want a refund")
+    offline = save(session)
+    say(session, "hello", "Write me a poem")
+    for test in (offline, save(session)):
+        assert [line for line in test.code.split("\n") if len(line) > 88] == []
+
+
+def test_every_framework_keeps_the_atoms_tools_from_running_offline(
+    project, monkeypatch, framework: StudioHarness
+):
+    plain = PARTS[framework.name][2]
+    text = module_of(
+        framework.name, connector=f"{plain[:-1]}, tools=[refund_order])", before_atom=TOOL
+    )
+    session = project(module=text)
+    say(session, "I want a refund")
+    test = save(session)
+    assert test.integration is False
+    # The code changes and lets the message through: the test fails, and no tool has run.
+    atom = session.atom
+    kept = tuple(orb for orb in atom.input_orbitals if orb.name != "no_refunds")
+    monkeypatch.setattr(atom, "input_orbitals", kept)
+    with pytest.raises(AssertionError):  # on what the test expects, in every framework
+        run_saved(test, monkeypatch)
+    assert sys.modules["shop"].CALLED == []
+
+
+def test_a_langchain_test_offline_needs_neither_the_providers_package_nor_its_key(
+    project, tmp_path
+):
+    text = module_of("langchain")
+    session = project(module=text)
+    say(session, "I want a refund")
+    test = save(session)
+    offline = (
+        '    monkeypatch.setattr(atom.connector, "model", OfflineNucleus(responses=["offline"]))'
+    )
+    assert f"{offline}\n" in test.code
+    # Only now a model the atom cannot build here: the saved test replaces it before it builds.
+    named = text.replace("LangChainConnector(Nucleus())", 'LangChainConnector("nowhere:model")')
+    assert named != text
+    (tmp_path / "shop.py").write_text(named, encoding="utf-8")
+    result = run_pytest(tmp_path, test)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_a_langchain_atom_with_a_checkpointer_gives_every_call_a_thread(project, tmp_path):
+    text = module_of(
+        "langchain",
+        connector="LangChainConnector(Nucleus(), checkpointer=InMemorySaver())",
+        before_atom="\nfrom langgraph.checkpoint.memory import InMemorySaver  # noqa: E402\n",
+    )
+    session = project(module=text)
+    say(session, "hello", "I want a refund")
+    test = save(session)
+    assert test.code.split("\n")[2:5] == ["from uuid import uuid4", "", "import pytest"]
+    assert test.code.count('        {"configurable": {"thread_id": uuid4().hex}},\n') == 2
+    result = run_pytest(tmp_path, test)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_a_langchain_test_is_a_coroutine_with_a_stand_in_of_its_own(project, monkeypatch):
+    session = project(module=module_of("langchain"))
+    say(session, "I want a refund")
+    offline = save(session)
+    lines = offline.code.split("\n")
+    marker = lines.index('@pytest.mark.asyncio(loop_scope="session")')
+    assert lines[marker + 1] == (
+        "async def test_i_want_a_refund(monkeypatch: pytest.MonkeyPatch) -> None:"
+    )
+    assert "class OfflineNucleus(FakeListChatModel):" in lines
+    call = '    result = await agent.ainvoke({"messages": [HumanMessage("I want a refund")]})'
+    assert call in lines
+    assert lines[lines.index("    agent = atom.build()") - 2] == KEEPS_OFFLINE
+    assert offline.notes[:2] == [
+        "No model is called in this test: it runs offline, with a chat model of its own, "
+        "`OfflineNucleus`, in place of the nucleus.",
+        LANGCHAIN_ASYNC,
+    ]
+    run_saved(offline, monkeypatch)
+
+    say(session, "hello")
+    online = save(session, alone=True)
+    assert "OfflineNucleus" not in online.code
+    assert "    await agent.ainvoke(" in online.code
+    assert online.notes[1] == LANGCHAIN_ASYNC
+    run_saved(online, monkeypatch)
+
+
+HOOK = '''
+from langchain.agents.middleware import AgentMiddleware  # noqa: E402
+
+
+class Audit(AgentMiddleware):
+    """A middleware written for an asynchronous application: it has no synchronous hook."""
+
+    async def aafter_agent(self, state: Any, runtime: Any) -> None:
+        return None
+'''
+
+
+def test_a_langchain_atom_with_an_asynchronous_hook_saves_a_test_that_passes(project, monkeypatch):
+    text = module_of(
+        "langchain",
+        connector="LangChainConnector(Nucleus(), middleware=[Audit()])",
+        before_atom=HOOK,
+    )
+    session = project(module=text)
+    say(session, "I want a refund", "hello")
+    assert [turn.error for turn in session.turns] == [None, None]
+    # The studio ran both turns: the tests saved from them run on the unchanged code.
+    run_saved(save(session, upto=1), monkeypatch)
+    run_saved(save(session, alone=True), monkeypatch)
+
+
+FALLBACK = (
+    TOOL
+    + '''
+from langchain.agents.middleware import ModelFallbackMiddleware  # noqa: E402
+
+
+class Fallback(Nucleus):
+    """The model a fallback middleware turns to when the first one fails."""
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs: Any) -> ChatResult:
+        CALLED.append("the fallback model")
+        return super()._generate(messages, stop, run_manager, **kwargs)
+'''
+)
+
+
+def test_a_langchain_fallback_is_not_reached_by_an_offline_test(project, monkeypatch):
+    connector = (
+        "LangChainConnector(Nucleus(), tools=[refund_order], "
+        "middleware=[ModelFallbackMiddleware(Fallback())])"
+    )
+    session = project(module=module_of("langchain", connector=connector, before_atom=FALLBACK))
+    say(session, "I want a refund")
+    test = save(session)
+    assert test.integration is False
+    assert (
+        "This atom has middleware of its own: one that chooses the model can still reach a "
+        "real model in this test."
+    ) in test.notes
+    # The code changes and lets the message through. A stand-in that refused the atom's
+    # tools with an error would send the fallback middleware to its other model.
+    atom = session.atom
+    kept = tuple(orb for orb in atom.input_orbitals if orb.name != "no_refunds")
+    monkeypatch.setattr(atom, "input_orbitals", kept)
+    with pytest.raises(AssertionError):
+        run_saved(test, monkeypatch)
+    assert sys.modules["shop"].CALLED == []
+
+
+@pytest.mark.parametrize("name", ["maf", "maf_foundry"])
+def test_a_microsoft_agent_framework_test_is_a_coroutine_with_a_stand_in_of_its_own(
+    project, monkeypatch, name
+):
+    session = project(module=module_of(name))
+    say(session, "I want a refund")
+    offline = save(session)
+    lines = offline.code.split("\n")
+    marker = lines.index('@pytest.mark.asyncio(loop_scope="session")')
+    assert lines[marker + 1] == (
+        "async def test_i_want_a_refund(monkeypatch: pytest.MonkeyPatch) -> None:"
+    )
+    assert "class OfflineNucleus(ChatMiddlewareLayer, BaseChatClient):" in lines
+    build = lines.index("    agent = atom.build()")
+    assert lines[build + 1 : build + 4] == [
+        KEEPS_OFFLINE,
+        "    agent.client = OfflineNucleus()",
+        "    session = agent.create_session()",
+    ]
+    assert '    result = await agent.run("I want a refund", session=session)' in lines
+    assert offline.notes[:3] == [
+        "No model is called in this test: it runs offline, with a client of its own, "
+        "`OfflineNucleus`, in place of the nucleus.",
+        "`OfflineNucleus` is written on Microsoft Agent Framework's client classes: "
+        "if they change, save the test again.",
+        ASYNC,
+    ]
+    run_saved(offline, monkeypatch)
+
+    say(session, "hello")
+    online = save(session, alone=True)
+    lines = online.code.split("\n")
+    marker = lines.index('@pytest.mark.asyncio(loop_scope="session")')
+    assert lines[marker - 1].startswith("@pytest.mark.integration")
+    assert lines[marker + 1].startswith("async def test_hello(")
+    assert "OfflineNucleus" not in online.code
+    assert "agent_framework" not in online.code
+    assert online.notes[1] == ASYNC
+    run_saved(online, monkeypatch)
+
+
+def test_a_factory_named_like_something_the_runners_lines_use_gets_the_alias(project, monkeypatch):
+    text = module_of("maf") + "\n\ndef session() -> Atom:\n    return atom\n"
+    opened = project("shop:session", module=text)
+    say(opened, "I want a refund")
+    test = save(opened)
+    assert "from shop import session as atom_source\n" in test.code
+    assert "    atom = atom_source()\n" in test.code
+    run_saved(test, monkeypatch)
+
+
+def test_started_from_python_a_microsoft_agent_framework_test_still_compiles(project):
+    session = project(module=module_of("maf"))
+    say(session, "I want a refund")
+    test = testgen.generate(
+        session.turns,
+        alone=False,
+        source="serve()",
+        namespace=None,
+        signature=session.signature(),
+        framework=runner_for(session.atom.connector).saved_test(session.atom.connector),
+    )
+    compile(test.code, "saved.py", "exec")
+    # The import left to complete stays with the imports, above the class the test defines.
+    assert test.code.index("# Import it here") < test.code.index("class OfflineNucleus")
+    assert "async def test_i_want_a_refund(" in test.code
+
+
+def test_the_names_a_runners_lines_use_are_read_from_the_lines():
+    names = maf_runner.saved_test(MAFConnector(ScriptedMAFClient([], []))).names()
+    assert {"session", "agent", "OfflineNucleus", "ChatResponse", "Message", "pytest"} <= names
+    # An attribute is not a name of the test, and neither is a word inside a string.
+    assert not {"client", "text", "create_session", "offline", "assistant", "Stands"} & names
+
+
+def unused(code: str) -> set[str]:
+    """The names a saved test assigns and never reads."""
+    nodes = [node for node in ast.walk(ast.parse(code)) if isinstance(node, ast.Name)]
+    stored = {node.id for node in nodes if isinstance(node.ctx, ast.Store)}
+    return stored - {node.id for node in nodes if isinstance(node.ctx, ast.Load)}
+
+
+def test_every_framework_leaves_no_name_unused(project, framework: StudioHarness):
+    session = project(module=module_of(framework.name))
+    say(session, "hello", "hello again", "I want a refund", "and once more")
+    for upto in (1, 2, 3, 4):
+        assert unused(save(session, upto=upto).code) == set(), f"turns 1-{upto}"
+
+
+def test_every_framework_wraps_a_long_message_within_88_columns(project, framework: StudioHarness):
+    first = "Whereabouts is my extraordinarily overdue parcel today?"
+    later = "Unquestionably the second parcel arrives tomorrow morning?"
+    session = project(module=module_of(framework.name))
+    say(session, first, later)
+    code = save(session).code
+    assert sorted(sent(code, framework.name)) == sorted([first, later])
+    # Each message fits a line of its own: what is written around it must not push it over.
+    assert [line for line in code.split("\n") if len(line) > 88] == []
+
+
+def test_the_names_of_a_frameworks_lines_leave_out_strings_and_comments():
+    lines = testgen.Framework(
+        run="agent.run_sync",
+        first=testgen.Call(),
+        later=testgen.Call(),
+        reply="result.output",
+        offline=testgen.Offline(
+            label="a stand-in", before_build=("configure('single quoted words', mode=fast)",)
+        ),
+        setup=("greeting = prefix  # a comment with words",),
+    )
+    names = lines.names()
+    assert {"configure", "mode", "fast", "greeting", "prefix", "agent", "result"} <= names
+    assert not {"single", "quoted", "words", "comment", "with", "output", "run_sync"} & names

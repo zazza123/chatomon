@@ -2,44 +2,34 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai.messages import ModelMessage
-
 from chatomon.connectors.base import Connector
-from chatomon.studio._testgen import Framework
+from chatomon.studio._runners import RunOutcome
+from chatomon.studio._testgen import Call, Framework, Offline
 
 
-@dataclass(frozen=True)
-class RunOutcome:
-    """The reply of a turn and the conversation history after it."""
-
-    reply: str
-    history: list[ModelMessage]
-
-
-async def run_turn(agent: Any, message: str, history: Sequence[ModelMessage]) -> RunOutcome:
+async def run_turn(agent: Any, message: str, conversation: Any) -> RunOutcome:
     """Run one turn without streaming, as the connector requires with output orbitals.
 
     Args:
         agent: The native `pydantic_ai.Agent` built from the studio's copy of the atom.
         message: The user message.
-        history: The conversation so far, as PydanticAI messages.
+        conversation: The PydanticAI messages so far, or `None` in the first turn.
 
     Returns:
-        The reply and the full history, blocked messages already redacted.
+        The reply and every message of the conversation, blocked ones already redacted.
     """
-    result = await agent.run(message, message_history=list(history))
-    return RunOutcome(reply=result.output, history=result.all_messages())
+    result = await agent.run(message, message_history=list(conversation or ()))
+    return RunOutcome(reply=result.output, conversation=result.all_messages())
 
 
-def describe(connector: Connector[Any]) -> dict[str, str]:
+def describe(connector: Connector[Any], agent: Any) -> dict[str, str]:
     """Name the connector and its model for the atom card.
 
     Args:
         connector: A `PydanticAIConnector`.
+        agent: The native agent; not read.
 
     Returns:
         `{"connector": ..., "model": ...}`.
@@ -71,19 +61,27 @@ def notes(connector: Connector[Any]) -> list[str]:
     return []
 
 
-def saved_test() -> Framework:
+def saved_test(connector: Connector[Any]) -> Framework:
     """Return what a saved test needs from PydanticAI.
 
+    Args:
+        connector: A `PydanticAIConnector`; not read.
+
     Returns:
-        The test model and the line that puts it in place of the nucleus, the call
-        that runs a turn, the argument that carries the conversation and the reply.
+        The call that runs a turn, the argument that carries the conversation, the
+        reply, and the test model that stands in for the nucleus offline.
     """
     return Framework(
-        test_model=("pydantic_ai.models.test", "TestModel"),
-        test_model_label="PydanticAI's `TestModel`",
-        # No tool is called: by default the test model calls every tool the atom has.
-        offline='monkeypatch.setattr(atom.connector, "model", TestModel(call_tools=[]))',
         run="agent.run_sync",
-        resume="message_history=result.all_messages()",
+        first=Call(),
+        later=Call(arguments=("message_history=result.all_messages()",)),
         reply="result.output",
+        offline=Offline(
+            label="PydanticAI's `TestModel`",
+            imports=("from pydantic_ai.models.test import TestModel",),
+            # No tool is called: by default the test model calls every tool the atom has.
+            before_build=(
+                'monkeypatch.setattr(atom.connector, "model", TestModel(call_tools=[]))',
+            ),
+        ),
     )

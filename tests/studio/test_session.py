@@ -4,6 +4,7 @@ import math
 from typing import Any
 
 import pytest
+from langchain_core.tools import tool
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -14,7 +15,10 @@ from chatomon.orbitals import JudgeOrbital, MessageLengthOrbital
 from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER
 from chatomon.studio._chains import RefusedError, UnknownOrbitalError
 from chatomon.studio._session import Session, StudioBusyError, UnknownTurnError
+from tests.contract.harness import ToolCall
 from tests.fakes import FakeConnector, ScriptedOrbital
+from tests.studio import frameworks
+from tests.studio.frameworks import Reply, StudioHarness
 
 
 def make_atom(**kwargs: Any) -> Atom:
@@ -40,8 +44,8 @@ def test_the_developers_atom_is_left_untouched():
     assert atom.tracer_provider is None
 
 
-def test_an_unsupported_connector_is_refused():
-    with pytest.raises(ChatomonConfigError, match="PydanticAI atoms for now"):
+def test_a_connector_the_studio_has_no_runner_for_is_refused():
+    with pytest.raises(ChatomonConfigError, match="the studio has no runner for FakeConnector"):
         Session(make_atom(connector=FakeConnector()), source="app:atom")
 
 
@@ -111,7 +115,7 @@ async def test_a_failing_model_is_recorded_as_an_error_turn():
     assert turn["error"] == {"type": "RuntimeError", "message": "model down"}
     assert turn["reply"] is None
     assert turn["report"]["final_action"] == "aborted"
-    assert session.history == []
+    assert session.conversation is None
 
 
 async def test_turning_an_orbital_off_rebuilds_without_it():
@@ -175,7 +179,7 @@ async def test_reset_clears_the_conversation():
     session = Session(make_atom(), source="app:atom")
     await drain(session.start_turn("hello"))
     session.reset_conversation()
-    assert session.history == []
+    assert session.conversation is None
     assert session.turns == []
 
 
@@ -606,3 +610,133 @@ def test_an_orbital_that_never_said_whether_it_calls_a_model_stops_the_studio_at
     orb.calls_model = "sometimes"  # type: ignore[assignment]
     with pytest.raises(ChatomonConfigError, match="Undeclared must say whether it calls a model"):
         Session(make_atom(input_orbitals=[orb]), source="app:atom")
+
+
+def framework_atom(framework: StudioHarness, *replies: Reply, **kwargs: Any) -> Atom:
+    return Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=framework.connector(*replies),
+        **kwargs,
+    )
+
+
+async def test_every_framework_carries_the_conversation_and_keeps_the_placeholder(
+    framework: StudioHarness,
+):
+    guard = ScriptedOrbital(Verdict.block("No."), Verdict.allow(), name="guard")
+    session = Session(framework_atom(framework, "Hi", input_orbitals=[guard]), source="app:atom")
+    await drain(session.start_turn("secret"))
+    await drain(session.start_turn("hello"))
+    assert [turn.reply for turn in session.turns] == ["No.", "Hi"]
+    assert [message.content for message in guard.contexts[1].history] == [
+        DEFAULT_BLOCKED_PLACEHOLDER,
+        "No.",
+    ]
+
+
+async def test_every_framework_keeps_the_conversation_through_an_orbital_change(
+    framework: StudioHarness,
+):
+    guard = ScriptedOrbital(name="guard")
+    extra = ScriptedOrbital(name="extra")
+    atom = framework_atom(framework, "one", "two", "three", input_orbitals=[guard, extra])
+    session = Session(atom, source="app:atom")
+    await drain(session.start_turn("hello"))
+    session.switch("input", "extra", False)  # the studio builds the agent again
+    await drain(session.start_turn("again"))
+    assert [(m.role, m.content) for m in guard.contexts[1].history] == [
+        ("user", "hello"),
+        ("assistant", "one"),
+    ]
+    session.reset_conversation()
+    await drain(session.start_turn("fresh"))
+    assert guard.contexts[2].history == ()
+
+
+async def test_every_framework_leaves_a_failed_turn_out_of_the_conversation(
+    framework: StudioHarness,
+):
+    guard = ScriptedOrbital(name="guard")
+    atom = framework_atom(
+        framework, "one", RuntimeError("model down"), "three", input_orbitals=[guard]
+    )
+    session = Session(atom, source="app:atom")
+    await drain(session.start_turn("hello"))
+    events = await drain(session.start_turn("boom"))
+    assert events[-1]["turn"]["error"] == {"type": "RuntimeError", "message": "model down"}
+    assert events[-1]["turn"]["report"]["final_action"] == "aborted"
+    await drain(session.start_turn("again"))
+    assert [(m.role, m.content) for m in guard.contexts[2].history] == [
+        ("user", "hello"),
+        ("assistant", "one"),
+    ]
+
+
+def test_every_framework_names_its_connector_and_model_in_the_state(framework: StudioHarness):
+    atom = framework_atom(framework, "Hi")
+    described = Session(atom, source="app:atom").state()["atom"]
+    assert described["connector"] == type(atom.connector).__name__
+    assert (
+        described["model"]
+        == {
+            "pydantic_ai": "function:respond:",
+            "langchain": "ScriptedChatModel",
+            "maf": "ScriptedClient",
+            "maf_foundry": "remote-agent (version 3)",
+        }[framework.name]
+    )
+
+
+def test_the_notes_of_the_atoms_framework_are_kept_for_the_start(framework: StudioHarness):
+    session = Session(framework_atom(framework, "Hi"), source="app:atom")
+    foundry = "the nucleus of this atom is a Foundry agent"
+    assert [note[: len(foundry)] for note in session.notes] == (
+        [foundry] if framework.name == "maf_foundry" else []
+    )
+
+
+@pytest.mark.parametrize("name", ["maf", "maf_foundry"])
+async def test_a_turn_the_nucleus_leaves_without_a_reply_stays_out_of_the_conversation(
+    monkeypatch: pytest.MonkeyPatch, name: str
+):
+    guard = ScriptedOrbital(name="guard")
+    atom = framework_atom(
+        frameworks.harness(name, monkeypatch), "one", "", "three", input_orbitals=[guard]
+    )
+    session = Session(atom, source="app:atom")
+    await drain(session.start_turn("hello"))
+    events = await drain(session.start_turn("say nothing"))
+    turn = events[-1]["turn"]
+    # No exception: the framework returned, and the engine closed the turn as aborted.
+    assert (turn["error"], turn["report"]["final_action"]) == (None, "aborted")
+    assert turn["cannot_save"] == "A turn that failed cannot be saved as a test."
+    await drain(session.start_turn("again"))
+    assert [(m.role, m.content) for m in guard.contexts[2].history] == [
+        ("user", "hello"),
+        ("assistant", "one"),
+    ]
+
+
+@tool(return_direct=True)
+def lookup() -> str:
+    """Look up the opening hours."""
+    return "Monday to Friday, 9-18"
+
+
+async def test_a_langchain_turn_that_ends_on_a_tool_stays_out_of_the_conversation(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    guard = ScriptedOrbital(name="guard")
+    connector = frameworks.harness("langchain", monkeypatch).connector(
+        ToolCall(), "two", tools=[lookup]
+    )
+    atom = Atom(
+        name="speedypack", instructions="Be brief.", connector=connector, input_orbitals=[guard]
+    )
+    session = Session(atom, source="app:atom")
+    events = await drain(session.start_turn("what are your hours?"))
+    # The graph ended on the tool's result: no reply of the nucleus, so the turn is aborted.
+    assert events[-1]["turn"]["report"]["final_action"] == "aborted"
+    await drain(session.start_turn("again"))
+    assert guard.contexts[1].history == ()

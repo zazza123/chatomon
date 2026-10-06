@@ -25,7 +25,7 @@ from chatomon.studio import _presets as presets
 from chatomon.studio import _testgen as testgen
 from chatomon.studio._chains import SIDES, Chains, Entry, RefusedError
 from chatomon.studio._events import Event, EventProcessor
-from chatomon.studio._runners import check_supported
+from chatomon.studio._runners import runner_for
 
 
 def _always_recording_provider() -> TracerProvider:
@@ -93,9 +93,7 @@ class Session:
         source: str,
         namespace: Mapping[str, object] | None = None,
     ) -> None:
-        check_supported(atom.connector)
-        from chatomon.studio._runners import pydantic_ai as runner
-
+        runner = runner_for(atom.connector)
         self.atom = atom
         self.source = source
         self.namespace = namespace
@@ -104,7 +102,7 @@ class Session:
         self.processor = EventProcessor()
         self.provider = _always_recording_provider()
         self.provider.add_span_processor(self.processor)
-        self.history: list[Any] = []
+        self.conversation: Any = None
         self.turns: list[TurnRecord] = []
         self.notes: list[str] = runner.notes(atom.connector)
         self._task: asyncio.Task[None] | None = None
@@ -287,7 +285,7 @@ class Session:
             source=self.source,
             namespace=self.namespace,
             signature=self.signature(),
-            framework=self._runner.saved_test(),
+            framework=self._runner.saved_test(self.atom.connector),
         )
 
     def saved_test(self, n: int, *, alone: bool = False) -> dict[str, Any]:
@@ -382,7 +380,7 @@ class Session:
             StudioBusyError: While a turn runs.
         """  # noqa: DOC502 - raised by _require_idle()
         self._require_idle()
-        self.history = []
+        self.conversation = None
         self.turns = []
 
     def _record(self, report: TurnReport) -> None:
@@ -444,12 +442,17 @@ class Session:
         self.processor.attach(emit)
         try:
             try:
-                outcome = await self._runner.run_turn(self._agent, record.message, self.history)
+                outcome = await self._runner.run_turn(
+                    self._agent, record.message, self.conversation
+                )
             except Exception as exc:
                 record.error = {"type": type(exc).__name__, "message": str(exc)}
             else:
                 record.reply = outcome.reply
-                self.history = outcome.history
+                # A framework can return from a turn the engine closed as aborted, one that
+                # ended with no reply of the nucleus: it leaves nothing, like one that raised.
+                if self._report is None or self._report.final_action != "aborted":
+                    self.conversation = outcome.conversation
             record.report = self._report
             self.turns.append(record)
             emit({"type": "turn_finished", "turn": record.to_json()})
@@ -467,7 +470,7 @@ class Session:
             "atom": {
                 "name": a.name,
                 "source": self.source,
-                **self._runner.describe(a.connector),
+                **self._runner.describe(a.connector, self._agent),
                 "instructions": a.instructions,
                 "knowledge": a.knowledge.text if a.knowledge is not None else None,
                 "max_retries": a.max_retries,

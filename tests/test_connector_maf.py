@@ -23,14 +23,13 @@ from agent_framework import (
     Message,
 )
 from agent_framework.foundry import FoundryAgent, FoundryChatClient, RawFoundryAgentChatClient
-from openai import AsyncOpenAI
 
 from chatomon import Atom, ChatomonConfigError, MissingExtraError, Verdict
 from chatomon.connectors.maf import MAFConnector, MAFFoundryConnector
 from chatomon.orbitals import JudgeOrbital
 from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER
 from tests.contract.harness import Call
-from tests.contract.harness_maf import ScriptedMAFClient, visible
+from tests.contract.harness_maf import FakeProjectClient, ScriptedMAFClient, visible
 from tests.fakes import ScriptedOrbital
 
 
@@ -330,11 +329,6 @@ async def test_foundry_output_regeneration_uses_transient_developer_guidance():
         ("user", "hello"),
         ("assistant", "approved answer"),
     ]
-
-
-class FakeProjectClient:
-    def get_openai_client(self, **kwargs: Any) -> AsyncOpenAI:
-        return AsyncOpenAI(api_key="fake", base_url="https://example.invalid")
 
 
 class _CaptureChatRequest(ChatMiddleware):
