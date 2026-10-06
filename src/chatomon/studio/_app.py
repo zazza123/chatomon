@@ -250,10 +250,10 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
             result = await session.reload()
         except ChatomonConfigError as exc:
             # As when the command starts: the traceback of the developer's code goes to the
-            # terminal, never to the page, which gets the sentence.
-            cause = exc.__cause__
-            if cause is not None and not isinstance(cause, ChatomonError):
-                traceback.print_exception(cause, file=sys.stderr)
+            # terminal, never to the page, which gets the sentence. A refusal of the studio's
+            # own has no cause.
+            if exc.__cause__ is not None:
+                traceback.print_exception(exc.__cause__, file=sys.stderr)
             print(f"chatomon studio: reload failed: {exc}", file=sys.stderr)
             return _refusal(exc)
         except ChatomonError as exc:

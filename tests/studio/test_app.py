@@ -840,3 +840,28 @@ def test_a_reload_needs_the_studios_origin(reloadable):
     assert client.get("/api/reload").status_code == 405
     assert sys.modules["shop"].INSTRUCTIONS == "Be brief."  # nothing was imported
     assert reload(client).status_code == 200
+
+
+def test_an_error_chatomon_raises_in_the_developers_module_has_its_traceback(reloadable, capsys):
+    """An orbital built with a wrong value: the traceback says which line of whose file."""
+    client, sources = reloadable
+    sources("shop.py", SHOP.replace("max_words=60", "max_words=-5"))
+    response = reload(client)
+    assert response.status_code == 409
+    assert "max_words must be a positive integer" in response.json()["error"]["message"]
+    assert "Traceback" not in response.text
+    err = capsys.readouterr().err
+    assert "Traceback" in err and "shop.py" in err and "max_words=-5" in err
+
+
+def test_changes_of_the_studio_that_no_longer_build_have_no_traceback(reloadable, capsys):
+    client, sources = reloadable
+    reader = {"name": "tone", "model": "test:judge", "instructions": "Kind.", "reads": ["extra"]}
+    body = {"side": "input", "kind": "JudgeOrbital", "settings": reader}
+    assert client.post("/api/orbitals", json=body, headers=ORIGIN).status_code == 200
+    sources("shop.py", SHOP.replace("[limit, extra]", "[limit]"))
+    response = reload(client)
+    assert response.status_code == 409
+    message = response.json()["error"]["message"]
+    assert message.startswith("the reloaded atom does not build with the studio's changes: ")
+    assert capsys.readouterr().err == f"chatomon studio: reload failed: {message}\n"

@@ -560,10 +560,11 @@ class Session:
         except ChatomonConfigError as exc:
             # When the atom does not build on its own either, the error is its own.
             self._build(atom, code)
+            # No cause: this is the studio's refusal, and nothing of the developer's code failed.
             raise ChatomonConfigError(
                 f"the reloaded atom does not build with the studio's changes: {exc}. "
                 "Change them or reset to code, then reload again"
-            ) from exc
+            ) from None
         return _Loaded(
             atom=atom,
             namespace=loading.namespace(self.source),
