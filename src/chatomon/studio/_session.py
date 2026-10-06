@@ -613,7 +613,12 @@ class Session:
         """Return everything the page shows, as JSON-ready data (spec section 6)."""
         a = self.atom
         return {
-            "studio": {"version": __version__, "capture_content": "full"},
+            "studio": {
+                "version": __version__,
+                "capture_content": "full",
+                # Without a module the studio does not know what to import again.
+                "reload": self.namespace is not None,
+            },
             "atom": {
                 "name": a.name,
                 "source": self.source,

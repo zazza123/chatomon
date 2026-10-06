@@ -1,5 +1,6 @@
 import json
 import logging
+import sys
 
 import pytest
 from pydantic_ai.messages import ModelMessage, ModelResponse
@@ -11,6 +12,7 @@ from chatomon import Atom, Verdict
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.orbitals import MessageLengthOrbital
 from chatomon.studio._app import create_app
+from chatomon.studio._loading import load, namespace
 from chatomon.studio._session import Session, StudioBusyError
 from tests.fakes import ScriptedOrbital
 
@@ -703,3 +705,138 @@ def test_the_command_to_run_a_test_quotes_what_a_shell_would_split(saving):
         "path": "my tests/test_x.py",
         "command": "python -m pytest 'my tests/test_x.py'",
     }
+
+
+# --- Reload from code -----------------------------------------------------------------------
+
+SHOP = """
+    from pydantic_ai.models.test import TestModel
+    from chatomon import Atom
+    from chatomon.connectors.pydantic_ai import PydanticAIConnector
+    from chatomon.orbitals import MessageLengthOrbital
+
+    INSTRUCTIONS = "Be brief."
+    limit = MessageLengthOrbital(max_words=60)
+    extra = MessageLengthOrbital(name="extra", max_words=500)
+    atom = Atom(
+        name="shop",
+        instructions=INSTRUCTIONS,
+        connector=PydanticAIConnector(TestModel(custom_output_text="Hi")),
+        input_orbitals=[limit, extra],
+    )
+"""
+
+
+@pytest.fixture
+def reloadable(sources):
+    """A studio started as the command starts it, on a module the test can write again."""
+    sources("shop.py", SHOP)
+    session = Session(load("shop:atom"), source="shop:atom", namespace=namespace("shop:atom"))
+    app = create_app(session, token=TOKEN, host="127.0.0.1", port=8016)
+    with TestClient(app, base_url=BASE) as client:
+        client.get(f"/?token={TOKEN}")
+        yield client, sources
+
+
+def reload(client):
+    return client.post("/api/reload", headers=ORIGIN)
+
+
+def test_the_state_says_whether_the_atom_can_be_reloaded(client, reloadable):
+    assert reloadable[0].get("/api/state").json()["studio"]["reload"] is True
+    assert client.get("/api/state").json()["studio"]["reload"] is False  # started from Python
+
+
+def test_a_reload_answers_with_the_new_state_and_what_was_dropped(reloadable, capsys):
+    client, sources = reloadable
+    patch(client, "extra", enabled=False)
+    patch(client, "message_length", settings={"max_words": 80})
+    sources("shop.py", SHOP.replace("Be brief.", "Be kind.").replace("[limit, extra]", "[limit]"))
+    response = reload(client)
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {"state", "dropped", "restarted"}
+    assert body["dropped"] == [
+        "'extra' is no longer in your code: what the studio changed on it was dropped."
+    ]
+    assert body["restarted"] is None
+    assert body["state"] == client.get("/api/state").json()
+    assert body["state"]["atom"]["instructions"] == "Be kind."
+    assert [change["text"] for change in body["state"]["changes"]] == [
+        "message_length.max_words changed"
+    ]
+    assert capsys.readouterr().err == ""
+
+
+def test_a_reload_that_fails_says_why_and_keeps_the_traceback_in_the_terminal(reloadable, capsys):
+    client, sources = reloadable
+    before = client.get("/api/state").json()
+    sources("shop.py", SHOP.replace('INSTRUCTIONS = "Be brief."', "SECRET = 'sk-123' +"))
+    response = reload(client)
+    assert response.status_code == 409
+    error = response.json()["error"]
+    assert error["type"] == "Refused"
+    assert error["message"].startswith("could not import 'shop': invalid syntax")
+    assert "sk-123" not in response.text and "Traceback" not in response.text
+    err = capsys.readouterr().err
+    assert "Traceback" in err and "SyntaxError" in err and "sk-123" in err
+    assert err.rstrip().splitlines()[-1] == f"chatomon studio: reload failed: {error['message']}"
+    assert client.get("/api/state").json() == before
+
+
+def test_a_refusal_of_chatomons_own_has_no_traceback(reloadable, capsys):
+    client, sources = reloadable
+    sources("shop.py", SHOP.replace("[limit, extra]", "[limit, limit]"))
+    response = reload(client)
+    assert response.status_code == 409
+    message = response.json()["error"]["message"]
+    assert "appears twice" in message
+    assert capsys.readouterr().err == f"chatomon studio: reload failed: {message}\n"
+
+
+def test_the_notes_of_the_reloaded_atom_go_to_the_terminal(reloadable, capsys):
+    client, sources = reloadable
+    sources(
+        "shop.py",
+        SHOP.replace('custom_output_text="Hi")', 'custom_output_text="Hi"), deps_type=int'),
+    )
+    response = reload(client)
+    assert response.status_code == 200
+    err = capsys.readouterr().err
+    assert err.startswith("note: this atom declares deps_type") and err.count("\n") == 1
+    assert "deps_type" not in json.dumps(
+        {key: response.json()[key] for key in ("dropped", "restarted")}
+    )
+    assert reload(client).status_code == 200
+    assert capsys.readouterr().err == ""  # a note is told once
+
+
+def test_a_reload_while_something_runs_is_busy(reloadable, monkeypatch):
+    client, _ = reloadable
+    monkeypatch.setattr(Session, "busy", property(lambda self: True))
+    response = reload(client)
+    assert response.status_code == 409
+    assert response.json()["error"]["type"] == "Busy"
+
+
+def test_a_studio_started_from_python_refuses_to_reload(client, capsys):
+    response = reload(client)
+    assert response.status_code == 409
+    assert response.json()["error"] == {
+        "type": "Refused",
+        "message": (
+            "the studio was started from Python and does not know where the atom lives: "
+            "restart it to load your changes"
+        ),
+    }
+    assert capsys.readouterr().err == ""
+
+
+def test_a_reload_needs_the_studios_origin(reloadable):
+    client, sources = reloadable
+    sources("shop.py", SHOP.replace("Be brief.", "Be kind."))
+    assert client.post("/api/reload", headers={"origin": "http://evil.example"}).status_code == 403
+    assert client.post("/api/reload").status_code == 403
+    assert client.get("/api/reload").status_code == 405
+    assert sys.modules["shop"].INSTRUCTIONS == "Be brief."  # nothing was imported
+    assert reload(client).status_code == 200
