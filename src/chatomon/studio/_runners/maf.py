@@ -1,4 +1,4 @@
-"""Studio turns on atoms built with `MAFConnector`."""
+"""Studio turns on atoms built with `MAFConnector` or `MAFFoundryConnector`."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from typing import Any
 from agent_framework import HistoryProvider, InMemoryHistoryProvider
 
 from chatomon.connectors.base import Connector
+from chatomon.connectors.maf import MAFFoundryConnector
 from chatomon.studio._runners import InterruptedTurnError, RunOutcome
 from chatomon.studio._testgen import Call, Framework, Offline
 
@@ -15,6 +16,10 @@ _INTERRUPTED = (
     "the request stays in the conversation: start a new one"
 )
 _HISTORY = "this atom keeps its history in {name}; the studio's conversations are written there"
+_FOUNDRY = (
+    "the nucleus of this atom is a Foundry agent; every turn that passes the input chain "
+    "calls it with your credentials, and the tools hosted there run"
+)
 _ASYNC = "Microsoft Agent Framework is asynchronous: the test needs `pytest-asyncio` 0.24 or later."
 _OWN_CLASS = (
     "`OfflineNucleus` is written on Microsoft Agent Framework's client classes: "
@@ -59,17 +64,22 @@ async def run_turn(agent: Any, message: str, conversation: Any) -> RunOutcome:
 
 
 def describe(connector: Connector[Any], agent: Any) -> dict[str, str]:
-    """Name the connector and its model for the atom card.
+    """Name the connector and its model, or the Foundry agent, for the atom card.
 
     Args:
-        connector: A `MAFConnector`.
-        agent: The native agent, whose client knows its model.
+        connector: A `MAFConnector` or a `MAFFoundryConnector`.
+        agent: The native agent: its client knows what Foundry agent it calls.
 
     Returns:
         `{"connector": ..., "model": ...}`.
     """
     client = getattr(agent, "client", None)
-    model = _text(getattr(client, "model", None)) or type(client).__name__
+    if isinstance(connector, MAFFoundryConnector):
+        name = _text(getattr(client, "agent_name", None)) or "unknown"
+        version = _text(getattr(client, "agent_version", None))
+        model = f"{name} (version {version})" if version else name
+    else:
+        model = _text(getattr(client, "model", None)) or type(client).__name__
     return {"connector": type(connector).__name__, "model": model}
 
 
@@ -77,26 +87,28 @@ def notes(connector: Connector[Any]) -> list[str]:
     """Say what the developer should know before trying this atom in the studio.
 
     Args:
-        connector: A `MAFConnector`.
+        connector: A `MAFConnector` or a `MAFFoundryConnector`.
 
     Returns:
-        One sentence for every history provider of the developer's.
+        One sentence for a history provider of the developer's and one for Foundry.
     """
-    kwargs = getattr(connector, "agent_kwargs", {})
-    return [
+    foundry = isinstance(connector, MAFFoundryConnector)
+    kwargs = getattr(connector, "foundry_kwargs" if foundry else "agent_kwargs", {})
+    found = [
         _HISTORY.format(name=type(provider).__name__)
         for provider in kwargs.get("context_providers") or ()
         if isinstance(provider, HistoryProvider)
         and provider.load_messages
         and not isinstance(provider, InMemoryHistoryProvider)
     ]
+    return [*found, _FOUNDRY] if foundry else found
 
 
 def saved_test(connector: Connector[Any]) -> Framework:
     """Return what a saved test needs from Microsoft Agent Framework.
 
     Args:
-        connector: A `MAFConnector`; not read.
+        connector: A `MAFConnector` or a `MAFFoundryConnector`; not read.
 
     Returns:
         The awaited call that runs a turn on a session, the reply, and the client the

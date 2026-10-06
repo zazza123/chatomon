@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from chatomon.connectors.maf import MAFConnector
+from chatomon.connectors.maf._foundry import _ChatomonFoundryChatClient
 from chatomon.studio import _testgen as testgen
 from chatomon.studio._chains import RefusedError
 from chatomon.studio._loading import load, namespace
@@ -166,11 +167,32 @@ class Nucleus(FunctionInvocationLayer, ChatMiddlewareLayer, BaseChatClient):
 
 MAF = (MAF_IMPORTS, MAF_NUCLEUS, "MAFConnector(Nucleus())")
 
+MAF_FOUNDRY = (
+    MAF_IMPORTS,
+    MAF_NUCLEUS
+    + """
+
+class FakeProject:
+    def get_openai_client(self, **kwargs: Any) -> Any:
+        from openai import AsyncOpenAI
+
+        return AsyncOpenAI(api_key="fake", base_url="https://example.invalid")
+
+
+# There is no Foundry here: the nucleus above is the transport of chatomon's Foundry client.
+from chatomon.connectors.maf._foundry import _ChatomonFoundryChatClient  # noqa: E402
+
+_ChatomonFoundryChatClient._inner_get_response = Nucleus()._inner_get_response
+""",
+    'MAFFoundryConnector(project_client=FakeProject(), agent_name="remote-agent", '
+    'agent_version="3")',
+)
 
 PARTS = {
     "pydantic_ai": PYDANTIC_AI,
     "langchain": LANGCHAIN,
     "maf": MAF,
+    "maf_foundry": MAF_FOUNDRY,
 }
 
 
@@ -216,6 +238,9 @@ def project(tmp_path, monkeypatch):
     """A temporary project with a `shop` module, loaded as the command loads it."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "path", list(sys.path))
+    # The Foundry module puts its nucleus on chatomon's client class: put it back afterwards.
+    transport = _ChatomonFoundryChatClient._inner_get_response
+    monkeypatch.setattr(_ChatomonFoundryChatClient, "_inner_get_response", transport)
     for name in [name for name in sys.modules if name == "shop"]:
         monkeypatch.delitem(sys.modules, name)
     (tmp_path / "pytest.ini").write_text(PYTEST_INI, encoding="utf-8")
@@ -915,7 +940,7 @@ def test_a_langchain_test_says_what_its_fake_model_cannot_do(project):
     assert all("FakeListChatModel" not in note for note in save(session, alone=True).notes)
 
 
-@pytest.mark.parametrize("name", ["maf"])
+@pytest.mark.parametrize("name", ["maf", "maf_foundry"])
 def test_a_microsoft_agent_framework_test_is_a_coroutine_with_a_stand_in_of_its_own(
     project, monkeypatch, name
 ):

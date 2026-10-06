@@ -31,6 +31,15 @@ def visible(messages: Sequence[Message]) -> list[tuple[str, str]]:
     ]
 
 
+class FakeProjectClient:
+    """A Foundry project client that never reaches a service."""
+
+    def get_openai_client(self, **kwargs: Any) -> Any:
+        from openai import AsyncOpenAI
+
+        return AsyncOpenAI(api_key="fake", base_url="https://example.invalid")
+
+
 class ScriptedMAFClient(FunctionInvocationLayer, ChatMiddlewareLayer, BaseChatClient):
     """MAF-native client with the same middleware and tool layers as production clients."""
 

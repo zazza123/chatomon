@@ -7,13 +7,17 @@ import pytest
 from agent_framework import HistoryProvider, InMemoryHistoryProvider, Message, tool
 
 from chatomon import Atom
-from chatomon.connectors.maf import MAFConnector
+from chatomon.connectors.maf import MAFConnector, MAFFoundryConnector
 from chatomon.studio._runners import InterruptedTurnError
 from chatomon.studio._runners.maf import describe, notes, run_turn, saved_test
 from tests.contract.harness import ToolCall
-from tests.contract.harness_maf import ScriptedMAFClient
+from tests.contract.harness_maf import FakeProjectClient, ScriptedMAFClient
 from tests.studio.frameworks import ScriptedClient
 
+FOUNDRY = (
+    "the nucleus of this atom is a Foundry agent; every turn that passes the input chain "
+    "calls it with your credentials, and the tools hosted there run"
+)
 HISTORY = "this atom keeps its history in RedisLike; the studio's conversations are written there"
 
 
@@ -99,3 +103,39 @@ def test_a_saved_test_awaits_its_turns_on_a_session_and_swaps_the_built_agents_c
         "class OfflineNucleus(ChatMiddlewareLayer, BaseChatClient):"
     )
     compile("\n".join([*lines.offline.imports, "", *lines.offline.definitions]), "x.py", "exec")
+
+
+# --- The second connector: an agent hosted in Foundry ---------------------------------
+
+
+def foundry(**kwargs: Any) -> MAFFoundryConnector:
+    return MAFFoundryConnector(project_client=FakeProjectClient(), **kwargs)
+
+
+def test_describe_names_the_foundry_agent_and_its_version(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("FOUNDRY_AGENT_VERSION", raising=False)
+    versioned = foundry(agent_name="remote-agent", agent_version="3")
+    assert describe(versioned, built(versioned)) == {
+        "connector": "MAFFoundryConnector",
+        "model": "remote-agent (version 3)",
+    }
+    latest = foundry(agent_name="remote-agent")
+    assert describe(latest, built(latest))["model"] == "remote-agent"
+
+
+def test_the_foundry_agent_named_in_the_environment_is_shown(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("FOUNDRY_AGENT_NAME", "from-the-environment")
+    monkeypatch.delenv("FOUNDRY_AGENT_VERSION", raising=False)
+    connector = foundry()
+    assert describe(connector, built(connector))["model"] == "from-the-environment"
+
+
+@pytest.mark.parametrize(("providers", "expected"), [(None, []), ([RedisLike()], [HISTORY])])
+def test_a_foundry_atom_gets_its_note_after_any_other(providers: Any, expected: list[str]):
+    kwargs = {} if providers is None else {"context_providers": providers}
+    assert notes(foundry(agent_name="remote-agent", **kwargs)) == [*expected, FOUNDRY]
+
+
+def test_a_foundry_atom_saves_the_same_test_as_any_other():
+    plain = saved_test(MAFConnector(ScriptedMAFClient([], [])))
+    assert saved_test(foundry(agent_name="remote-agent")) == plain

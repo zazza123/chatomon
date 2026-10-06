@@ -13,7 +13,8 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from chatomon.connectors import Connector
 from chatomon.connectors.langchain import LangChainConnector
-from chatomon.connectors.maf import MAFConnector
+from chatomon.connectors.maf import MAFConnector, MAFFoundryConnector
+from chatomon.connectors.maf._foundry import _ChatomonFoundryChatClient
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.studio._runners import Runner
 from chatomon.studio._runners import langchain as langchain_runner
@@ -21,7 +22,7 @@ from chatomon.studio._runners import maf as maf_runner
 from chatomon.studio._runners import pydantic_ai as pydantic_ai_runner
 from tests.contract.harness import ToolCall
 from tests.contract.harness_langchain import ScriptedChatModel
-from tests.contract.harness_maf import ScriptedMAFClient
+from tests.contract.harness_maf import FakeProjectClient, ScriptedMAFClient
 
 Reply = str | Exception | ToolCall
 """One step of a nucleus's script: a text to reply with, an error to raise, a call to `lookup`."""
@@ -103,15 +104,27 @@ def _maf(
     return MAFConnector(ScriptedClient(list(replies), []), **kwargs)
 
 
+def _maf_foundry(
+    replies: Sequence[Reply], kwargs: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> Connector[Any]:
+    # The session builds its agents itself, so the transport is replaced on the class.
+    transport = ScriptedClient(list(replies), [])._inner_get_response
+    monkeypatch.setattr(_ChatomonFoundryChatClient, "_inner_get_response", transport)
+    return MAFFoundryConnector(
+        project_client=FakeProjectClient(), agent_name="remote-agent", agent_version="3", **kwargs
+    )
+
+
 # Typed, so pyright checks every runner module against the protocol.
 _FRAMEWORKS: dict[str, tuple[Runner, Maker]] = {
     "pydantic_ai": (pydantic_ai_runner, _pydantic_ai),
     "langchain": (langchain_runner, _langchain),
     "maf": (maf_runner, _maf),
+    "maf_foundry": (maf_runner, _maf_foundry),
 }
 
 NAMES = tuple(_FRAMEWORKS)
-"""The frameworks the studio opens."""
+"""The frameworks the studio opens; `maf_foundry` is the second connector of `maf`."""
 
 
 def harness(name: str, monkeypatch: pytest.MonkeyPatch) -> StudioHarness:
