@@ -24,6 +24,21 @@ OrbitalFunction = Callable[[OrbitalContext], Verdict | Awaitable[Verdict]]
 _NAME_PATTERN = re.compile(r"[A-Za-z0-9_.\-]+")
 
 
+def undeclared(owner: type) -> str:
+    """Say what a class must add to tell whether its orbitals call a model.
+
+    Args:
+        owner: The orbital class that does not set `calls_model`.
+
+    Returns:
+        The message of the configuration error.
+    """
+    return (
+        f"{owner.__name__} must say whether it calls a model: "
+        "add calls_model = True or calls_model = False to the class"
+    )
+
+
 class Orbital(ABC):
     """A check on a user message before the nucleus, or on a reply before the user.
 
@@ -85,10 +100,7 @@ class Orbital(ABC):
         on_error: ErrorPolicy = "block",
     ) -> None:
         if not isinstance(getattr(type(self), "calls_model", None), bool):
-            raise ChatomonConfigError(
-                f"{type(self).__name__} must say whether it calls a model: "
-                "add calls_model = True or calls_model = False to the class"
-            )
+            raise ChatomonConfigError(undeclared(type(self)))
         resolved = name if name is not None else type(self).default_name()
         if not _NAME_PATTERN.fullmatch(resolved):
             raise ChatomonConfigError(
@@ -212,6 +224,8 @@ class FunctionOrbital(Orbital):
             timeout=timeout,
             on_error=on_error,
         )
+        if not isinstance(calls_model, bool):
+            raise ChatomonConfigError(f"calls_model must be True or False, got {calls_model!r}")
         self.func = func
         self.calls_model = calls_model
 
@@ -277,8 +291,8 @@ def orbital(
 ) -> FunctionOrbital | Callable[[OrbitalFunction], FunctionOrbital]:
     """Turn a function into an orbital.
 
-    Use it bare (`@orbital`) or with the same keyword arguments as
-    [Orbital][chatomon.orbitals.base.Orbital].
+    Use it bare (`@orbital`) or with the keyword arguments of
+    [FunctionOrbital][chatomon.orbitals.base.FunctionOrbital].
 
     Args:
         func: The function, when used bare.

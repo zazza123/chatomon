@@ -182,3 +182,15 @@ def test_calls_model_is_not_part_of_the_configuration():
     quiet, remote = FunctionOrbital(check), FunctionOrbital(check, calls_model=True)
     assert "calls_model" not in remote.config()
     assert quiet.fingerprint() == remote.fingerprint()
+
+
+@pytest.mark.parametrize("value", ["no", 1, None])
+def test_a_function_says_true_or_false_and_nothing_else(value):
+    with pytest.raises(ChatomonConfigError, match="calls_model must be True or False, got"):
+        FunctionOrbital(lambda ctx: Verdict.allow(), name="inline", calls_model=value)
+
+    def check(ctx: OrbitalContext) -> Verdict:
+        return Verdict.allow()
+
+    with pytest.raises(ChatomonConfigError, match="calls_model must be True or False, got"):
+        orbital(calls_model=value)(check)

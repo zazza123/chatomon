@@ -152,3 +152,31 @@ async def test_engine_uses_on_turn_and_capture_content():
     await engine.finish_turn(turn)
     assert received[0].user_message is not None
     assert received[0].user_message.startswith("sha256:")
+
+
+class Bare(Orbital):
+    """Sets its own attributes and never calls Orbital.__init__, so nothing checked the class."""
+
+    def __init__(self) -> None:
+        self.name = "bare"
+        self.reads = ()
+        self.timeout = 30.0
+        self.on_error = "block"
+
+    async def check(self, ctx: OrbitalContext) -> Verdict:
+        return Verdict.allow()
+
+
+def test_an_orbital_that_never_said_whether_it_calls_a_model_is_refused_by_the_atom():
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=FakeConnector(),
+        input_orbitals=[Bare()],
+    )
+    with pytest.raises(
+        ChatomonConfigError,
+        match=r"Bare must say whether it calls a model: "
+        r"add calls_model = True or calls_model = False to the class",
+    ):
+        atom.build()
