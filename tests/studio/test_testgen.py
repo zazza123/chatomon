@@ -279,6 +279,7 @@ def save(session: Session, *, alone: bool = False, upto: int | None = None) -> t
         source=session.source,
         namespace=session.namespace,
         signature=session.signature(),
+        code_signature=session.signature(code=True),
         reloads=session.reloads,
         framework=runner_for(session.atom.connector).saved_test(session.atom.connector),
     )
@@ -485,6 +486,7 @@ def test_a_function_called_atom_is_imported_under_another_name(project):
         source="shop:atom",
         namespace={"atom": lambda: session.atom},
         signature=session.signature(),
+        code_signature=session.signature(code=True),
         reloads=session.reloads,
         framework=runner_for(session.atom.connector).saved_test(session.atom.connector),
     )
@@ -501,6 +503,7 @@ def test_started_from_python_the_import_is_left_to_complete(project):
         source="serve()",
         namespace=None,
         signature=session.signature(),
+        code_signature=session.signature(code=True),
         reloads=session.reloads,
         framework=runner_for(session.atom.connector).saved_test(session.atom.connector),
     )
@@ -681,6 +684,49 @@ def test_a_module_of_every_framework_is_reloaded_and_its_conversation_goes_on(
     assert [turn.error for turn in session.turns] == [None, None]
     # The reloaded module's own orbital was given the conversation from before the reload.
     assert sys.modules["shop"].HEARD == [2]
+
+
+NINE_WORDS = "one two three four five six seven eight nine"
+RELOADED = (
+    "Turn 1 ran before the code was reloaded: if the code changed what it checks, this test fails."
+)
+THEN = (
+    "That is how the turn ran before the code was reloaded: the orbitals your code has now "
+    "run, and they may call a model."
+)
+
+
+def test_changes_the_code_now_has_are_no_longer_warned_about(project, tmp_path):
+    """Tune in the studio, try a turn, paste the orbitals into the code, reload."""
+    session = project()
+    session.edit("input", "message_length", {"max_words": 3})
+    say(session, "one two three four")
+    before = save(session)
+    assert len(before.warnings) == 1 and "copy the configuration" in before.warnings[0]
+    assert any("Until its changes are in your code" in note for note in before.notes)
+    path = tmp_path / "shop.py"
+    path.write_text(MODULE.replace("max_words=8", "max_words=3"), encoding="utf-8")
+    later = time.time() + 5
+    os.utime(path, (later, later))
+    asyncio.run(session.reload())
+    assert session.state()["changes"] == []
+    after = save(session)
+    assert after.warnings == [RELOADED]
+    assert not any("Until its changes are in your code" in note for note in after.notes)
+
+
+def test_an_offline_test_of_a_turn_from_before_a_reload_says_what_it_cannot_know(project):
+    """The code may have gained an orbital that calls a model in front of the one that stopped."""
+    session = project()
+    say(session, NINE_WORDS)
+    first = save(session)
+    assert first.integration is False and THEN not in first.notes
+    asyncio.run(session.reload())
+    reloaded = save(session)
+    assert reloaded.integration is False
+    assert THEN in reloaded.notes
+    say(session, NINE_WORDS)
+    assert THEN not in save(session, alone=True).notes  # turn 2 ran on the code of now
 
 
 def test_a_setting_changed_again_since_the_turn_is_said(project):
@@ -1143,6 +1189,7 @@ def test_started_from_python_a_microsoft_agent_framework_test_still_compiles(pro
         source="serve()",
         namespace=None,
         signature=session.signature(),
+        code_signature=session.signature(code=True),
         reloads=session.reloads,
         framework=runner_for(session.atom.connector).saved_test(session.atom.connector),
     )

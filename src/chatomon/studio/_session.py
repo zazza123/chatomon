@@ -352,19 +352,24 @@ class Session:
             raise presets.InvalidPresetError([str(exc)]) from exc
         return warnings
 
-    def signature(self) -> tuple[tuple[str, str, str, bool], ...]:
+    def signature(self, *, code: bool = False) -> tuple[tuple[str, str, str, bool], ...]:
         """Return what identifies the session's orbitals now.
 
         Two sessions with the same signature build the same chains: the sentences
         of `changes` cannot tell a setting changed once from one changed again.
 
+        Args:
+            code: Whether to identify the orbitals as the code has them, with none
+                of the studio's changes.
+
         Returns:
             Side, name, fingerprint and whether it is on, for every orbital in order.
         """
+        chains = self.chains.initial() if code else self.chains
         return tuple(
             (side, entry.orbital.name, entry.orbital.fingerprint(), entry.enabled)
             for side in SIDES
-            for entry in self.chains.work[side]
+            for entry in chains.work[side]
         )
 
     def _saved(self, n: int, alone: bool) -> testgen.SavedTest:
@@ -376,6 +381,7 @@ class Session:
             source=self.source,
             namespace=self.namespace,
             signature=self.signature(),
+            code_signature=self.signature(code=True),
             reloads=self.reloads,
             framework=self._runner.saved_test(self.atom.connector),
         )
