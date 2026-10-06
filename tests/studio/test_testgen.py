@@ -781,7 +781,7 @@ def refund_order(order_id: str) -> str:
     CALLED.append(order_id)
     return "refunded"
 '''
-KEEPS_OFFLINE = "    # No model is called in this test: the test model keeps the nucleus offline."
+KEEPS_OFFLINE = "    # No model is called in this test: OfflineNucleus keeps the nucleus offline."
 ASYNC = "Microsoft Agent Framework is asynchronous: the test needs `pytest-asyncio` 0.24 or later."
 LANGCHAIN_ASYNC = (
     "The studio runs a LangChain agent asynchronously, and so does the test: it needs "
@@ -924,7 +924,7 @@ def test_a_langchain_atom_with_a_checkpointer_gives_every_call_a_thread(project,
     session = project(module=text)
     say(session, "hello", "I want a refund")
     test = save(session)
-    assert "from uuid import uuid4\n" in test.code
+    assert test.code.split("\n")[2:5] == ["from uuid import uuid4", "", "import pytest"]
     assert test.code.count('        {"configurable": {"thread_id": uuid4().hex}},\n') == 2
     result = run_pytest(tmp_path, test)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -942,6 +942,7 @@ def test_a_langchain_test_is_a_coroutine_with_a_stand_in_of_its_own(project, mon
     assert "class OfflineNucleus(FakeListChatModel):" in lines
     call = '    result = await agent.ainvoke({"messages": [HumanMessage("I want a refund")]})'
     assert call in lines
+    assert lines[lines.index("    agent = atom.build()") - 2] == KEEPS_OFFLINE
     assert offline.notes[:2] == [
         "No model is called in this test: it runs offline, with a chat model of its own, "
         "`OfflineNucleus`, in place of the nucleus.",
@@ -1095,3 +1096,44 @@ def test_the_names_a_runners_lines_use_are_read_from_the_lines():
     assert {"session", "agent", "OfflineNucleus", "ChatResponse", "Message", "pytest"} <= names
     # An attribute is not a name of the test, and neither is a word inside a string.
     assert not {"client", "text", "create_session", "offline", "assistant", "Stands"} & names
+
+
+def unused(code: str) -> set[str]:
+    """The names a saved test assigns and never reads."""
+    nodes = [node for node in ast.walk(ast.parse(code)) if isinstance(node, ast.Name)]
+    stored = {node.id for node in nodes if isinstance(node.ctx, ast.Store)}
+    return stored - {node.id for node in nodes if isinstance(node.ctx, ast.Load)}
+
+
+def test_every_framework_leaves_no_name_unused(project, framework: StudioHarness):
+    session = project(module=module_of(framework.name))
+    say(session, "hello", "hello again", "I want a refund", "and once more")
+    for upto in (1, 2, 3, 4):
+        assert unused(save(session, upto=upto).code) == set(), f"turns 1-{upto}"
+
+
+def test_every_framework_wraps_a_long_message_within_88_columns(project, framework: StudioHarness):
+    first = "Whereabouts is my extraordinarily overdue parcel today?"
+    later = "Unquestionably the second parcel arrives tomorrow morning?"
+    session = project(module=module_of(framework.name))
+    say(session, first, later)
+    code = save(session).code
+    assert sorted(sent(code, framework.name)) == sorted([first, later])
+    # Each message fits a line of its own: what is written around it must not push it over.
+    assert [line for line in code.split("\n") if len(line) > 88] == []
+
+
+def test_the_names_of_a_frameworks_lines_leave_out_strings_and_comments():
+    lines = testgen.Framework(
+        run="agent.run_sync",
+        first=testgen.Call(),
+        later=testgen.Call(),
+        reply="result.output",
+        offline=testgen.Offline(
+            label="a stand-in", before_build=("configure('single quoted words', mode=fast)",)
+        ),
+        setup=("greeting = prefix  # a comment with words",),
+    )
+    names = lines.names()
+    assert {"configure", "mode", "fast", "greeting", "prefix", "agent", "result"} <= names
+    assert not {"single", "quoted", "words", "comment", "with", "output", "run_sync"} & names

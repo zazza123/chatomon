@@ -145,6 +145,7 @@ def saved_test(connector: Connector[Any]) -> Framework:
                 "from langchain_core.language_models.fake_chat_models import FakeListChatModel",
             ),
             definitions=_OFFLINE_NUCLEUS,
+            comment="# No model is called in this test: OfflineNucleus keeps the nucleus offline.",
             before_build=(
                 'monkeypatch.setattr(atom.connector, "model", '
                 'OfflineNucleus(responses=["offline"]))',

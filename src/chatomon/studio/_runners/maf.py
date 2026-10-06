@@ -137,6 +137,7 @@ def saved_test(connector: Connector[Any]) -> Framework:
                 "BaseChatClient, ChatMiddlewareLayer, ChatResponse, Message",
             ),
             definitions=_OFFLINE_NUCLEUS,
+            comment="# No model is called in this test: OfflineNucleus keeps the nucleus offline.",
             after_build=("agent.client = OfflineNucleus()",),
             notes=(_OWN_CLASS,),
         ),

@@ -9,9 +9,12 @@ orbital names, actions and replies fixed in code are written.
 
 from __future__ import annotations
 
+import io
 import keyword
 import re
+import sys
 import textwrap
+import tokenize
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -86,8 +89,7 @@ _USED = frozenset(
     {"atom", "agent", "reports", "report", "result", "monkeypatch", "pytest", "TurnReport"}
 )
 _FUNCTION_KIND = "FunctionOrbital"
-_STRING = re.compile(r'"[^"\n]*"')
-_NAME = re.compile(r"(?<![\w.])[A-Za-z_]\w*")
+_RESULT = re.compile(r"\bresult\b")
 
 
 @dataclass(frozen=True)
@@ -118,6 +120,8 @@ class Offline:
     """The lines that put it in place on the built agent."""
     notes: tuple[str, ...] = ()
     """What the developer should know about the stand-in."""
+    comment: str = ""
+    """The comment above the lines that put it in place, when it is not the usual one."""
 
 
 @dataclass(frozen=True)
@@ -168,8 +172,13 @@ class Framework:
         ]
         for call in (self.first, self.later):
             lines += [call.before, call.after, *call.arguments]
-        code = _STRING.sub("", "\n".join(lines))
-        return frozenset(_NAME.findall(code))
+        return frozenset(name for line in lines for name in _names(line))
+
+    @property
+    def carries(self) -> bool:
+        """Whether the call of a later turn reads the result of the turn before."""
+        later = self.later
+        return _RESULT.search(" ".join([later.before, later.after, *later.arguments])) is not None
 
 
 @dataclass(frozen=True)
@@ -324,6 +333,34 @@ def _atom(
     return [line], [], [f"atom = {path}()"]
 
 
+def _names(line: str) -> set[str]:
+    """Read the identifiers of a line of code, leaving out attributes and keywords.
+
+    Returns:
+        The names; what is inside a string or a comment is not one.
+    """
+    found: set[str] = set()
+    previous = ""
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(line).readline):
+            if token.type == tokenize.NAME and previous != ".":
+                found.add(token.string)
+            previous = token.string
+    except (tokenize.TokenError, SyntaxError):
+        # A line that opens a bracket another line closes: its names were read before the end.
+        pass
+    return {name for name in found if not keyword.iskeyword(name)}
+
+
+def _stdlib(line: str) -> bool:
+    """Tell whether an import line names a module of the standard library.
+
+    Returns:
+        True for `import uuid` and `from uuid import uuid4`.
+    """
+    return line.split()[1].partition(".")[0] in sys.stdlib_module_names
+
+
 def _is_name(text: str) -> bool:
     return text.isidentifier() and not keyword.iskeyword(text)
 
@@ -365,14 +402,16 @@ def _call(prefix: str, function: str, message: str, call: Call) -> list[str]:
     if "\n" not in text and len(one) + 4 <= codegen.WIDTH:
         return [one]
     lines = [f"{prefix}{function}("]
-    if "\n" in text:
+    inline = f"    {call.before}{text}{call.after},"
+    # What the framework writes around the message must not push it past the width.
+    if "\n" in text or (call.before and len(inline) + 4 > codegen.WIDTH):
         # One literal per line, inside the parentheses the framework opens or in its own.
         opened = call.before.endswith("(")
         lines.append(f"    {call.before}{'' if opened else '('}")
         lines += [f"        {part}" for part in text.split("\n")]
         lines.append(f"    {'' if opened else ')'}{call.after},")
     else:
-        lines.append(f"    {call.before}{text}{call.after},")
+        lines.append(inline)
     return [*lines, *(f"    {argument}," for argument in call.arguments), ")"]
 
 
@@ -382,7 +421,9 @@ def _checks(turn: _Turn, *, first: bool, last: bool, framework: Framework) -> li
     Returns:
         The lines, without the test's indentation.
     """
-    keep = not last or turn.reply is not None  # no name is left unused
+    # No name is left unused: the result is kept for the check on the reply, or for the
+    # call of the next turn when the framework carries the conversation in it.
+    keep = turn.reply is not None or (not last and framework.carries)
     lines = [f"# Turn {turn.n}: {turn.action}"]
     lines += _call(
         "result = " if keep else "",
@@ -456,9 +497,12 @@ def generate(
     shown = source if re.fullmatch(r"[\w.:()]+", source) else "an atom"
     written = _atom(source, namespace, framework)
     imports, after, first = written if written is not None else (["", *_NO_IMPORT], [], [])
-    lines = [f'{HEADER}: {shown}, {span}."""', "", "import pytest", ""]
-    lines.append("from chatomon import TurnReport")
-    lines += framework.imports
+    stdlib = [line for line in framework.imports if _stdlib(line)]
+    lines = [f'{HEADER}: {shown}, {span}."""', ""]
+    if stdlib:
+        lines += [*stdlib, ""]
+    lines += ["import pytest", "", "from chatomon import TurnReport"]
+    lines += [line for line in framework.imports if line not in stdlib]
     stand_in = framework.offline
     if offline:
         lines += stand_in.imports
@@ -475,11 +519,12 @@ def generate(
     lines += _definition(name, framework)
     body = [*first, "reports: list[TurnReport] = []"]
     body.append('monkeypatch.setattr(atom, "on_turn", reports.append)')
+    keeps_offline = stand_in.comment or _KEEPS_OFFLINE
     if offline and stand_in.before_build:
-        body += [_KEEPS_OFFLINE, *stand_in.before_build]
+        body += [keeps_offline, *stand_in.before_build]
     body.append("agent = atom.build()")
     if offline and stand_in.after_build:
-        body += [_KEEPS_OFFLINE, *stand_in.after_build]
+        body += [keeps_offline, *stand_in.after_build]
     body += framework.setup
     for index, turn in enumerate(replayed):
         body.append("")
