@@ -2,7 +2,7 @@
 
 ## Overview
 
-A studio session ends when the command stops. There are two ways to keep what you tuned: **Copy as code** writes the orbitals as Python to paste into your atom, and a **preset** saves the session's changes in a file that the studio can apply again. Your code stays the source of truth in both: the studio never changes your code, and a preset is a layer over the atom from your code, never an atom of its own.
+A studio session ends when the command stops. There are two ways to keep what you tuned: **Copy as code** writes the orbitals as Python to paste into your atom, and a **preset** saves the session's changes in a file that the studio can apply again, from the page or when it starts. Your code stays the source of truth in both: the studio never changes your code, and a preset is a layer over the atom from your code, never an atom of its own.
 
 ## Copy as Code
 
@@ -109,12 +109,35 @@ A preset that can be applied but does not reproduce the exported session is appl
 - **An orbital differs from the exported one.** Its fingerprint is not the one in the file: your code, or chatomon, changed since the export. The preset's own settings were applied.
 - **An orbital of your code is not in the preset.** It was added to the code after the export. It is placed at the end of its chain and left on: a guardrail in your code stays active until you turn it off.
 
+### Starting with a Preset
+
+The studio can start with a preset already applied, so a tuned session comes back after a restart without going through the import card. Give the command the file:
+
+```bash
+chatomon studio speedypack.app:atom --preset speedypack.preset.json
+```
+
+From Python, `serve` takes the same path as `preset=`. The path is relative to the current directory or absolute, and the file can be anywhere, such as the folder your browser downloads to.
+
+The preset goes through the same checks as an import in the page, and the answers arrive in the terminal:
+
+| The preset | What happens |
+|------------|--------------|
+| Has problems | The studio does not start. The command prints one line per problem and exits with code 1; `serve` raises a `ChatomonConfigError` with the same lines |
+| Is applied with notes | The studio starts, and each note is printed before the link |
+| Cannot be read | The studio does not start: the file is missing, or is not UTF-8 text |
+
+The session begins with the preset's changes: the drawer counts them against your code, and there is nothing to undo yet. **Reset to code** goes back to your code as always, and **Undo** then brings the preset's changes back.
+
+The file is read once, when the studio starts. To apply a file you changed later, restart the studio or use **Import preset**.
+
 ## Key Components
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | `Orbital.fingerprint` | `src/chatomon/orbitals/base.py` | The hash of an orbital's configuration that Copy as code preserves and presets record |
 | `Orbital.default_name` | `src/chatomon/orbitals/base.py` | The name an orbital has by default, left out of the generated code |
+| `serve`, `chatomon studio` | `src/chatomon/studio/server.py`, `src/chatomon/_cli.py` | Start the studio, with a preset when `preset=` or `--preset` names one |
 
 ## Related Documentation
 
