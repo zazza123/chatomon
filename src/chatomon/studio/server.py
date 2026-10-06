@@ -153,6 +153,9 @@ def _session(
     if preset is None:
         return Session(atom, source=source, namespace=namespace)
     shown = os.fspath(preset)
+    if not shown:
+        # An empty path would be read as the current directory.
+        raise ChatomonConfigError("cannot read the preset: the path is empty")
     try:
         # Some editors put a byte order mark in front of the text: it is not part of it.
         text = Path(preset).read_text(encoding="utf-8-sig")

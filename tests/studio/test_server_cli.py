@@ -480,3 +480,11 @@ def test_letters_of_any_alphabet_in_a_problem_are_printed_as_they_are(runs, tmp_
     with pytest.raises(ChatomonConfigError) as caught:
         serve(tunable_atom(), port=free_port(), preset=file)
     assert str(caught.value).endswith("in your code, a Perché 📦 許可 in the preset")
+
+
+def test_an_empty_path_given_as_a_preset_is_named_as_such(project, runs, capsys):
+    """What `--preset "$PRESET"` gives when the variable is not set."""
+    project(TUNABLE_MODULE)
+    assert main(["studio", "cliapp:atom", "--preset", "", "--no-browser"]) == 1
+    assert capsys.readouterr().err == "chatomon studio: cannot read the preset: the path is empty\n"
+    assert "app" not in runs
