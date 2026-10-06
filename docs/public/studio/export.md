@@ -42,11 +42,10 @@ An orbital that your code puts in both chains is one object. When the studio wri
 
 An orbital that is off stays in its place as a comment. An argument that is an object is written with its variable's name when the module has one, otherwise as `...`. The card lists every `...` it wrote, so nothing is left out silently.
 
-Three situations produce more of them:
+Two situations produce more of them:
 
 - **The studio was started with `serve()`.** It has no module to look names up in, so `@orbital` functions and objects from your code cannot be named. Start it with the `chatomon studio` command to get names.
 - **Objects are created inline or inside a function**, as in an atom built by a factory: they have no variable in the module.
-- **The orbital keeps its own copy of an object**, as `ScopeGuardOrbital` does with a custom `mapping`: the studio cannot tell which of your variables it came from.
 
 An atom built with the copied lists has orbitals with the same fingerprints as the session, in the same order. The fingerprint is what turn reports record, so reports from your application match the turns you tried.
 

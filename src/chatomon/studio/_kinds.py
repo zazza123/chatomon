@@ -210,15 +210,9 @@ def _judge_connector(orb: Any, connector: Connector[Any]) -> Any:
     return None if own is connector else own
 
 
-def _scope_mapping(orb: Any, connector: Connector[Any]) -> Any:
-    defaults = sys.modules[type(orb).__module__].DEFAULT_SCOPE_RULES
-    return None if orb.rules == dict(defaults) else orb.rules
-
-
 # Parameters of built-in classes that are not kept in an attribute of the same name.
 _READERS: dict[tuple[str, str], Callable[[Any, Connector[Any]], Any]] = {
     ("JudgeOrbital", "connector"): _judge_connector,
-    ("ScopeGuardOrbital", "mapping"): _scope_mapping,
 }
 
 

@@ -324,3 +324,12 @@ async def test_refreshed_headers_reach_the_http_request(monkeypatch):
     await orb.check(ctx())
     assert [headers["Authorization"] for headers in sent] == ["Bearer token-1", "Bearer token-2"]
     assert all(headers["X-API-Key"] == "k" for headers in sent)
+
+
+def test_scope_guard_keeps_the_mapping_it_was_given():
+    overrides: dict[Any, Any] = {"Chit Chat": Verdict.block()}
+    guard = v2_guard(ScopeClass.CHIT_CHAT)
+    orbital = ScopeGuardOrbital(guard=guard, description=DESCRIPTION, mapping=overrides)
+    assert orbital.mapping is overrides
+    assert orbital.rules is not overrides  # the rules are its own, with the defaults
+    assert ScopeGuardOrbital(guard=guard, description=DESCRIPTION).mapping is None

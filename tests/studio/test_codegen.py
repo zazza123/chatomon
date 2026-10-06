@@ -376,7 +376,7 @@ def test_a_shared_orbital_without_a_name_gets_a_variable_nothing_else_uses(proje
     assert atom.output_orbitals == ()
 
 
-def test_an_object_the_orbital_copies_is_marked_and_the_note_says_why():
+def test_a_scope_guards_arguments_are_written_with_their_variables():
     pytest.importorskip("orbitals")
     from orbitals.scope_guard_v2 import AsyncScopeGuardV2
 
@@ -387,13 +387,27 @@ def test_an_object_the_orbital_copies_is_marked_and_the_note_says_why():
     strict: dict[Any, Any] = {"Chit Chat": Verdict.block()}
     guard = ScopeGuardOrbital(guard=client, description="Parcel tracking", mapping=strict)
     session = Session(make_atom(input_orbitals=[guard]), source="app:atom")
-    code = codegen.generate(session.chains, {"client": client, "strict": strict})
-    assert "    guard=client,\n" in code.orbitals
-    assert '    description="Parcel tracking",\n' in code.orbitals
-    assert "    mapping=...,  # your dict\n" in code.orbitals
-    assert code.notes == [
-        "What is marked `...` could not be named: it is created inline or inside a function, "
-        "or the orbital keeps its own copy of it. Keep it as it is in your code."
+    session.edit("input", "scope_guard", {"history_window": 2})
+
+    named = codegen.generate(session.chains, {"client": client, "strict": strict})
+    assert named.orbitals == textwrap.dedent("""\
+        input_orbitals=[
+            ScopeGuardOrbital(
+                guard=client,
+                description="Parcel tracking",
+                mapping=strict,
+                history_window=2,
+            ),
+        ],""")
+    assert (named.placeholders, named.notes) == ([], [])
+    assert named.imports == "from chatomon.orbitals.principled import ScopeGuardOrbital"
+
+    inline = codegen.generate(session.chains, {"client": client})
+    assert "        mapping=...,  # your dict\n" in inline.orbitals
+    assert inline.placeholders == ["scope_guard: `mapping` is a dict from your code"]
+    assert inline.notes == [
+        "What is marked `...` has no name in the atom's module: it is created inline or "
+        "inside a function. Keep it as it is in your code."
     ]
 
 

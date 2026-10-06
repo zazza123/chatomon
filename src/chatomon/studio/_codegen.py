@@ -32,8 +32,8 @@ NO_MODULE = (
     "objects from your code are marked `...`."
 )
 NO_NAME = (
-    "What is marked `...` could not be named: it is created inline or inside a function, "
-    "or the orbital keeps its own copy of it. Keep it as it is in your code."
+    "What is marked `...` has no name in the atom's module: it is created inline or "
+    "inside a function. Keep it as it is in your code."
 )
 # Characters that are valid inside a Python literal but that editors show as line breaks.
 _BREAKS = {chr(code): f"\\u{code:04x}" for code in (0x85, 0x2028, 0x2029)}

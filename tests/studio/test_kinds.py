@@ -308,11 +308,11 @@ def test_principled_orbitals_are_read_through_their_instances():
     assert kinds.describe(ScopeGuardOrbital).addable is False
     assert kinds.read_only(guard, CONNECTOR) is None
     assert kinds.arguments(guard, CONNECTOR)["mapping"] is None
-    strict = ScopeGuardOrbital(
-        guard=client, description="Parcel tracking", mapping={"Chit Chat": Verdict.block()}
-    )
+    overrides: dict[Any, Any] = {"Chit Chat": Verdict.block()}
+    strict = ScopeGuardOrbital(guard=client, description="Parcel tracking", mapping=overrides)
     assert kinds.read_only(strict, CONNECTOR) is None
-    assert kinds.arguments(strict, CONNECTOR)["mapping"] == strict.rules
+    # Every argument is read from the attribute named like it: the developer's own dict.
+    assert kinds.arguments(strict, CONNECTOR)["mapping"] is overrides
     shorter = kinds.rebuilt(strict, {"history_window": 2}, CONNECTOR)
     assert isinstance(shorter, ScopeGuardOrbital)
     assert (shorter.guard, shorter.rules, shorter.history_window) == (client, strict.rules, 2)
