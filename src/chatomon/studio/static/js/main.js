@@ -5,7 +5,7 @@ import { renderTurns } from "./turns.js";
 import { createDrawer } from "./drawer.js";
 import { showAtom, showNotice, showReport } from "./cards.js";
 import { redrawOrbital, showOrbital, showPicker } from "./orbital-card.js";
-import { showCode, showExport, showImport } from "./export-cards.js";
+import { showCode, showExport, showImport, showTest } from "./export-cards.js";
 
 let toastTimer = 0;
 let toastFn = null;
@@ -239,18 +239,21 @@ function inspect(n) {
   if (!turn) return;
   ui.inspected = n;
   drawTurns();
+  // The report, the test made from it and Copy as code opened from the test close the same way.
+  const onClose = () => {
+    const last = ui.inspected;
+    ui.inspected = null;
+    drawTurns();
+    // The turns were drawn again: give the focus back to the lens that opened the report.
+    document.querySelector(`.lens[data-n="${last}"]`)?.focus();
+  };
   showReport(turn, {
     total: ui.state.turns.length,
     busy: ui.busy,
     onNav: inspect,
     onRerun: send,
-    onClose: () => {
-      const last = ui.inspected;
-      ui.inspected = null;
-      drawTurns();
-      // The turns were drawn again: give the focus back to the lens that opened the report.
-      document.querySelector(`.lens[data-n="${last}"]`)?.focus();
-    },
+    onSave: (saved) => showTest(saved, cards, { onBack: inspect, onClose }).catch(refused),
+    onClose,
   });
 }
 

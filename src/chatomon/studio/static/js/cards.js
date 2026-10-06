@@ -89,7 +89,7 @@ function resRow(x) {
     <dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd${mono.has(k) ? ' class="mono"' : ""}${k === "fingerprint" ? ` title="${esc(x.fingerprint)}"` : ""}>${esc(v)}</dd>`).join("")}</dl></details>`;
 }
 
-export function showReport(turn, { total, onNav, onRerun, onClose, busy }) {
+export function showReport(turn, { total, onNav, onRerun, onSave, onClose, busy }) {
   const r = turn.report;
   const action = r ? r.final_action : "aborted";
   const attempts = r ? r.output : [];
@@ -107,15 +107,22 @@ export function showReport(turn, { total, onNav, onRerun, onClose, busy }) {
   const sent = turn.error
     ? `<section class="rep-sec"><h3 class="label">Error</h3><div class="final error">${esc(turn.error.type)}: ${esc(turn.error.message)}</div></section>`
     : `<section class="rep-sec"><h3 class="label">Sent to the user</h3><div class="final">${esc(turn.reply)}</div></section>`;
+  const changes = turn.changes.length ? `${plural(turn.changes.length, "change")} vs code` : "same as code";
+  // A turn that cannot be saved says why next to its disabled button: a tooltip is not reachable by touch.
+  const save = `<button class="btn primary" type="button" data-act="save"${turn.cannot_save ? " disabled" : ""}>Save as test</button>`;
+  const why = turn.cannot_save ? `<span class="hint">${esc(turn.cannot_save)}</span>` : `<span class="spacer"></span>`;
   openDialog({
     size: "l",
     onClose,
     title: `Turn ${turn.n}<span class="pill fa-${esc(action)}">${esc(action)}</span>`,
-    sub: `<span class="mono">${fmtMs(r ? r.duration_ms : 0)} · ${plural(turn.chain.input.length, "input orbital")} · ${plural(turn.chain.output.length, "output orbital")}</span>`,
+    sub: `<span class="mono">${fmtMs(r ? r.duration_ms : 0)} · ${plural(turn.chain.input.length, "input orbital")} · ${plural(turn.chain.output.length, "output orbital")} · ${changes}</span>`,
     extra: `<span class="nav-btns"><button class="icon-btn" type="button" data-nav="-1" aria-label="Previous turn"${turn.n === 1 ? " disabled" : ""}>‹</button><button class="icon-btn" type="button" data-nav="1" aria-label="Next turn"${turn.n >= total ? " disabled" : ""}>›</button></span>`,
     body: `<p class="rep-msg">${esc(turn.message)}</p>${input}${output}${sent}<p class="foot">Text, guidance and judge explanations are visible because the studio runs with <code>capture_content="full"</code>. Your atom keeps its own setting.</p>`,
-    actions: `<button class="btn" type="button" data-act="rerun"${busy ? " disabled" : ""}>Re-run with current orbitals</button><span class="spacer"></span><button class="btn" type="button" data-dlg="close">Close</button>`,
+    actions: `${save}<button class="btn" type="button" data-act="rerun"${busy ? " disabled" : ""}>Re-run with current orbitals</button>${why}<button class="btn" type="button" data-dlg="close">Close</button>`,
   });
   $("#dlg-extra").onclick = (e) => { const b = e.target.closest("[data-nav]"); if (b && !b.disabled) onNav(turn.n + Number(b.dataset.nav)); };
-  $("#dlg-actions").onclick = (e) => { if (e.target.closest('[data-act="rerun"]')) { closeDialog(); onRerun(turn.message); } };
+  $("#dlg-actions").onclick = (e) => {
+    if (e.target.closest('[data-act="rerun"]')) { closeDialog(); onRerun(turn.message); }
+    if (e.target.closest('[data-act="save"]')) onSave(turn.n);
+  };
 }

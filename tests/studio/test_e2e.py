@@ -68,9 +68,10 @@ class Studio:
 
 
 @contextlib.contextmanager
-def running(atom: Atom) -> Iterator[Studio]:
+def running(atom: Atom, *, namespace: dict[str, object] | None = None) -> Iterator[Studio]:
     port = free_port()
-    app = create_app(Session(atom, source="tests:atom"), token=TOKEN, host="127.0.0.1", port=port)
+    session = Session(atom, source="tests:atom", namespace=namespace)
+    app = create_app(session, token=TOKEN, host="127.0.0.1", port=port)
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, access_log=False)
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)
@@ -806,3 +807,188 @@ def test_a_choice_and_a_switch_that_may_be_none(page: Page, optional: Studio):
     expect(card(page).locator(".field.changed")).to_have_count(2)
     page.wait_for_function("() => document.querySelectorAll('[aria-invalid]').length === 0")
     assert values() == {"mode": "loose", "careful": False}
+
+
+LONG = "one two three four five six"
+SAVED = "tests/studio/test_one_two_three_four_five_six.py"
+
+
+@pytest.fixture
+def saving(tmp_path, monkeypatch) -> Iterator[Studio]:
+    """A studio started from a module, in a directory of its own: it can write tests."""
+    monkeypatch.chdir(tmp_path)
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(FunctionModel(respond)),
+        input_orbitals=[
+            MessageLengthOrbital(max_words=5, reply="Too long."),
+            ScriptedOrbital(name="scope"),
+        ],
+    )
+    with running(atom, namespace={"atom": atom}) as handle:
+        yield handle
+
+
+def send(page: Page, text: str, reply: str) -> None:
+    """Send a message and wait for its turn to show the reply."""
+    count = page.locator("article.turn").count()
+    message_box(page).fill(text)
+    page.get_by_role("button", name="Send").click()
+    expect(page.locator("article.turn").nth(count)).to_contain_text(reply)
+
+
+def open_report(page: Page, n: int) -> None:
+    page.locator("article.turn").nth(n - 1).get_by_role("button", name=f"Inspect turn {n}").click()
+
+
+def save_as_test(page: Page, n: int) -> None:
+    open_report(page, n)
+    card(page).get_by_role("button", name="Save as test").click()
+    expect(card(page).locator("#dlg-title")).to_have_text(f"Save turn {n} as a test")
+
+
+def test_saving_a_turn_writes_a_test_and_asks_before_replacing_it(page: Page, saving, tmp_path):
+    open_studio(page, saving)
+    send(page, LONG, "Too long.")
+    save_as_test(page, 1)
+    expect(card(page)).to_contain_text("No model is called in this test")
+    expect(card(page).locator("pre.code")).to_contain_text("def test_one_two_three_four_five_six(")
+    path = card(page).get_by_label("File, inside")
+    expect(path).to_have_value(SAVED)
+
+    card(page).get_by_role("button", name="Write file").click()
+    done = card(page).locator("#test-done")
+    expect(done).to_contain_text(f"Saved as {SAVED}")
+    expect(done).to_contain_text(f"python -m pytest {SAVED}")
+    assert (
+        (tmp_path / SAVED).read_text(encoding="utf-8").startswith('"""Saved from chatomon studio')
+    )
+
+    (tmp_path / SAVED).write_text('"""Saved from chatomon studio: old."""\n', encoding="utf-8")
+    card(page).get_by_role("button", name="Write file").click()
+    message = card(page).locator("#test-path-msg")
+    expect(message).to_contain_text("exists and was saved by the studio")
+    expect(path).to_have_attribute("aria-invalid", "true")
+    expect(done).to_be_hidden()
+    assert "old" in (tmp_path / SAVED).read_text(encoding="utf-8")
+    overwrite = message.get_by_role("button", name="Overwrite")
+    expect(overwrite).to_be_focused()
+    overwrite.click()
+    expect(done).to_contain_text(f"Saved as {SAVED}")
+    assert "old" not in (tmp_path / SAVED).read_text(encoding="utf-8")
+
+    path.fill("../outside.py")
+    path.press("Enter")
+    expect(message).to_contain_text("the file must be inside")
+    expect(path).to_be_focused()
+    assert not (tmp_path.parent / "outside.py").exists()
+
+    card(page).get_by_role("button", name="Back to the report").click()
+    expect(card(page).locator("#dlg-title")).to_contain_text("Turn 1")
+
+
+def test_a_test_holds_the_conversation_or_the_turn_alone(page: Page, saving):
+    open_studio(page, saving)
+    send(page, "hello", REPLY)
+    send(page, LONG, "Too long.")
+    save_as_test(page, 2)
+    earlier = card(page).get_by_role("checkbox", name="Replay the 1 turn before it")
+    expect(earlier).to_be_checked()
+    code = card(page).locator("pre.code")
+    expect(code).to_contain_text('agent.run_sync("hello")')
+    expect(card(page).locator("#dlg-sub")).to_contain_text("marked integration")
+    card(page).get_by_label("File, inside").fill("tests/mine.py")
+
+    earlier.click()
+    expect(code).not_to_contain_text('agent.run_sync("hello")')
+    expect(card(page).locator("#dlg-sub")).to_contain_text("Runs offline")
+    expect(card(page).get_by_label("File, inside")).to_have_value("tests/mine.py")
+    again = card(page).get_by_role("checkbox", name="Replay the 1 turn before it")
+    expect(again).not_to_be_checked()
+    expect(again).to_be_focused()
+
+
+def test_a_turn_tried_with_studio_changes_offers_copy_as_code(page: Page, saving):
+    open_studio(page, saving)
+    open_card(page, "message_length")
+    words = card(page).get_by_label("max_words")
+    words.fill("80")
+    words.press("Tab")
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    card(page).get_by_role("button", name="Done").click()
+
+    send(page, "hello", REPLY)
+    open_report(page, 1)
+    expect(card(page).locator("#dlg-sub")).to_contain_text("1 change vs code")
+    card(page).get_by_role("button", name="Save as test").click()
+    warning = card(page).locator(".note.warn")
+    expect(warning).to_contain_text(
+        "Turn 1 ran with 1 studio change (message_length.max_words changed)."
+    )
+    expect(warning).to_contain_text("it checks your code, not the studio")
+    warning.get_by_role("button", name="Copy as code").click()
+    expect(card(page).locator("#dlg-title")).to_have_text("Copy as code")
+    expect(card(page).locator("pre.code")).to_contain_text("MessageLengthOrbital(max_words=80")
+    card(page).get_by_role("button", name="Back to the test").click()
+    expect(card(page).locator("#dlg-title")).to_have_text("Save turn 1 as a test")
+    expect(card(page).get_by_role("button", name="Copy as code")).to_be_focused()
+
+    page.keyboard.press("Escape")
+    expect(page.get_by_role("button", name="Inspect turn 1")).to_be_focused()
+
+
+def test_a_turn_with_no_changes_says_so_and_has_no_warning(page: Page, saving):
+    open_studio(page, saving)
+    send(page, "hello", REPLY)
+    open_report(page, 1)
+    expect(card(page).locator("#dlg-sub")).to_contain_text("same as code")
+    card(page).get_by_role("button", name="Save as test").click()
+    expect(card(page).locator("#dlg-title")).to_have_text("Save turn 1 as a test")
+    expect(card(page).locator(".note.warn")).to_have_count(0)
+    expect(card(page).get_by_role("checkbox")).to_have_count(0)
+
+
+def test_a_failed_turn_cannot_be_saved(page: Page, saving):
+    open_studio(page, saving)
+    send(page, "boom", "The turn failed")
+    open_report(page, 1)
+    expect(card(page).get_by_role("button", name="Save as test")).to_be_disabled()
+    expect(card(page)).to_contain_text("A turn that failed cannot be saved as a test.")
+
+
+def test_started_from_python_the_test_is_only_copied(page: Page, studio: Studio):
+    page.context.grant_permissions(["clipboard-read", "clipboard-write"])
+    open_studio(page, studio)
+    send(page, "hello", REPLY)
+    save_as_test(page, 1)
+    expect(card(page)).to_contain_text("The studio was started from Python")
+    expect(card(page).get_by_role("button", name="Write file")).to_have_count(0)
+    expect(card(page).locator("#test-path")).to_have_count(0)
+    card(page).get_by_role("button", name="Copy", exact=True).click()
+    expect(page.locator("#toast")).to_contain_text("Copied")
+    assert "def test_hello(" in page.evaluate("navigator.clipboard.readText()")
+
+
+def test_the_test_card_fits_a_phone(page: Page, saving):
+    page.set_viewport_size({"width": 390, "height": 800})
+    open_studio(page, saving)
+    send(page, LONG, "Too long.")
+    save_as_test(page, 1)
+    path = card(page).get_by_label("File, inside")
+    path.fill("../outside.py")
+    path.press("Enter")
+    expect(card(page).locator("#test-path-msg")).to_contain_text("the file must be inside")
+    # The directory's path is long and has no space: in the label and in the message it must
+    # wrap, not push the card wider than the screen.
+    past_the_edge = card(page).evaluate(
+        """dialog => {
+            const body = dialog.querySelector("#dlg-body");
+            const padding = parseFloat(getComputedStyle(body).paddingRight);
+            const limit = body.getBoundingClientRect().right - padding;
+            return [...body.querySelectorAll("#test-path, #test-path-msg, pre.code, .field label")]
+                .filter((el) => el.getBoundingClientRect().right > limit + 0.5)
+                .map((el) => el.id || el.tagName.toLowerCase());
+        }"""
+    )
+    assert past_the_edge == []

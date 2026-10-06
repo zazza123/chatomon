@@ -1,5 +1,5 @@
 import { $, esc, plural, rich } from "./util.js";
-import { getCode, getPresetText, importPreset } from "./api.js";
+import { getCode, getPresetText, getTest, importPreset, writeTest } from "./api.js";
 import { closeDialog, openDialog } from "./cards.js";
 
 const dlg = $("#dlg");
@@ -11,7 +11,7 @@ const COPY = `<button class="btn primary" type="button" data-dlg="copy">Copy</bu
 function highlight(code, lang) {
   const re = lang === "json"
     ? /("(?:[^"\\]|\\.)*")(\s*:)?|\b(true|false|null)\b|(-?\b\d+(?:\.\d+)?\b)/g
-    : /(#[^\n]*)|("(?:[^"\\\n]|\\.)*")|\b(from|import|None|True|False)\b|\b(\d+(?:\.\d+)?)\b/g;
+    : /(#[^\n]*)|("""[\s\S]*?"""|"(?:[^"\\\n]|\\.)*")|(@[\w.]+)|\b(from|import|as|def|assert|for|in|if|None|True|False)\b|\b(\d+(?:\.\d+)?)\b/g;
   let out = "";
   let last = 0;
   let m;
@@ -22,8 +22,9 @@ function highlight(code, lang) {
       else out += `<span class="n">${esc(m[3] || m[4])}</span>`;
     } else if (m[1]) out += `<span class="c">${esc(m[1])}</span>`;
     else if (m[2]) out += `<span class="s">${esc(m[2])}</span>`;
-    else if (m[3]) out += `<span class="k">${esc(m[3])}</span>`;
-    else out += `<span class="n">${esc(m[4])}</span>`;
+    else if (m[3]) out += `<span class="d">${esc(m[3])}</span>`;
+    else if (m[4]) out += `<span class="k">${esc(m[4])}</span>`;
+    else out += `<span class="n">${esc(m[5])}</span>`;
     last = re.lastIndex;
   }
   return out + esc(code.slice(last));
@@ -49,7 +50,7 @@ async function copy(text, toast) {
 
 const onCopy = (text, ctx) => { $("#dlg-actions").onclick = (e) => { if (e.target.closest('[data-dlg="copy"]')) copy(text, ctx.toast); }; };
 
-export async function showCode(ctx) {
+export async function showCode(ctx, { onBack = null, onClose = () => {} } = {}) {
   const data = await getCode();
   const count = data.placeholders.length;
   const changes = data.changes.length
@@ -60,12 +61,16 @@ export async function showCode(ctx) {
     : "";
   openDialog({
     size: "l",
+    onClose,
     title: "Copy as code",
     sub: `The orbitals of <code>${esc(ctx.state().atom.source)}</code> as they are in the studio`,
     body: `${changes}${marks}${data.notes.map((note) => `<p class="note">${rich(note)}</p>`).join("")}${data.code ? `<pre class="code"><code>${highlight(data.code, "python")}</code></pre>` : ""}`,
-    actions: `<span class="hint spacer">Paste the lists over the ones in your atom.</span>${CLOSE}${data.code ? COPY : ""}`,
+    actions: `${onBack ? `<button class="btn" type="button" data-dlg="back">Back to the test</button>` : ""}<span class="hint spacer">Paste the lists over the ones in your atom.</span>${CLOSE}${data.code ? COPY : ""}`,
   });
-  onCopy(data.code, ctx);
+  $("#dlg-actions").onclick = (e) => {
+    if (e.target.closest('[data-dlg="copy"]')) copy(data.code, ctx.toast);
+    if (onBack && e.target.closest('[data-dlg="back"]')) onBack();
+  };
 }
 
 export async function showExport(ctx) {
@@ -118,5 +123,76 @@ export function showImport(ctx) {
       actions: `<button class="btn" type="button" data-dlg="undo">Undo</button><span class="spacer"></span><button class="btn primary" type="button" data-dlg="close">Done</button>`,
     });
     $("#dlg-actions").onclick = (event) => { if (event.target.closest('[data-dlg="undo"]')) { closeDialog(); ctx.undo(); } };
+  };
+}
+
+/** Save a turn as a test. The code comes from the server, which is also what writes the file. */
+export async function showTest(n, ctx, { onBack, onClose, alone = false, path = null, focus = null }) {
+  const data = await getTest(n, alone);
+  const warnings = data.warnings.length
+    ? `<div class="note warn" role="alert">${data.warnings.map((warning) => `<p>${rich(warning)}</p>`).join("")}<button class="btn sm" type="button" data-dlg="code">Copy as code</button></div>`
+    : "";
+  const earlier = data.earlier
+    ? `<label class="check"><input type="checkbox" id="test-earlier"${alone ? "" : " checked"}> Replay the ${plural(data.earlier, "turn")} before it</label>`
+    : "";
+  const file = data.writable
+    ? `<div class="field"><label for="test-path">File, inside <code>${esc(data.root)}</code></label>
+        <input type="text" id="test-path" value="${esc(path ?? data.path)}" spellcheck="false" autocomplete="off" aria-describedby="test-path-msg">
+        <p class="field-err" id="test-path-msg" role="alert" hidden></p></div>`
+    : "";
+  openDialog({
+    size: "l",
+    onClose,
+    title: `Save turn ${n} as a test`,
+    sub: data.integration ? "Runs the real atom: marked <code>integration</code>" : "Runs offline: no model is called",
+    body: `${warnings}${data.notes.map((note) => `<p class="note">${rich(note)}</p>`).join("")}${earlier}${file}
+      <pre class="code"><code>${highlight(data.code, "python")}</code></pre>
+      <p class="note" id="test-done" role="status" hidden></p>`,
+    actions: `<button class="btn" type="button" data-dlg="back">Back to the report</button><span class="spacer"></span>${data.writable ? `<button class="btn" type="button" data-dlg="copy">Copy</button><button class="btn primary" type="button" data-dlg="write">Write file</button>` : COPY}`,
+  });
+  // The card was drawn again: the focus goes back to what was used.
+  if (focus) $(focus, dlg)?.focus();
+  const typed = () => $("#test-path")?.value ?? null;
+
+  async function write(overwrite) {
+    const field = $("#test-path");
+    const message = $("#test-path-msg");
+    const done = $("#test-done");
+    message.hidden = true;
+    done.hidden = true;
+    field.removeAttribute("aria-invalid");
+    try {
+      const saved = await writeTest(n, field.value, alone, overwrite);
+      done.innerHTML = rich(`Saved as \`${saved.path}\`. Run it with \`python -m pytest ${saved.path}\`.`);
+      done.hidden = false;
+      ctx.toast("Test saved");
+    } catch (error) {
+      // A file of the studio that exists is replaced only on a second, explicit click.
+      const own = error.type === "Exists";
+      field.setAttribute("aria-invalid", "true");
+      message.innerHTML = rich(error.message) + (own ? ` <button class="btn sm" type="button" data-dlg="overwrite">Overwrite</button>` : "");
+      message.hidden = false;
+      (own ? $("button", message) : field).focus();
+    }
+  }
+
+  $("#dlg-body").onchange = (e) => {
+    if (e.target.id !== "test-earlier") return;
+    showTest(n, ctx, { onBack, onClose, alone: !e.target.checked, path: typed(), focus: "#test-earlier" }).catch(ctx.refused);
+  };
+  $("#dlg-body").onkeydown = (e) => {
+    if (e.key === "Enter" && e.target.id === "test-path") { e.preventDefault(); write(false); }
+  };
+  $("#dlg-body").onclick = (e) => {
+    if (e.target.closest('[data-dlg="overwrite"]')) write(true);
+    if (e.target.closest('[data-dlg="code"]')) {
+      const again = { onBack, onClose, alone, path: typed(), focus: '[data-dlg="code"]' };
+      showCode(ctx, { onClose, onBack: () => showTest(n, ctx, again).catch(ctx.refused) }).catch(ctx.refused);
+    }
+  };
+  $("#dlg-actions").onclick = (e) => {
+    if (e.target.closest('[data-dlg="back"]')) onBack(n);
+    if (e.target.closest('[data-dlg="copy"]')) copy(data.code, ctx.toast);
+    if (e.target.closest('[data-dlg="write"]')) write(false);
   };
 }
