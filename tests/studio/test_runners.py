@@ -5,13 +5,10 @@ import pkgutil
 from typing import Any
 
 import pytest
-from pydantic_ai.models.test import TestModel
 
 import chatomon.connectors
 from chatomon import Atom, ChatomonConfigError, Verdict
-from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER
-from chatomon.studio._runners import pydantic_ai as pydantic_ai_runner
 from chatomon.studio._runners import runner_for
 from chatomon.studio._testgen import Framework
 from tests.contract.harness import ToolCall, lookup
@@ -132,11 +129,22 @@ def test_each_connector_gets_the_runner_of_its_framework(framework: StudioHarnes
     assert runner_for(framework.connector("one")) is framework.runner
 
 
-def test_a_subclass_of_the_developers_is_run_like_the_connector_it_extends():
-    class Mine(PydanticAIConnector):
+def test_a_subclass_of_the_developers_is_run_like_the_connector_it_extends(
+    framework: StudioHarness,
+):
+    connector = framework.connector("one")
+    connector.__class__ = type("Mine", (type(connector),), {"__module__": "shop.connectors"})
+    assert type(connector).__module__ == "shop.connectors"
+    assert runner_for(connector) is framework.runner
+
+
+def test_a_class_without_a_module_among_the_bases_is_no_trouble():
+    class Nowhere(FakeConnector):
         pass
 
-    assert runner_for(Mine(TestModel())) is pydantic_ai_runner
+    setattr(Nowhere, "__module__", None)  # as a class made at run time can have  # noqa: B010
+    with pytest.raises(ChatomonConfigError, match="the studio has no runner for Nowhere"):
+        runner_for(Nowhere())
 
 
 def test_a_connector_of_the_developers_own_is_refused_by_name():

@@ -88,6 +88,9 @@ def describe(connector: Connector[Any], agent: Any) -> dict[str, str]:
         `{"connector": ..., "model": ...}`.
     """
     model = getattr(connector, "model", None)
+    # A model bound to arguments or to a configuration is named after the model it wraps.
+    while not isinstance(model, str) and getattr(model, "bound", None) is not None:
+        model = getattr(model, "bound", None)
     if isinstance(model, str):
         name = model
     else:

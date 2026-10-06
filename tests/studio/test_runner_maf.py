@@ -66,7 +66,8 @@ def test_describe_names_the_clients_model_or_its_class():
         (None, []),
         ([InMemoryHistoryProvider()], []),
         ([RedisLike()], [HISTORY]),
-        ([RedisLike(load_messages=False)], []),
+        # One that only writes is a place the studio's conversations go to all the same.
+        ([RedisLike(load_messages=False)], [HISTORY]),
     ],
 )
 def test_the_notes_name_a_history_provider_of_the_developers(providers: Any, expected: list[str]):

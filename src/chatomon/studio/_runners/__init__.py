@@ -110,9 +110,10 @@ def runner_for(connector: Connector[Any]) -> Runner:
         ChatomonConfigError: For a connector the studio has no runner for.
     """
     for cls in type(connector).__mro__:
-        if not cls.__module__.startswith(_CONNECTORS):
+        module = cls.__module__ or ""  # a class made at run time can have none
+        if not module.startswith(_CONNECTORS):
             continue
-        framework = cls.__module__[len(_CONNECTORS) :].partition(".")[0]
+        framework = module[len(_CONNECTORS) :].partition(".")[0]
         name = f"{__name__}.{framework}"
         if importlib.util.find_spec(name) is not None:
             return cast("Runner", importlib.import_module(name))

@@ -58,6 +58,9 @@ def atom(connector: LangChainConnector, **kwargs: Any) -> Atom:
         (Named(model_name="gpt-5"), "gpt-5"),
         (Named(model="claude-sonnet"), "claude-sonnet"),
         (ScriptedChatModel(), "ScriptedChatModel"),
+        # A model bound to arguments or to a configuration is still that model.
+        (Named(model_name="gpt-5").bind(stop=["."]), "gpt-5"),
+        (ScriptedChatModel().with_config(tags=["shop"]), "ScriptedChatModel"),
     ],
 )
 def test_describe_names_the_model(model: Any, expected: str):

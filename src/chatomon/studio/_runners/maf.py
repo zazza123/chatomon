@@ -105,7 +105,6 @@ def notes(connector: Connector[Any]) -> list[str]:
         _HISTORY.format(name=type(provider).__name__)
         for provider in kwargs.get("context_providers") or ()
         if isinstance(provider, HistoryProvider)
-        and provider.load_messages
         and not isinstance(provider, InMemoryHistoryProvider)
     ]
     return [*found, _FOUNDRY] if foundry else found
