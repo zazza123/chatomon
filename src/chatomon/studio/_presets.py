@@ -306,7 +306,14 @@ def carried(session: Chains, code: Chains) -> tuple[Chains, list[str]]:
             try:
                 result = _entry_applied(result, side, raw, shared)
             except _GoneError:
-                dropped.append(f"{name!r} is no longer in your code: {_LOST}")
+                if name in in_code:
+                    # It left this chain only: on the other one it is still the code's.
+                    dropped.append(
+                        f"{name!r} is no longer in the {side} chain of your code: "
+                        "what the studio changed on it there was dropped."
+                    )
+                else:
+                    dropped.append(f"{name!r} is no longer in your code: {_LOST}")
             except _OtherClassError as exc:
                 dropped.append(f"{name!r} is a {exc.now} in your code now: {_LOST}")
             except ChatomonError as exc:

@@ -818,3 +818,26 @@ def test_carrying_changes_never_touches_the_chains_it_reads():
     before = (dict(session.chains.work), dict(after.work))
     carried(session.chains, after)
     assert (dict(session.chains.work), dict(after.work)) == before
+
+
+def test_an_orbital_the_code_moved_to_the_other_chain_is_not_said_to_have_left_the_code():
+    session = code([limit(), scope()])
+    session.switch("input", "message_length", False)
+    result, dropped = carried(session.chains, code([scope()], [limit()]).chains)
+    assert dropped == [
+        "'message_length' is no longer in the input chain of your code: "
+        "what the studio changed on it there was dropped."
+    ]
+    assert [entry.enabled for entry in result.work["output"]] == [True]
+
+
+def test_an_orbital_of_both_chains_that_left_one_keeps_its_changes_on_the_other():
+    shared = limit()
+    session = code([shared], [shared])
+    session.edit("output", "message_length", {"max_words": 80})
+    result, dropped = carried(session.chains, code([limit()]).chains)
+    assert dropped == [
+        "'message_length' is no longer in the output chain of your code: "
+        "what the studio changed on it there was dropped."
+    ]
+    assert changes(result) == ["message_length.max_words changed"]
