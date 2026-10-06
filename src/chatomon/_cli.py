@@ -43,7 +43,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         from chatomon.studio import server
-        from chatomon.studio._loading import load
+        from chatomon.studio._loading import load, namespace
     except MissingExtraError as exc:
         print(f"chatomon studio: {exc}", file=sys.stderr)
         return 1
@@ -57,7 +57,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     port = args.port if args.port is not None else server.DEFAULT_PORT
     try:
         server._start(
-            atom, source=args.atom, host=args.host, port=port, open_browser=not args.no_browser
+            atom,
+            source=args.atom,
+            namespace=namespace(args.atom),
+            host=args.host,
+            port=port,
+            open_browser=not args.no_browser,
         )
     except ChatomonConfigError as exc:
         print(f"chatomon studio: {exc}", file=sys.stderr)

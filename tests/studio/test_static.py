@@ -21,7 +21,15 @@ def tokens(css: str) -> dict[str, set[str]]:
 
 
 def test_the_page_has_its_files():
-    for name in ["index.html", "studio.css", "favicon.svg", "js/main.js", "js/stage.js"]:
+    for name in [
+        "index.html",
+        "studio.css",
+        "favicon.svg",
+        "js/main.js",
+        "js/stage.js",
+        "js/orbital-card.js",
+        "js/export-cards.js",
+    ]:
         assert (STATIC / name).is_file(), name
 
 

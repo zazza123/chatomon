@@ -12,7 +12,12 @@ nav = [
   { "Guide" = [
     { "Concepts" = "concepts.md" },
     { "Observability and audit" = "observability.md" },
-    { "Studio" = "studio.md" },
+    { "Studio" = [
+      { "Overview" = "studio/index.md" },
+      { "Reading the screen" = "studio/screen.md" },
+      { "Tuning orbitals" = "studio/tuning.md" },
+      { "Back to code" = "studio/export.md" },
+    ] },
     { "Deployment" = [
       { "Overview" = "deployment/index.md" },
       { "ScopeGuard on Cloud Run" = "deployment/cloud_run.md" },

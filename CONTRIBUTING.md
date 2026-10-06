@@ -103,7 +103,7 @@ Issues are classified along independent axes. Only `type:` is mandatory.
 | `observability` | `observability.py` | `observability.md` |
 | `docs` | `docs/public/`, `zensical.toml`, docstrings | — |
 | `ci` | `.github/`, `scripts/`, `tests/tooling/` | — |
-| `studio` | `studio/`, `tests/studio/` | `studio.md` |
+| `studio` | `studio/`, `tests/studio/` | `studio/` |
 
 **`framework:` is which agent framework is involved**, independently of
 `area:` — an OpenTelemetry problem only LangChain shows is
@@ -322,6 +322,33 @@ others — is the most likely large contribution, so its path is written down:
      module or package.
 
 What a connector may and may not do is in [`CLAUDE.md`](CLAUDE.md).
+
+## Adding an orbital
+
+A ready-made orbital is the other likely contribution, so its path is written
+down too:
+
+1. **Request.** A `type:feat` issue with `area:orbitals`.
+2. **Done when:**
+   - the class lives in `src/chatomon/orbitals/`, subclasses `Orbital` and is in
+     its module's `__all__`, and in `chatomon.orbitals` when it needs no extra;
+   - its constructor takes keyword arguments, validates them and raises
+     `ChatomonConfigError` with a message that says what to fix; `config()`
+     returns every setting; `sides` is narrowed when it supports one side only;
+   - it keeps to the studio's convention, so the studio edits it with no studio
+     code: a parameter annotated with a plain type is a setting, any other
+     parameter is an object, and each is kept in a public attribute of the same
+     name. A secret is never a plain parameter: it reaches the orbital inside
+     an object, such as a client, because the studio shows, exports and
+     writes to code every setting. The constructor is cheap and has no side
+     effects: the studio calls it when it starts and on every change. A
+     sample of its arguments in `tests/studio/test_kinds.py` passes;
+   - unit tests in `tests/unit/` cover its verdicts with no network; tests
+     against a real service go in `tests/integration/`;
+   - `docs/public/orbitals/` has a page for it, listed in the `nav` of
+     `zensical.toml`, and `docs/public/reference/` has a page for its module.
+
+What an orbital may and may not do is in [`CLAUDE.md`](CLAUDE.md).
 
 ## Versioning and releases
 

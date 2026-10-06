@@ -4,7 +4,7 @@ import { nucleusFailed, results } from "./turns.js";
 const dlg = $("#dlg");
 let onCloseHook = () => {};
 
-function openDialog({ title, sub = "", extra = "", body, actions, size = "s", onClose = () => {} }) {
+export function openDialog({ title, sub = "", extra = "", body, actions, size = "s", onClose = () => {} }) {
   onCloseHook = onClose;
   $("#dlg-title").innerHTML = title;
   $("#dlg-sub").innerHTML = sub;
@@ -14,31 +14,31 @@ function openDialog({ title, sub = "", extra = "", body, actions, size = "s", on
   $("#dlg-actions").innerHTML = actions;
   $("#dlg-extra").onclick = null;
   $("#dlg-actions").onclick = null;
+  $("#dlg-body").onclick = null;
+  $("#dlg-body").onchange = null;
+  $("#dlg-body").oninput = null;
+  $("#dlg-body").onkeydown = null;
   dlg.dataset.size = size;
   $("#dlg-body").scrollTop = 0;
   if (!dlg.open) dlg.showModal();
+  // A modal card blurs and blocks everything outside it: the toast goes inside, to stay
+  // readable and usable (Undo, the reason of a refusal).
+  dlg.append($("#toast"));
 }
 export function closeDialog() { if (dlg.open) dlg.close(); }
-dlg.addEventListener("close", () => onCloseHook());
+dlg.addEventListener("close", () => {
+  document.body.append($("#toast"));
+  onCloseHook();
+});
+// A click on the backdrop closes the card, but not the end of a drag that started inside it,
+// such as selecting the text of a field.
+let pressedOnBackdrop = false;
+dlg.addEventListener("pointerdown", (e) => { pressedOnBackdrop = e.target === dlg; });
 dlg.addEventListener("click", (e) => {
-  if (e.target === dlg || e.target.closest('[data-dlg="close"]')) closeDialog();
+  if ((e.target === dlg && pressedOnBackdrop) || e.target.closest('[data-dlg="close"]')) closeDialog();
 });
 
-const kv = (rows) => `<dl class="kv">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`;
-
-export function showOrbital(orbital, { source, onToggle }) {
-  const config = Object.entries(orbital.config).filter(([k]) => k !== "kind" && k !== "name");
-  openDialog({
-    title: `<span class="dlg-glyph${orbital.enabled ? "" : " off"}"></span><span class="mono">${esc(orbital.name)}</span>`,
-    sub: `${esc(orbital.kind)} · ${orbital.side} orbital · from <code>${esc(source)}</code>`,
-    extra: `<span class="sw-label">${orbital.enabled ? "On" : "Off"}</span><label class="switch big"><input type="checkbox" role="switch" id="card-switch"${orbital.enabled ? " checked" : ""} aria-label="${esc(orbital.name)}"><span></span></label>`,
-    body: `${kv(config.map(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)]))}
-      <p class="hint">Settings come from your code; changing them in the studio comes in a later version.</p>
-      <div class="fp" title="${esc(orbital.fingerprint)}">fingerprint ${esc(shortFp(orbital.fingerprint))} · recorded in each turn report</div>`,
-    actions: `<span class="spacer"></span><button class="btn primary" type="button" data-dlg="close">Done</button>`,
-  });
-  $("#card-switch").addEventListener("change", (e) => onToggle(orbital.side, orbital.name, e.target.checked));
-}
+export const kv = (rows) => `<dl class="kv">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`;
 
 export function showAtom(state) {
   const a = state.atom;

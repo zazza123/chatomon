@@ -23,7 +23,7 @@ chatomon ("chat" + "atom") lets you declare a chat agent once — an **atom** ma
 - **Guard models included** — an LLM judge and wrappers for Principled Intelligence's ScopeGuard (V1 and V2) and ClaimExtractor.
 - **Ready-made limits** — caps on message and reply length and on the number of turns, with no model call.
 - **Audit and privacy** — a structured report for every turn, OpenTelemetry spans and logs that carry no message content unless you allow it.
-- **A local studio** — a page on your machine to chat with an atom, watch every orbital decide and switch orbitals on and off.
+- **A local studio** — a page on your machine to chat with an atom, watch every orbital decide, tune the orbitals and take the result back as code.
 
 ## Installation
 
@@ -174,9 +174,9 @@ An atom with one input orbital that turns refund requests into a guided refusal.
 
     ---
 
-    A local page to chat with an atom, watch its orbitals decide and inspect every turn.
+    A local page to chat with an atom and watch its orbitals decide: reading the screen, tuning orbitals, and taking the result back as code or as a preset.
 
-    [:lucide-arrow-right: Studio](studio.md)
+    [:lucide-arrow-right: Studio](studio/index.md)
 
 -   :lucide-server:{ .lg .middle } __Deployment__
 

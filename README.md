@@ -50,7 +50,7 @@ assert agent.run_sync("I want a refund").output == "Refunds are handled by email
 
 Replace `TestModel(...)` with a real model, for example `"openai:gpt-5"`.
 
-To try an atom in the browser, run `chatomon studio speedypack.app:atom` and open the printed link: the studio shows every orbital deciding, turn by turn.
+To try an atom in the browser, run `chatomon studio speedypack.app:atom` and open the printed link: the studio shows every orbital deciding, turn by turn, and lets you tune the orbitals and copy the result back as code.
 
 ## Documentation
 

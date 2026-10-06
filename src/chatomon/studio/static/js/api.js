@@ -7,6 +7,8 @@ async function failure(response) {
   const error = new Error(detail.message);
   error.type = detail.type;
   error.status = response.status;
+  error.setting = detail.setting;
+  error.problems = detail.problems;
   return error;
 }
 
@@ -21,10 +23,18 @@ async function call(method, path, body) {
   return response;
 }
 
-export const getState = async () => (await call("GET", "/api/state")).json();
-export const setOrbital = async (side, name, enabled) =>
-  (await call("PATCH", "/api/orbitals", { side, name, enabled })).json();
-export const resetConversation = async () => (await call("POST", "/api/conversation/reset", {})).json();
+const send = async (method, path, body) => (await call(method, path, body)).json();
+
+export const getState = () => send("GET", "/api/state");
+export const resetConversation = () => send("POST", "/api/conversation/reset", {});
+export const patchOrbital = (side, name, change) => send("PATCH", "/api/orbitals", { side, name, ...change });
+export const addOrbital = (side, kind, settings) => send("POST", "/api/orbitals", { side, kind, settings });
+export const deleteOrbital = (side, name) => send("DELETE", "/api/orbitals", { side, name });
+export const resetOrbitals = (target = {}) => send("POST", "/api/orbitals/reset", target);
+export const undoOrbitals = () => send("POST", "/api/orbitals/undo", {});
+export const getCode = () => send("GET", "/api/code");
+export const getPresetText = async () => (await call("GET", "/api/preset")).text();
+export const importPreset = (text) => send("POST", "/api/preset", { text });
 
 /** Run a turn and call onEvent for every event of its stream, in order. */
 export async function sendTurn(message, onEvent) {

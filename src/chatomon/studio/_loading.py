@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import os
 import sys
 from typing import Any
@@ -41,6 +42,36 @@ def load(spec: str) -> Atom[Any]:
     return resolve(value, label=spec)
 
 
+def namespace(spec: str) -> dict[str, object]:
+    """Return the variables of the module a spec names, where Copy as code looks names up.
+
+    Call it after [load][chatomon.studio._loading.load], which imports the module.
+
+    Args:
+        spec: `module:attribute`.
+
+    Returns:
+        The module's namespace; empty when the module is not imported.
+    """
+    module = sys.modules.get(spec.partition(":")[0])
+    return vars(module) if module is not None else {}
+
+
+def _required(function: Any) -> list[str]:
+    """Name the arguments a callable cannot be called without.
+
+    Returns:
+        The names, empty when it can be called with no arguments or its
+        signature cannot be read.
+    """
+    try:
+        parameters = inspect.signature(function).parameters.values()
+    except (TypeError, ValueError):
+        return []
+    plain = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+    return [p.name for p in parameters if p.default is p.empty and p.kind not in plain]
+
+
 def resolve(value: object, *, label: str) -> Atom[Any]:
     """Return `value` if it is an atom, or call it and return the atom it builds.
 
@@ -59,6 +90,13 @@ def resolve(value: object, *, label: str) -> Atom[Any]:
     if not callable(value):
         raise ChatomonConfigError(
             f"{label} is a {type(value).__name__}, not an Atom or a function that returns one"
+        )
+    needed = _required(value)
+    if needed:
+        # Calling it would only fail with a traceback about missing arguments.
+        raise ChatomonConfigError(
+            f"{label} needs arguments ({', '.join(needed)}): the studio calls it with none. "
+            "Point at an Atom, or at a function with no arguments that returns one"
         )
     try:
         result = value()

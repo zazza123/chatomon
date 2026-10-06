@@ -7,6 +7,7 @@ from starlette.testclient import TestClient
 
 from chatomon import Atom, Verdict
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
+from chatomon.orbitals import MessageLengthOrbital
 from chatomon.studio._app import create_app
 from chatomon.studio._session import Session, StudioBusyError
 from tests.fakes import ScriptedOrbital
@@ -127,7 +128,7 @@ def test_switching_errors(client, session, monkeypatch):
     def busy(side, name, enabled):
         raise StudioBusyError("a turn is running; wait for it to finish")
 
-    monkeypatch.setattr(session, "set_enabled", busy)
+    monkeypatch.setattr(session, "switch", busy)
     assert switch(client, "first", False).status_code == 409
 
 
@@ -217,3 +218,257 @@ def test_every_error_is_json(session, monkeypatch):
 
 def test_static_files_are_revalidated(client):
     assert client.get("/static/studio.css").headers["cache-control"] == "no-cache"
+
+
+def make_tunable() -> Session:
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(TestModel(custom_output_text="Hi")),
+        input_orbitals=[MessageLengthOrbital(max_words=60), ScriptedOrbital(name="scope")],
+    )
+    return Session(atom, source="app:atom")
+
+
+@pytest.fixture
+def tunable():
+    app = create_app(make_tunable(), token=TOKEN, host="127.0.0.1", port=8016)
+    with TestClient(app, base_url=BASE) as client:
+        client.get(f"/?token={TOKEN}")
+        yield client
+
+
+def patch(client, name, *, side="input", **change):
+    body = {"side": side, "name": name, **change}
+    return client.patch("/api/orbitals", json=body, headers=ORIGIN)
+
+
+def add(client, kind, settings, *, side="input"):
+    body = {"side": side, "kind": kind, "settings": settings}
+    return client.post("/api/orbitals", json=body, headers=ORIGIN)
+
+
+def delete(client, name, *, side="input", headers=ORIGIN):
+    return client.request(
+        "DELETE", "/api/orbitals", json={"side": side, "name": name}, headers=headers
+    )
+
+
+def input_names(response) -> list[str]:
+    return [orbital["name"] for orbital in response.json()["orbitals"]["input"]]
+
+
+def test_editing_a_setting(tunable):
+    response = patch(tunable, "message_length", settings={"max_words": 80})
+    assert response.status_code == 200
+    orbital = response.json()["orbitals"]["input"][0]
+    assert orbital["settings"][0]["value"] == 80
+    assert orbital["modified"] is True
+    assert response.json()["changes"][0]["text"] == "message_length.max_words changed"
+
+
+def test_a_refused_value_names_its_setting_and_changes_nothing(tunable):
+    refused = patch(tunable, "message_length", settings={"max_words": None})
+    assert refused.status_code == 422
+    assert refused.json()["error"] == {
+        "type": "InvalidSetting",
+        "message": "set max_words, max_chars or both",
+        "setting": "max_words",
+    }
+    shape = patch(tunable, "message_length", settings={"max_words": True})
+    assert shape.status_code == 422
+    assert shape.json()["error"]["message"] == "`max_words` must be a whole number"
+    assert tunable.get("/api/state").json()["changes"] == []
+
+
+def test_moving_adding_renaming_deleting_and_undoing(tunable):
+    assert input_names(patch(tunable, "scope", position=0)) == ["scope", "message_length"]
+    added = add(tunable, "TurnLimitOrbital", {"max_turns": 3, "name": "a.b-c"})
+    assert added.status_code == 200
+    assert added.json()["orbitals"]["input"][-1]["origin"] == "studio"
+    renamed = patch(tunable, "a.b-c", settings={"name": "limit"})
+    assert input_names(renamed) == ["scope", "message_length", "limit"]
+    deleted = delete(tunable, "limit")
+    assert deleted.json()["undo"] == "limit deleted"
+    assert input_names(deleted) == ["scope", "message_length"]
+    undone = tunable.post("/api/orbitals/undo", json={}, headers=ORIGIN)
+    assert input_names(undone) == ["scope", "message_length", "limit"]
+    again = tunable.post("/api/orbitals/undo", json={}, headers=ORIGIN)
+    assert again.status_code == 409
+    assert again.json()["error"] == {"type": "Refused", "message": "nothing to undo"}
+
+
+def test_resetting_one_orbital_and_all(tunable):
+    patch(tunable, "message_length", settings={"max_words": 80})
+    patch(tunable, "scope", enabled=False)
+    one = tunable.post(
+        "/api/orbitals/reset", json={"side": "input", "name": "message_length"}, headers=ORIGIN
+    )
+    assert [change["text"] for change in one.json()["changes"]] == ["scope turned off"]
+    assert one.json()["undo"] == "message_length reset to code"
+    everything = tunable.post("/api/orbitals/reset", json={}, headers=ORIGIN)
+    assert everything.json()["changes"] == []
+    assert everything.json()["undo"] == "Reset to code"
+
+
+def test_what_the_orbital_routes_refuse(tunable):
+    reset_half = tunable.post("/api/orbitals/reset", json={"side": "input"}, headers=ORIGIN)
+    cases = [
+        (patch(tunable, "ghost", enabled=False), 404, "UnknownOrbital"),
+        (patch(tunable, "scope", settings={"timeout": 5}), 409, "Refused"),
+        (patch(tunable, "message_length", settings={"name": "len"}), 409, "Refused"),
+        (patch(tunable, "scope", position=9), 422, "InvalidBody"),
+        (patch(tunable, "scope", position=True), 422, "InvalidBody"),
+        (patch(tunable, "scope", settings={}), 422, "InvalidBody"),
+        (patch(tunable, "scope", enabled="no"), 422, "InvalidBody"),
+        (patch(tunable, "scope", enabled=False, position=0), 422, "InvalidBody"),
+        (patch(tunable, "scope"), 422, "InvalidBody"),
+        (delete(tunable, "scope"), 409, "Refused"),
+        (add(tunable, "ScopeGuardOrbital", {}), 409, "Refused"),
+        (add(tunable, "TurnLimitOrbital", {"max_turns": 3}, side="output"), 409, "Refused"),
+        (add(tunable, "TurnLimitOrbital", {}), 422, "InvalidSetting"),
+        (add(tunable, "TurnLimitOrbital", {"max_turns": 3}, side="sideways"), 422, "InvalidBody"),
+        (add(tunable, 3, {}), 422, "InvalidBody"),
+        (reset_half, 422, "InvalidBody"),
+    ]
+    for response, status, kind in cases:
+        assert (response.status_code, response.json()["error"]["type"]) == (status, kind)
+    assert tunable.get("/api/state").json()["changes"] == []
+
+
+def test_acting_on_an_orbital_that_is_gone_is_a_404(tunable):
+    add(tunable, "TurnLimitOrbital", {"max_turns": 3})
+    delete(tunable, "turn_limit")
+    stale = patch(tunable, "turn_limit", settings={"max_turns": 5})
+    assert stale.status_code == 404
+    assert stale.json()["error"]["message"] == "the atom has no input orbital named 'turn_limit'"
+
+
+def test_the_new_routes_need_the_studios_origin(tunable):
+    foreign = {"origin": "http://evil.example"}
+    assert delete(tunable, "scope", headers=foreign).status_code == 403
+    assert delete(tunable, "scope", headers={}).status_code == 403
+    assert tunable.post("/api/orbitals", json={}, headers=foreign).status_code == 403
+    assert tunable.post("/api/orbitals/reset", json={}, headers=foreign).status_code == 403
+    assert tunable.post("/api/orbitals/undo", json={}, headers=foreign).status_code == 403
+
+
+def test_every_change_is_refused_while_a_turn_runs(tunable, monkeypatch):
+    monkeypatch.setattr(Session, "busy", property(lambda self: True))
+    responses = [
+        patch(tunable, "scope", enabled=False),
+        patch(tunable, "message_length", settings={"max_words": 80}),
+        patch(tunable, "scope", position=0),
+        add(tunable, "TurnLimitOrbital", {"max_turns": 3}),
+        delete(tunable, "scope"),
+        tunable.post("/api/orbitals/reset", json={}, headers=ORIGIN),
+        tunable.post("/api/orbitals/undo", json={}, headers=ORIGIN),
+    ]
+    assert [(r.status_code, r.json()["error"]["type"]) for r in responses] == [(409, "Busy")] * 7
+
+
+def test_copy_as_code(tunable):
+    patch(tunable, "message_length", settings={"max_words": 80})
+    response = tunable.get("/api/code")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["changes"] == ["message_length.max_words changed"]
+    assert "MessageLengthOrbital(max_words=80)," in body["code"]
+    assert body["placeholders"] == ["scope: a ScriptedOrbital from your code"]
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_exporting_a_preset(tunable):
+    patch(tunable, "message_length", settings={"max_words": 80})
+    response = tunable.get("/api/preset")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    assert "content-disposition" not in response.headers
+    assert response.text.startswith('{\n  "chatomon_studio_preset": 1,')
+    assert response.json()["input_orbitals"][0]["settings"] == {"max_words": 80}
+    download = tunable.get("/api/preset?download=1")
+    assert download.headers["content-disposition"] == (
+        'attachment; filename="speedypack.preset.json"'
+    )
+    assert download.json() == response.json()
+
+
+def test_the_downloaded_file_has_a_safe_name():
+    atom = Atom(
+        name='my atom/"1"',
+        instructions="Be brief.",
+        connector=PydanticAIConnector(TestModel()),
+    )
+    app = create_app(Session(atom, source="app:atom"), token=TOKEN, host="127.0.0.1", port=8016)
+    with TestClient(app, base_url=BASE) as client:
+        client.get(f"/?token={TOKEN}")
+        header = client.get("/api/preset?download=1").headers["content-disposition"]
+    assert header == 'attachment; filename="my_atom__1_.preset.json"'
+
+
+def test_importing_a_preset(tunable):
+    patch(tunable, "scope", enabled=False)
+    text = tunable.get("/api/preset").text
+    tunable.post("/api/orbitals/reset", json={}, headers=ORIGIN)
+    response = tunable.post("/api/preset", json={"text": text}, headers=ORIGIN)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["warnings"] == []
+    assert [change["text"] for change in body["state"]["changes"]] == ["scope turned off"]
+    assert body["state"]["undo"] == "Preset imported"
+
+
+def test_an_invalid_preset_lists_its_problems(tunable):
+    response = tunable.post("/api/preset", json={"text": "{oops"}, headers=ORIGIN)
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert (error["type"], error["message"]) == ("InvalidPreset", "the preset was not applied")
+    assert len(error["problems"]) == 1
+    assert error["problems"][0].startswith("this is not valid JSON: ")
+    missing = tunable.post("/api/preset", json={"preset": {}}, headers=ORIGIN)
+    assert (missing.status_code, missing.json()["error"]["type"]) == (422, "InvalidBody")
+    assert tunable.post("/api/preset", json={"text": "{}"}).status_code == 403
+
+
+def raw(client, method, path, body: bytes):
+    headers = {**ORIGIN, "content-type": "application/json"}
+    return client.request(method, path, content=body, headers=headers)
+
+
+def test_text_that_cannot_be_sent_back_is_refused_at_the_door(tunable):
+    bad = "\\ud800"  # a lone surrogate, as a JSON escape
+    requests = [
+        ("POST", "/api/orbitals", f'{{"side": "input", "kind": "{bad}", "settings": {{}}}}'),
+        ("PATCH", "/api/orbitals", f'{{"side": "{bad}", "name": "scope", "enabled": false}}'),
+        (
+            "PATCH",
+            "/api/orbitals",
+            f'{{"side": "input", "name": "message_length", "settings": {{"{bad}": 1}}}}',
+        ),
+        ("DELETE", "/api/orbitals", f'{{"side": "input", "name": "{bad}"}}'),
+        ("POST", "/api/orbitals/reset", f'{{"side": "input", "name": "{bad}"}}'),
+    ]
+    for method, path, body in requests:
+        response = raw(tunable, method, path, body.encode())
+        assert response.status_code == 422, body
+        assert response.json()["error"]["type"] == "InvalidBody", body
+    assert tunable.get("/api/state").status_code == 200
+
+
+def test_a_side_that_does_not_exist_is_a_malformed_request(tunable):
+    for response in (
+        patch(tunable, "scope", side="sideways", enabled=False),
+        delete(tunable, "scope", side="sideways"),
+    ):
+        assert response.status_code == 422
+        assert response.json()["error"] == {
+            "type": "InvalidBody",
+            "message": "side must be 'input' or 'output'",
+        }
+
+
+def test_a_reset_with_a_body_that_is_not_an_object_resets_nothing(tunable):
+    patch(tunable, "scope", enabled=False)
+    for body in (b"[1]", b"nonsense", b'"all"'):
+        assert raw(tunable, "POST", "/api/orbitals/reset", body).status_code == 422
+    assert len(tunable.get("/api/state").json()["changes"]) == 1

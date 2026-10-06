@@ -19,7 +19,7 @@ A check receives an `OrbitalContext` (`src/chatomon/schemas.py`): the text under
 
 ## Settings
 
-Every orbital has four settings: a `name` (unique within the atom; by default derived from the class or function name), `reads` (see [Chaining Orbitals](index.md#chaining-orbitals)), a `timeout` in seconds (30 by default) and `on_error` (`"block"` by default). `Orbital.fingerprint()` hashes the configuration returned by `config()`; the hash is recorded in every audit report, so you can tell which version of a check was active.
+Every orbital has four settings: a `name` (unique within the atom; by default the one [`Orbital.default_name()`][chatomon.orbitals.base.Orbital.default_name] derives from the class name, or the function's name with `@orbital`), `reads` (see [Chaining Orbitals](index.md#chaining-orbitals)), a `timeout` in seconds (30 by default) and `on_error` (`"block"` by default). `Orbital.fingerprint()` hashes the configuration returned by `config()`; the hash is recorded in every audit report, so you can tell which version of a check was active.
 
 ## Example: Two Chained Orbitals
 

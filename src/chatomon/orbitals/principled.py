@@ -236,6 +236,8 @@ class ScopeGuardOrbital(Orbital):
         self.description = description
         self.headers = headers
         self.history_window = history_window
+        # The overrides as they were given; `rules` is what the orbital applies.
+        self.mapping = mapping
         self.rules: dict[str, ScopeRule] = dict(DEFAULT_SCOPE_RULES)
         for key, rule in (mapping or {}).items():
             self.rules[_scope_key(key)] = rule

@@ -49,6 +49,7 @@
           <div class="chain-head">
             <h2 class="label">Input orbitals</h2>
             <span class="count" id="count-input"></span>
+            <button class="tbtn" type="button" data-act="add" data-side="input" aria-label="Add an input orbital">Add</button>
           </div>
           <ol class="orb-list" id="list-input"></ol>
         </div>
@@ -62,8 +63,24 @@
           <div class="chain-head">
             <h2 class="label">Output orbitals</h2>
             <span class="count" id="count-output"></span>
+            <button class="tbtn" type="button" data-act="add" data-side="output" aria-label="Add an output orbital">Add</button>
           </div>
           <ol class="orb-list" id="list-output"></ol>
+        </div>
+      </div>
+      <div class="atom-foot">
+        <button class="tbtn" type="button" data-act="undo" id="undo" hidden></button>
+        <div class="changes" id="changes">
+          <details id="changes-details">
+            <summary id="changes-text"></summary>
+            <ul id="changes-list"></ul>
+          </details>
+          <button class="tbtn" type="button" data-act="reset-all" id="reset-all" hidden>Reset to code</button>
+        </div>
+        <div class="foot-actions" id="foot-actions">
+          <button class="btn primary" type="button" data-act="copy-code">Copy as code</button>
+          <button class="btn" type="button" data-act="export">Export preset</button>
+          <button class="btn" type="button" data-act="import">Import preset</button>
         </div>
       </div>
     </div>

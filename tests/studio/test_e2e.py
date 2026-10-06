@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import http.client
+import json
 import signal
 import socket
 import subprocess
@@ -14,6 +15,7 @@ import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass
 from http.cookiejar import CookieJar
+from typing import Any, Literal
 
 import pytest
 import uvicorn
@@ -21,8 +23,10 @@ from playwright.sync_api import Page, expect
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from chatomon import Atom
+from chatomon import Atom, Verdict
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
+from chatomon.orbitals import MessageLengthOrbital
+from chatomon.studio import _kinds as kinds
 from chatomon.studio._app import create_app
 from chatomon.studio._session import Session
 from tests.fakes import ScriptedOrbital
@@ -63,16 +67,9 @@ class Studio:
         self.thread.join(timeout=10)
 
 
-@pytest.fixture
-def studio() -> Iterator[Studio]:
+@contextlib.contextmanager
+def running(atom: Atom) -> Iterator[Studio]:
     port = free_port()
-    atom = Atom(
-        name="speedypack",
-        instructions="Be brief.",
-        connector=PydanticAIConnector(FunctionModel(respond)),
-        input_orbitals=[ScriptedOrbital(name="guard")],
-        output_orbitals=[ScriptedOrbital(name="judge")],
-    )
     app = create_app(Session(atom, source="tests:atom"), token=TOKEN, host="127.0.0.1", port=port)
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, access_log=False)
     server = uvicorn.Server(config)
@@ -83,8 +80,43 @@ def studio() -> Iterator[Studio]:
         assert time.monotonic() < deadline, "the studio did not start"
         time.sleep(0.05)
     handle = Studio(url=f"http://127.0.0.1:{port}", server=server, thread=thread)
-    yield handle
-    handle.stop()
+    try:
+        yield handle
+    finally:
+        handle.stop()
+
+
+@pytest.fixture
+def studio() -> Iterator[Studio]:
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(FunctionModel(respond)),
+        input_orbitals=[ScriptedOrbital(name="guard")],
+        output_orbitals=[ScriptedOrbital(name="judge")],
+    )
+    with running(atom) as handle:
+        yield handle
+
+
+@pytest.fixture
+def tunable() -> Iterator[Studio]:
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(FunctionModel(respond)),
+        input_orbitals=[MessageLengthOrbital(max_words=60), ScriptedOrbital(name="scope")],
+    )
+    with running(atom) as handle:
+        yield handle
+
+
+def row(page: Page, name: str):
+    return page.locator(f'#drawer li.orb[data-name="{name}"]')
+
+
+def input_order(page: Page) -> list[str]:
+    return page.locator("#list-input li.orb").evaluate_all("rows => rows.map(r => r.dataset.name)")
 
 
 def open_studio(page: Page, studio: Studio, *, real_time: bool = True) -> None:
@@ -293,3 +325,484 @@ def test_stopping_during_a_turn_does_not_wait_for_the_model(tmp_path):
     finally:
         if process.poll() is None:
             process.kill()
+
+
+def test_the_drawer_counts_changes_and_resets_them(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    changes = page.locator("#changes-text")
+    expect(changes).to_have_text("Same as tests:atom")
+    expect(page.locator("#drawer-badge")).to_be_hidden()
+    expect(row(page, "scope").locator(".mod-dot")).to_be_hidden()
+
+    row(page, "scope").get_by_role("switch").focus()
+    page.keyboard.press("Space")
+    expect(changes).to_have_text("1 change vs code")
+    expect(page.locator("#drawer-badge")).to_be_visible()
+    expect(row(page, "scope").locator(".mod-dot")).to_be_visible()
+    changes.click()
+    expect(page.locator("#changes-list")).to_have_text("scope turned off")
+
+    page.get_by_role("button", name="Reset to code").click()
+    expect(changes).to_have_text("Same as tests:atom")
+    toast = page.locator("#toast")
+    expect(toast).to_contain_text("Reset to code")
+    toast.get_by_role("button", name="Undo").click()
+    expect(changes).to_have_text("1 change vs code")
+    expect(row(page, "scope").get_by_role("switch")).not_to_be_checked()
+
+
+def test_dragging_an_orbital_reorders_the_chain(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    assert input_order(page) == ["message_length", "scope"]
+    row(page, "scope").locator(".orb-row").drag_to(
+        row(page, "message_length").locator(".orb-row"), target_position={"x": 40, "y": 2}
+    )
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    assert input_order(page) == ["scope", "message_length"]
+    page.locator("#changes-text").click()
+    expect(page.locator("#changes-list")).to_have_text("input order changed")
+
+
+def test_a_page_that_is_out_of_date_reloads_the_state(page: Page, tunable: Studio):
+    origin = {"origin": tunable.url}
+    open_studio(page, tunable)  # the page's requests carry the cookie only after this
+    added = page.request.post(
+        f"{tunable.url}/api/orbitals",
+        data={"side": "input", "kind": "TurnLimitOrbital", "settings": {"max_turns": 3}},
+        headers=origin,
+    )
+    assert added.ok
+    page.reload()
+    expect(row(page, "turn_limit")).to_contain_text("added in the studio")
+
+    # Another tab deletes the orbital; this page still shows it.
+    gone = page.request.delete(
+        f"{tunable.url}/api/orbitals", data={"side": "input", "name": "turn_limit"}, headers=origin
+    )
+    assert gone.ok
+    row(page, "turn_limit").get_by_role("switch").click()
+    expect(page.locator("#toast")).to_contain_text("no input orbital named 'turn_limit'")
+    expect(row(page, "turn_limit")).to_have_count(0)
+
+
+def test_deleting_an_added_orbital_and_undoing(page: Page, tunable: Studio):
+    page.goto(f"{tunable.url}/?token={TOKEN}")
+    page.request.post(
+        f"{tunable.url}/api/orbitals",
+        data={"side": "input", "kind": "TurnLimitOrbital", "settings": {"max_turns": 3}},
+        headers={"origin": tunable.url},
+    )
+    page.reload()
+    expect(row(page, "scope").get_by_role("button", name="Delete scope")).to_have_count(0)
+    row(page, "turn_limit").get_by_role("button", name="Delete turn_limit").click()
+    expect(row(page, "turn_limit")).to_have_count(0)
+    toast = page.locator("#toast")
+    expect(toast).to_contain_text("turn_limit deleted")
+    toast.get_by_role("button", name="Undo").click()
+    expect(row(page, "turn_limit")).to_have_count(1)
+
+
+def card(page: Page):
+    return page.locator("dialog[open]")
+
+
+def open_card(page: Page, name: str) -> None:
+    # The row's button is named by its content (name and class); "Open <name>" is its tooltip.
+    row(page, name).locator('[data-act="card"]').click()
+
+
+def test_editing_a_setting_and_a_value_the_orbital_refuses(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    open_card(page, "message_length")
+    words = card(page).get_by_label("max_words")
+    expect(words).to_have_value("60")
+    fingerprint = card(page).locator("#card-fp").get_attribute("title")
+    reset = card(page).get_by_role("button", name="Reset to code")
+    expect(reset).to_be_disabled()
+
+    words.fill("80")
+    words.press("Tab")
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    expect(card(page).locator("#card-fp")).not_to_have_attribute("title", fingerprint or "")
+    expect(reset).to_be_enabled()
+    expect(row(page, "message_length").locator(".mod-dot")).to_be_visible()
+
+    words.fill("")
+    words.press("Tab")
+    error = card(page).locator("#f-max_words-err")
+    expect(error).to_have_text("set max_words, max_chars or both")
+    expect(words).to_have_attribute("aria-invalid", "true")
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+
+    words.fill("1.5")
+    words.press("Tab")
+    expect(error).to_have_text("max_words must be a whole number")
+    expect(error.locator("code")).to_have_text("max_words")
+
+    reset.click()
+    expect(card(page).get_by_label("max_words")).to_have_value("60")
+    expect(page.locator("#changes-text")).to_have_text("Same as tests:atom")
+    expect(page.locator("#toast")).to_contain_text("message_length reset to code")
+
+
+def test_an_orbital_from_code_that_the_studio_does_not_edit(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    open_card(page, "scope")
+    expect(card(page)).to_contain_text("ScriptedOrbital is your own class")
+    expect(card(page).locator(".field")).to_have_count(0)
+    expect(card(page).get_by_role("button", name="Delete orbital")).to_have_count(0)
+
+    card(page).get_by_role("button", name="Move up").click()
+    expect(card(page).locator("#card-pos")).to_have_text("1 of 2 in the input chain")
+    expect(card(page).get_by_role("button", name="Move down")).to_be_focused()
+    assert input_order(page) == ["scope", "message_length"]
+
+    card(page).get_by_role("switch").click()
+    expect(row(page, "scope").get_by_role("switch")).not_to_be_checked()
+    expect(card(page)).to_be_visible()
+
+
+def test_adding_an_orbital_with_a_name_renaming_and_deleting_it(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    page.locator('#drawer [data-act="add"][data-side="input"]').click()
+    expect(card(page)).to_contain_text("Closes the conversation after a number of turns.")
+    expect(card(page)).to_contain_text("added in code")
+    card(page).get_by_role("button", name="TurnLimitOrbital").click()
+
+    name = card(page).get_by_label("name", exact=True)
+    expect(name).to_have_value("turn_limit")
+    card(page).get_by_role("button", name="Add", exact=True).click()
+    expect(card(page).locator("#f-max_turns-err")).to_have_text("max_turns needs a value")
+    assert input_order(page) == ["message_length", "scope"]
+
+    name.fill("limit")
+    card(page).get_by_label("max_turns").fill("3")
+    card(page).get_by_role("button", name="Add", exact=True).click()
+    expect(card(page).locator("#card-title")).to_have_text("limit")
+    expect(row(page, "limit")).to_contain_text("added in the studio")
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+
+    renamed = card(page).get_by_label("name", exact=True)
+    renamed.fill("Limit")
+    renamed.press("Enter")
+    expect(card(page).locator("#f-name-err")).to_contain_text("invalid name 'Limit'")
+    renamed.fill("turns")
+    renamed.press("Enter")
+    expect(card(page).locator("#card-title")).to_have_text("turns")
+    expect(row(page, "turns")).to_have_count(1)
+
+    card(page).get_by_role("button", name="Delete orbital").click()
+    expect(row(page, "turns")).to_have_count(0)
+    page.locator("#toast").get_by_role("button", name="Undo").click()
+    expect(row(page, "turns")).to_have_count(1)
+
+
+def test_copy_as_code_shows_the_lists_and_what_it_could_not_write(page: Page, tunable: Studio):
+    page.context.grant_permissions(["clipboard-read", "clipboard-write"])
+    open_studio(page, tunable)
+    open_card(page, "message_length")
+    words = card(page).get_by_label("max_words")
+    words.fill("80")
+    words.press("Tab")
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    card(page).get_by_role("button", name="Done").click()
+
+    page.get_by_role("button", name="Copy as code").click()
+    expect(card(page)).to_contain_text("Studio changes: message_length.max_words changed.")
+    expect(card(page).locator("pre.code")).to_contain_text("MessageLengthOrbital(max_words=80),")
+    expect(card(page)).to_contain_text("scope: a ScriptedOrbital from your code")
+    expect(card(page).locator("p.note code")).to_have_text(["..."])
+    card(page).get_by_role("button", name="Copy", exact=True).click()
+    expect(page.locator("#toast")).to_contain_text("Copied")
+    assert "MessageLengthOrbital(max_words=80)," in page.evaluate("navigator.clipboard.readText()")
+
+
+def test_exporting_resetting_and_importing_restores_the_session(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    row(page, "scope").get_by_role("switch").click()
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+
+    page.get_by_role("button", name="Export preset").click()
+    expect(card(page).locator("pre.code")).to_contain_text('"chatomon_studio_preset": 1')
+    text = card(page).locator("pre.code").inner_text()
+    with page.expect_download() as download:
+        card(page).get_by_role("link", name="Download").click()
+    assert download.value.suggested_filename == "speedypack.preset.json"
+    card(page).get_by_role("button", name="Close").first.click()
+
+    page.get_by_role("button", name="Reset to code").click()
+    expect(page.locator("#changes-text")).to_have_text("Same as tests:atom")
+
+    page.get_by_role("button", name="Import preset").click()
+    card(page).locator("#import-file").set_input_files(
+        {"name": "speedypack.preset.json", "mimeType": "application/json", "buffer": text.encode()}
+    )
+    expect(card(page).get_by_label("Preset JSON")).to_have_value(text)
+    card(page).get_by_role("button", name="Apply preset").click()
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    expect(row(page, "scope").get_by_role("switch")).not_to_be_checked()
+    toast = page.locator("#toast")
+    expect(toast).to_contain_text("Preset imported")
+    toast.get_by_role("button", name="Undo").click()
+    expect(page.locator("#changes-text")).to_have_text("Same as tests:atom")
+
+
+def test_an_invalid_preset_lists_its_problems_and_changes_nothing(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    page.get_by_role("button", name="Import preset").click()
+    card(page).get_by_label("Preset JSON").fill('{"chatomon_studio_preset": 2}')
+    card(page).get_by_role("button", name="Apply preset").click()
+    problems = card(page).locator("#import-problems")
+    expect(problems).to_contain_text("The preset was not applied")
+    expect(problems.locator("li")).to_have_text(
+        ["this preset has schema version 2; this studio reads version 1"]
+    )
+    expect(page.locator("#changes-text")).to_have_text("Same as tests:atom")
+
+
+def test_a_preset_applied_with_notes_lists_them(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    preset = page.request.get(f"{tunable.url}/api/preset").json()
+    preset["input_orbitals"][0]["fingerprint"] = "sha256:another"
+    del preset["input_orbitals"][1]
+    page.get_by_role("button", name="Import preset").click()
+    card(page).get_by_label("Preset JSON").fill(json.dumps(preset))
+    card(page).get_by_role("button", name="Apply preset").click()
+    expect(card(page)).to_contain_text("Preset applied")
+    expect(card(page).locator("li")).to_have_text(
+        [
+            "'scope' is in your code but not in the preset: it was added at the end, turned on.",
+            "'message_length' differs from the exported preset: "
+            "your code or chatomon changed since.",
+        ]
+    )
+    card(page).get_by_role("button", name="Undo").click()
+    expect(card(page)).to_have_count(0)
+
+
+@pytest.fixture
+def readers() -> Iterator[Studio]:
+    """An atom whose second orbital reads the first, so some changes are refused."""
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(FunctionModel(respond)),
+        input_orbitals=[
+            ScriptedOrbital(Verdict.allow(annotations={"x": 1}), name="first"),
+            ScriptedOrbital(name="reader", reads=["first"]),
+        ],
+    )
+    with running(atom) as handle:
+        yield handle
+
+
+def on_top(locator) -> bool:
+    """Whether a click at the element's centre would reach it, not something over it."""
+    return locator.evaluate(
+        """el => {
+          const box = el.getBoundingClientRect();
+          const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+          return el === hit || el.contains(hit);
+        }"""
+    )
+
+
+def test_undo_after_a_reset_from_the_card_can_be_clicked(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    open_card(page, "message_length")
+    words = card(page).get_by_label("max_words")
+    words.fill("80")
+    words.press("Tab")
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    card(page).get_by_role("button", name="Reset to code").click()
+    expect(card(page).get_by_label("max_words")).to_have_value("60")
+
+    undo = page.locator("#toast").get_by_role("button", name="Undo")
+    assert on_top(undo)
+    undo.click(timeout=3000)
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    expect(card(page).get_by_label("max_words")).to_have_value("80")
+
+
+def test_a_refusal_from_the_card_can_be_read(page: Page, readers: Studio):
+    open_studio(page, readers)
+    open_card(page, "first")
+    card(page).get_by_role("switch").click()
+    reason = page.locator("#toast-text")
+    expect(reason).to_contain_text("reads 'first'")
+    assert on_top(reason)
+    expect(card(page).get_by_role("switch")).to_be_checked()
+    card(page).get_by_role("button", name="Move down").click()
+    expect(reason).to_contain_text("reads 'first'")
+    expect(card(page).locator("#card-pos")).to_have_text("1 of 2 in the input chain")
+
+
+def test_a_refused_value_followed_by_done_is_reported(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    open_card(page, "message_length")
+    card(page).get_by_label("max_words").fill("0")
+    card(page).get_by_role("button", name="Done").click()
+    expect(card(page)).to_have_count(0)
+    expect(page.locator("#toast")).to_contain_text("max_words must be a positive integer, got 0")
+    expect(page.locator("#changes-text")).to_have_text("Same as tests:atom")
+
+
+def reply_on_the_server(page: Page, studio: Studio) -> str:
+    state = page.request.get(f"{studio.url}/api/state").json()
+    settings = state["orbitals"]["input"][0]["settings"]
+    return next(setting["value"] for setting in settings if setting["key"] == "reply")
+
+
+def test_enter_applies_a_text_setting_and_shift_enter_breaks_the_line(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    open_card(page, "message_length")
+    reply = card(page).get_by_label("reply")
+    reply.fill("Too long.")
+    reply.press("Enter")
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    expect(reply).to_have_value("Too long.")
+    assert reply_on_the_server(page, tunable) == "Too long."
+
+    reply.press("Shift+Enter")
+    reply.press_sequentially("Shorten it.")
+    expect(reply).to_have_value("Too long.\nShorten it.")
+    assert reply_on_the_server(page, tunable) == "Too long."
+    fingerprint = card(page).locator("#card-fp").get_attribute("title")
+    reply.press("Enter")
+    expect(card(page).locator("#card-fp")).not_to_have_attribute("title", fingerprint or "")
+    assert reply_on_the_server(page, tunable) == "Too long.\nShorten it."
+
+
+def test_text_that_is_not_a_number_is_refused_not_read_as_none(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    open_card(page, "message_length")
+    chars = card(page).get_by_label("max_chars")
+    chars.fill("500")
+    chars.press("Tab")
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    words = card(page).get_by_label("max_words")
+    words.fill("")
+    words.press_sequentially("3e")
+    words.press("Tab")
+    expect(card(page).locator("#f-max_words-err")).to_have_text("max_words must be a whole number")
+    state = page.request.get(f"{tunable.url}/api/state").json()
+    assert state["orbitals"]["input"][0]["settings"][0]["value"] == 60
+
+
+def test_undo_stays_in_the_drawer_and_focus_is_never_lost(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    undo = page.locator("#undo")
+    expect(undo).to_be_hidden()
+    row(page, "scope").get_by_role("switch").click()
+    page.get_by_role("button", name="Reset to code").click()
+    expect(undo).to_have_text("Undo: Reset to code")
+    expect(undo).to_be_focused()
+
+    # The toast fades after five seconds; its button must not stay as an invisible stop.
+    expect(page.locator("#toast-act")).to_be_hidden(timeout=8000)
+    page.keyboard.press("Enter")
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    expect(undo).to_be_hidden()
+    expect(page.get_by_role("button", name="Reset to code")).to_be_focused()
+
+    open_card(page, "message_length")
+    words = card(page).get_by_label("max_words")
+    words.fill("80")
+    words.press("Tab")
+    card(page).get_by_role("button", name="Done").click()
+    expect(row(page, "message_length").locator('[data-act="card"]')).to_be_focused()
+
+
+def test_selecting_text_past_the_edge_of_a_card_does_not_close_it(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    open_card(page, "message_length")
+    box = card(page).get_by_label("reply").bounding_box()
+    assert box is not None
+    page.mouse.move(box["x"] + 30, box["y"] + box["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(8, 8, steps=5)
+    page.mouse.up()
+    expect(card(page)).to_be_visible()
+    page.mouse.click(8, 8)
+    expect(card(page)).to_have_count(0)
+
+
+def test_the_tab_key_skips_the_list_of_changes_when_there_are_none(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    last_add = page.locator('#drawer [data-act="add"][data-side="output"]')
+    last_add.focus()
+    page.keyboard.press("Tab")
+    expect(page.get_by_role("button", name="Copy as code")).to_be_focused()
+
+    row(page, "scope").get_by_role("switch").click()
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    last_add.focus()
+    page.keyboard.press("Tab")
+    expect(page.locator("#changes-text")).to_be_focused()
+
+
+def test_each_add_button_says_which_chain_it_adds_to(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    page.get_by_role("button", name="Add an output orbital").click()
+    expect(card(page).locator("#dlg-title")).to_have_text("Add an output orbital")
+    card(page).get_by_role("button", name="Cancel").click()
+    page.get_by_role("button", name="Add an input orbital").click()
+    expect(card(page).locator("#dlg-title")).to_have_text("Add an input orbital")
+
+
+class TriOrbital(ScriptedOrbital):
+    """A choice and a switch that may be none: no built-in orbital has one yet."""
+
+    def __init__(
+        self,
+        *,
+        mode: Literal["strict", "loose"] | None = None,
+        careful: bool | None = None,
+        name: str | None = None,
+    ) -> None:
+        super().__init__(name=name)
+        self.mode = mode
+        self.careful = careful
+
+    def config(self) -> dict[str, Any]:
+        return {**super().config(), "mode": self.mode, "careful": self.careful}
+
+
+@pytest.fixture
+def optional(monkeypatch) -> Iterator[Studio]:
+    """A studio that reads TriOrbital as one of chatomon's own, so its card can be edited."""
+    builtin = kinds.is_builtin
+    monkeypatch.setattr(kinds, "is_builtin", lambda cls: cls is TriOrbital or builtin(cls))
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(FunctionModel(respond)),
+        input_orbitals=[TriOrbital(mode="strict", careful=True)],
+    )
+    with running(atom) as handle:
+        yield handle
+
+
+def test_a_choice_and_a_switch_that_may_be_none(page: Page, optional: Studio):
+    def values() -> dict[str, Any]:
+        state = page.request.get(f"{optional.url}/api/state").json()
+        return {s["key"]: s["value"] for s in state["orbitals"]["input"][0]["settings"]}
+
+    open_studio(page, optional)
+    open_card(page, "tri")
+    mode = card(page).get_by_label("mode")
+    careful = card(page).get_by_label("careful")
+    expect(mode).to_have_value("strict")
+    expect(careful).to_have_value("true")
+
+    mode.select_option("")
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    careful.select_option("")
+    expect(page.locator("#changes-text")).to_have_text("2 changes vs code")
+    assert values() == {"mode": None, "careful": None}
+
+    mode.select_option("loose")
+    careful.select_option("false")
+    expect(card(page).locator(".field.changed")).to_have_count(2)
+    page.wait_for_function("() => document.querySelectorAll('[aria-invalid]').length === 0")
+    assert values() == {"mode": "loose", "careful": False}
