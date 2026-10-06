@@ -12,7 +12,7 @@ import textwrap
 import threading
 import time
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from http.cookiejar import CookieJar
 from typing import Any, Literal
@@ -28,6 +28,7 @@ from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.orbitals import MessageLengthOrbital
 from chatomon.studio import _kinds as kinds
 from chatomon.studio._app import create_app
+from chatomon.studio._loading import load, namespace
 from chatomon.studio._session import Session
 from tests.fakes import ScriptedOrbital
 from tests.studio import frameworks
@@ -69,9 +70,11 @@ class Studio:
 
 
 @contextlib.contextmanager
-def running(atom: Atom, *, namespace: dict[str, object] | None = None) -> Iterator[Studio]:
+def running(
+    atom: Atom, *, source: str = "tests:atom", namespace: dict[str, object] | None = None
+) -> Iterator[Studio]:
     port = free_port()
-    session = Session(atom, source="tests:atom", namespace=namespace)
+    session = Session(atom, source=source, namespace=namespace)
     app = create_app(session, token=TOKEN, host="127.0.0.1", port=port)
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, access_log=False)
     server = uvicorn.Server(config)
@@ -1049,3 +1052,126 @@ def test_an_atom_of_another_framework_runs_a_turn_and_saves_it(page: Page, monke
         expect(code).to_contain_text(call)
         expect(code).to_contain_text("# Turn 2: answered")
         expect(card(page)).to_contain_text("is marked integration")
+
+
+RELOADABLE = """
+    import asyncio
+
+    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    from chatomon import Atom
+    from chatomon.connectors.pydantic_ai import PydanticAIConnector
+    from chatomon.orbitals import MessageLengthOrbital
+
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        asked = [part.content for part in messages[-1].parts if isinstance(part, UserPromptPart)]
+        if any("slow" in str(text) for text in asked):
+            await asyncio.sleep(3)
+        return ModelResponse(parts=[TextPart(content="We are open Monday to Friday.")])
+
+
+    limit = MessageLengthOrbital(max_words=60)
+    extra = MessageLengthOrbital(name="extra", max_words=500)
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(FunctionModel(respond)),
+        input_orbitals=[limit, extra],
+    )
+"""
+
+
+@pytest.fixture
+def reloading(sources) -> Iterator[tuple[Studio, Callable[[str, str], None]]]:
+    """A studio started as the command starts it, on a module the test writes again."""
+    sources("shop.py", RELOADABLE)
+    spec = "shop:atom"
+    with running(load(spec), source=spec, namespace=namespace(spec)) as handle:
+        yield handle, sources
+
+
+def open_atom_card(page: Page) -> None:
+    page.locator("#drawer .atom-card").click()
+    expect(card(page).locator("#dlg-title")).to_have_text("speedypack")
+
+
+def reload_button(page: Page):
+    return card(page).get_by_role("button", name="Reload from code")
+
+
+def outcome(page: Page):
+    """What the atom card says a reload did."""
+    return card(page).locator("#atom-outcome")
+
+
+def test_reload_from_code_keeps_the_changes_and_the_conversation(page: Page, reloading):
+    studio, sources = reloading
+    open_studio(page, studio)
+    row(page, "message_length").get_by_role("switch").click()
+    row(page, "extra").get_by_role("switch").click()
+    expect(page.locator("#changes-text")).to_have_text("2 changes vs code")
+    send(page, "hello", REPLY)
+
+    sources("shop.py", RELOADABLE.replace("Be brief.", "Be kind.").replace(", extra]", "]"))
+    open_atom_card(page)
+    expect(card(page)).to_contain_text("press Reload")
+    reload_button(page).click()
+    expect(outcome(page)).to_contain_text("Reloaded from shop:atom.")
+    expect(outcome(page)).to_have_attribute("role", "status")
+    expect(card(page)).to_contain_text("Be kind.")
+    expect(outcome(page)).to_contain_text("No longer applied:")
+    expect(outcome(page)).to_contain_text(
+        "'extra' is no longer in your code: what the studio changed on it was dropped."
+    )
+    # The card was drawn again: the keyboard is still on the button that was used.
+    expect(reload_button(page)).to_be_focused()
+    page.keyboard.press("Enter")
+    expect(outcome(page)).to_have_text("Reloaded from shop:atom.")
+    card(page).get_by_role("button", name="Done").click()
+
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    expect(row(page, "extra")).to_have_count(0)
+    expect(row(page, "message_length").get_by_role("switch")).not_to_be_checked()
+    expect(page.locator("article.turn")).to_have_count(1)
+    send(page, "hello again", REPLY)
+
+    # While a turn runs the atom on stage still opens the card, but nothing can be reloaded.
+    message_box(page).fill("a slow question")
+    page.get_by_role("button", name="Send").click()
+    expect(page.locator(".typing")).to_be_visible()
+    # The atom moves while a turn runs: a real click would wait for it to stand still.
+    page.locator("#atom [data-atom]").dispatch_event("click")
+    expect(reload_button(page)).to_be_disabled()
+    expect(page.get_by_role("button", name="Send")).to_be_disabled()
+
+
+def test_a_reload_that_fails_shows_why_and_the_atom_keeps_running(page: Page, reloading):
+    studio, sources = reloading
+    open_studio(page, studio)
+    sources("shop.py", RELOADABLE.replace("limit = MessageLengthOrbital(max_words=60)", "limit ="))
+    open_atom_card(page)
+    reload_button(page).click()
+    alert = outcome(page)
+    expect(alert).to_have_attribute("role", "alert")
+    expect(alert).to_contain_text("Reload failed: could not import 'shop': invalid syntax")
+    expect(alert).to_contain_text("The atom from before is still running")
+    expect(alert).not_to_contain_text("Traceback")
+    expect(card(page)).to_contain_text("Be brief.")
+    expect(reload_button(page)).to_be_focused()
+
+    sources("shop.py", RELOADABLE.replace("Be brief.", "Be kind."))
+    reload_button(page).click()
+    expect(outcome(page)).to_have_text("Reloaded from shop:atom.")
+    expect(outcome(page)).to_have_attribute("role", "status")
+    expect(card(page)).to_contain_text("Be kind.")
+    card(page).get_by_role("button", name="Done").click()
+    send(page, "hello", REPLY)
+
+
+def test_started_from_python_the_atom_card_has_no_reload(page: Page, studio: Studio):
+    open_studio(page, studio)
+    open_atom_card(page)
+    expect(reload_button(page)).to_have_count(0)
+    expect(card(page)).to_contain_text("Change it there and restart the studio.")

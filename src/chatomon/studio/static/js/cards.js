@@ -1,4 +1,5 @@
-import { $, esc, fmtMs, shortFp, plural } from "./util.js";
+import { $, esc, fmtMs, rich, shortFp, plural } from "./util.js";
+import { reloadAtom } from "./api.js";
 import { nucleusFailed, results } from "./turns.js";
 
 const dlg = $("#dlg");
@@ -43,12 +44,33 @@ dlg.addEventListener("click", (e) => {
 
 export const kv = (rows) => `<dl class="kv">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`;
 
-export function showAtom(state) {
+const RELOAD = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>`;
+
+/** What a reload did, in the words of the server: what was dropped and why a conversation started again. */
+function reloaded(outcome, source) {
+  const dropped = outcome.dropped.length
+    ? `<p>No longer applied:</p><ul>${outcome.dropped.map((sentence) => `<li>${rich(sentence)}</li>`).join("")}</ul>`
+    : "";
+  const restarted = outcome.restarted ? `<p>${rich(outcome.restarted)}</p>` : "";
+  const more = dropped + restarted;
+  // With nothing to report the line is plain; otherwise it has the look of a note that warns.
+  return `<div class="note${more ? " warn" : ""}" id="atom-outcome" role="status">${more ? "<p>" : ""}Reloaded from <code>${esc(source)}</code>.${more ? "</p>" : ""}${more}</div>`;
+}
+
+/** The atom card. `outcome` is what a reload asked from this card did: it is shown above the atom. */
+export function showAtom(ctx, outcome = null) {
+  const state = ctx.state();
   const a = state.atom;
+  const can = state.studio.reload;
+  const result = !outcome
+    ? ""
+    : outcome.failed
+      ? `<div class="note err" id="atom-outcome" role="alert">Reload failed: ${rich(outcome.failed)}. The atom from before is still running; the terminal has the details.</div>`
+      : reloaded(outcome, a.source);
   openDialog({
     title: esc(a.name),
     sub: `<code>${esc(a.source)}</code>`,
-    body: kv([
+    body: result + kv([
       ["connector", `${a.connector} · ${a.model}`],
       ["instructions", a.instructions],
       ["knowledge", a.knowledge ?? "—"],
@@ -56,9 +78,26 @@ export function showAtom(state) {
       ["refusal", a.refusal],
       ["blocked_placeholder", a.blocked_placeholder],
       ["capture_content", `"${a.capture_content}" in your code · "full" in the studio`],
-    ]) + `<p class="hint">The atom comes from your code. Change it there and restart the studio.</p>`,
-    actions: `<span class="spacer"></span><button class="btn primary" type="button" data-dlg="close">Done</button>`,
+    ]) + `<p class="hint">The atom comes from your code. Change it there and ${can ? "press Reload: the studio keeps your orbital changes and the conversation." : "restart the studio."}</p>`,
+    actions: `${can ? `<button class="btn" type="button" data-dlg="reload"${ctx.busy() ? " disabled" : ""}>${RELOAD}<span>Reload from code</span></button>` : ""}<span class="spacer"></span><button class="btn primary" type="button" data-dlg="close">Done</button>`,
   });
+  const button = $('[data-dlg="reload"]', dlg);
+  // The card was drawn again with the result: the focus goes back to the button that was used.
+  if (outcome && button) button.focus();
+  $("#dlg-actions").onclick = async (e) => {
+    if (!button || !e.target.closest('[data-dlg="reload"]') || button.disabled) return;
+    button.disabled = true;
+    $("span", button).textContent = "Reloading…";
+    try {
+      const done = await reloadAtom();
+      ctx.refresh(done.state);
+      showAtom(ctx, { dropped: done.dropped, restarted: done.restarted });
+    } catch (error) {
+      // A turn started meanwhile: nothing failed, the card stays as it is.
+      if (error.type === "Busy") { ctx.toast(error.message); showAtom(ctx); return; }
+      showAtom(ctx, { failed: error.message });
+    }
+  };
 }
 
 export function showNotice(local) {

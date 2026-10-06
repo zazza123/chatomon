@@ -27,6 +27,7 @@ const send = async (method, path, body) => (await call(method, path, body)).json
 
 export const getState = () => send("GET", "/api/state");
 export const resetConversation = () => send("POST", "/api/conversation/reset", {});
+export const reloadAtom = () => send("POST", "/api/reload", {});
 export const patchOrbital = (side, name, change) => send("PATCH", "/api/orbitals", { side, name, ...change });
 export const addOrbital = (side, kind, settings) => send("POST", "/api/orbitals", { side, kind, settings });
 export const deleteOrbital = (side, name) => send("DELETE", "/api/orbitals", { side, name });

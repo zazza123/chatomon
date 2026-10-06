@@ -112,7 +112,7 @@ const move = (side, name, position) => change(() => patchOrbital(side, name, { p
 async function remove(side, name) { if (await change(() => deleteOrbital(side, name), "#undo")) offerUndo(); }
 async function resetAll() { if (await change(() => resetOrbitals(), "#undo")) offerUndo(); }
 
-const cards = { state: () => ui.state, apply, refused, refresh, toast, offerUndo, undo, remove, closed };
+const cards = { state: () => ui.state, busy: () => ui.busy, apply, refused, refresh, toast, offerUndo, undo, remove, closed };
 
 const openOrbital = (side, name) => showOrbital(side, name, cards);
 
@@ -120,7 +120,7 @@ const stage = createStage({
   svgs: [$("#atom"), $("#dock-atom")],
   setCaption,
   onOrbital: openOrbital,
-  onAtom: () => showAtom(ui.state),
+  onAtom: () => showAtom(cards),
   onFinished(turn) {
     ui.state.turns.push(turn);
     ui.pending = null;
@@ -132,7 +132,7 @@ const stage = createStage({
 const drawer = createDrawer({
   onToggle: toggle,
   onOrbital: openOrbital,
-  onAtom: () => showAtom(ui.state),
+  onAtom: () => showAtom(cards),
   onMove: move,
   onDelete: remove,
   onAdd: (side) => showPicker(side, cards),
