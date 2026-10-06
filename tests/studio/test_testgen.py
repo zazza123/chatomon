@@ -498,3 +498,22 @@ def test_an_orbital_that_failed_is_named(project, monkeypatch):
     ) in test.notes
     assert "    assert result.output == atom.refusal\n" in test.code
     run_saved(test, monkeypatch)
+
+
+def test_turns_tried_with_the_same_changes_share_one_warning(project):
+    session = project()
+    session.switch("input", "scope", False)
+    say(session, "hello", "hello again", "and again")
+    session.edit("input", "message_length", {"max_words": 9})
+    say(session, "once more")
+    rest = (
+        " The test builds the atom from your code, so it checks your code, not the studio: "
+        "copy the configuration into your code first."
+    )
+    assert save(session).warnings == [
+        "Turns 1, 2 and 3 ran with 1 studio change (scope turned off)." + rest,
+        "Turn 4 ran with 2 studio changes (message_length.max_words changed, scope turned off)."
+        + rest,
+        "The orbitals have changed since: Copy as code writes them as they are now.",
+    ]
+    assert save(session, upto=2).warnings[0].startswith("Turns 1 and 2 ran with 1 studio change")

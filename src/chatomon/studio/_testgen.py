@@ -51,7 +51,7 @@ _FAILED = (
 )
 _SKIPPED = "Turn {n} failed and left nothing in the conversation: the test leaves it out."
 _CHANGES = (
-    "Turn {n} ran with {count} ({changes}). The test builds the atom from your code, so it "
+    "{turns} ran with {count} ({changes}). The test builds the atom from your code, so it "
     "checks your code, not the studio: copy the configuration into your code first."
 )
 _CHANGED_SINCE = "The orbitals have changed since: Copy as code writes them as they are now."
@@ -387,16 +387,20 @@ def generate(
     if namespace is None:
         notes.append(NO_MODULE)
 
-    changed = [turn for turn in records if turn.changes]
+    # Turns that ran with the same changes share one sentence.
+    groups: dict[tuple[str, ...], list[str]] = {}
+    for turn in records:
+        if turn.changes:
+            groups.setdefault(tuple(turn.changes), []).append(str(turn.n))
     warnings = [
         _CHANGES.format(
-            n=turn.n,
-            count=f"{len(turn.changes)} studio change{'' if len(turn.changes) == 1 else 's'}",
-            changes=", ".join(turn.changes),
+            turns=f"Turn{'' if len(numbers) == 1 else 's'} {_listed(numbers)}",
+            count=f"{len(group)} studio change{'' if len(group) == 1 else 's'}",
+            changes=", ".join(group),
         )
-        for turn in changed
+        for group, numbers in groups.items()
     ]
-    if any(list(turn.changes) != list(changes) for turn in changed):
+    if any(list(group) != list(changes) for group in groups):
         warnings.append(_CHANGED_SINCE)
     return SavedTest(
         code="\n".join(lines) + "\n",
