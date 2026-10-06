@@ -469,3 +469,58 @@ def test_the_session_writes_its_code_and_names_objects_from_the_namespace():
     assert "MessageLengthOrbital(max_words=80)" in code["code"]
     assert "output_orbitals=[facts]," in code["code"]
     assert (code["placeholders"], code["notes"]) == ([], [])
+
+
+class RemoteOrbital(ScriptedOrbital):
+    """A scripted orbital that says it calls a model."""
+
+    calls_model = True
+
+
+async def test_a_turn_records_how_the_session_differed_from_the_code():
+    atom = make_atom(
+        input_orbitals=[MessageLengthOrbital(max_words=60), ScriptedOrbital(name="guard")]
+    )
+    session = Session(atom, source="app:atom")
+    await drain(session.start_turn("hello"))
+    session.edit("input", "message_length", {"max_words": 80})
+    session.switch("input", "guard", False)
+    events = await drain(session.start_turn("hello again"))
+    session.reset_orbitals()  # what the turn recorded does not follow the session
+    first, second = session.turns
+    assert first.changes == []
+    assert second.changes == ["message_length.max_words changed", "guard turned off"]
+    assert events[-1]["turn"]["changes"] == second.changes
+    assert [turn["changes"] for turn in session.state()["turns"]] == [[], second.changes]
+
+
+async def test_a_turn_records_which_of_its_orbitals_call_a_model():
+    atom = make_atom(
+        input_orbitals=[ScriptedOrbital(name="local"), RemoteOrbital(name="remote")],
+        output_orbitals=[RemoteOrbital(name="judge")],
+    )
+    session = Session(atom, source="app:atom")
+    await drain(session.start_turn("hello"))
+    session.switch("input", "remote", False)
+    await drain(session.start_turn("hello again"))
+    assert session.turns[0].models == frozenset({"remote", "judge"})
+    assert session.turns[1].models == frozenset({"judge"})
+
+
+async def test_a_turn_says_whether_it_can_be_saved_as_a_test():
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError("model down")
+
+    failing = Session(
+        make_atom(connector=PydanticAIConnector(FunctionModel(respond))), source="app:atom"
+    )
+    failed = (await drain(failing.start_turn("hello")))[-1]["turn"]
+    assert failed["cannot_save"] == "A turn that failed cannot be saved as a test."
+
+    answered = (await drain(Session(make_atom(), source="app:atom").start_turn("hello")))[-1]
+    assert answered["turn"]["cannot_save"] is None
+
+
+def test_the_session_knows_the_directory_it_was_started_from(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert Session(make_atom(), source="app:atom").root == tmp_path.resolve()

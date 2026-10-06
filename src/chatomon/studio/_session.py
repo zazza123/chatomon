@@ -6,7 +6,8 @@ import asyncio
 import json
 import os
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from opentelemetry.sdk.trace import TracerProvider
@@ -20,6 +21,7 @@ from chatomon.schemas import Side, TurnReport
 from chatomon.studio import _codegen as codegen
 from chatomon.studio import _kinds as kinds
 from chatomon.studio import _presets as presets
+from chatomon.studio import _testgen as testgen
 from chatomon.studio._chains import SIDES, Chains, Entry, RefusedError
 from chatomon.studio._events import Event, EventProcessor
 from chatomon.studio._runners import check_supported
@@ -52,6 +54,10 @@ class TurnRecord:
     n: int
     message: str
     chain: dict[str, list[str]]
+    changes: list[str] = field(default_factory=list)
+    """How the session differed from the code when the turn started."""
+    models: frozenset[str] = frozenset()
+    """The enabled orbitals that call a model, by name, when the turn started."""
     reply: str | None = None
     report: TurnReport | None = None
     error: dict[str, str] | None = None
@@ -64,6 +70,8 @@ class TurnRecord:
             "reply": self.reply,
             "report": self.report.model_dump(mode="json") if self.report is not None else None,
             "chain": self.chain,
+            "changes": self.changes,
+            "cannot_save": testgen.refusal(self),
             "error": self.error,
         }
 
@@ -84,6 +92,7 @@ class Session:
         self.atom = atom
         self.source = source
         self.namespace = namespace
+        self.root = Path.cwd().resolve()
         self._runner = runner
         self.processor = EventProcessor()
         self.provider = _always_recording_provider()
@@ -290,10 +299,15 @@ class Session:
         def emit(event: Event | None) -> None:
             loop.call_soon_threadsafe(queue.put_nowait, event)
 
+        enabled = {side: self.chains.enabled(side) for side in SIDES}
         record = TurnRecord(
             n=len(self.turns) + 1,
             message=message,
-            chain={side: [orb.name for orb in self.chains.enabled(side)] for side in SIDES},
+            chain={side: [orb.name for orb in enabled[side]] for side in SIDES},
+            changes=[change.text for change in self.chains.changes()],
+            models=frozenset(
+                orb.name for side in SIDES for orb in enabled[side] if orb.calls_model
+            ),
         )
         self._task = loop.create_task(self._run(record, emit))
         return queue
