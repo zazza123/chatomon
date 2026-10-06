@@ -319,3 +319,33 @@ def test_a_module_whose_file_is_not_a_full_path_is_never_taken_for_the_project(
     with reimporting(tmp_path):
         pass
     assert sys.modules["library._ops"] is built
+
+
+def test_a_folder_of_the_project_that_is_a_link_is_still_the_project(
+    sources, tmp_path, tmp_path_factory
+):
+    """Followed to where it points, the folder is outside; the project is where it was imported."""
+    real = tmp_path_factory.mktemp("elsewhere") / "linked"
+    real.mkdir()
+    (real / "__init__.py").write_text("", encoding="utf-8")
+    (real / "helpers.py").write_text('NAME = "one"\n', encoding="utf-8")
+    (tmp_path / "linked").symlink_to(real, target_is_directory=True)
+    sources("app.py", APP.replace("from helpers import", "from linked.helpers import"))
+    assert load("app:atom").name == "one"
+    try:
+        assert sorted(project_modules(tmp_path)) == ["app", "linked", "linked.helpers"]
+        (real / "helpers.py").write_text('NAME = "another"\n', encoding="utf-8")
+        assert again("app:atom", tmp_path).name == "another"
+    finally:
+        for name in ("linked", "linked.helpers"):
+            sys.modules.pop(name, None)
+
+
+def test_reimporting_says_which_modules_it_took_out(sources, tmp_path):
+    sources("app.py", APP)
+    sources("helpers.py", 'NAME = "one"\n')
+    load("app:atom")
+    with reimporting(tmp_path) as removed:
+        assert removed == {"app", "helpers"}
+        assert "app" not in sys.modules
+        load("app:atom")

@@ -25,10 +25,12 @@ def framework(
 
 def _forget_modules_under(directory: Path) -> None:
     """Take out of `sys.modules` what was imported from a directory."""
-    directory = directory.resolve()
+    directories = {Path(os.path.abspath(directory)), directory.resolve()}
     for name, module in list(sys.modules.items()):
         places = [getattr(module, "__file__", None), *getattr(module, "__path__", ())]
-        if any(place and directory in Path(place).resolve().parents for place in places):
+        # As it was imported and with its links followed: a folder of a project can be a link.
+        forms = [form for place in places if place for form in (Path(place), Path(place).resolve())]
+        if any(base in form.parents for form in forms for base in directories):
             del sys.modules[name]
 
 

@@ -2,6 +2,7 @@ import asyncio
 import json
 import math
 import sys
+import textwrap
 import threading
 from typing import Any
 
@@ -965,6 +966,34 @@ async def test_a_studio_started_from_python_cannot_reload():
         "the studio was started from Python and does not know where the atom lives: "
         "restart it to load your changes"
     )
+
+
+async def test_an_atom_whose_module_is_outside_the_directory_says_it_was_not_reloaded(
+    sources, tmp_path_factory
+):
+    """Started from one directory with the atom's module on the path from another."""
+    elsewhere = tmp_path_factory.mktemp("elsewhere")
+    module = textwrap.dedent(SHOP).replace(
+        "from settings import INSTRUCTIONS, WORDS", 'INSTRUCTIONS, WORDS = "Be brief.", 60'
+    )
+    (elsewhere / "outside_shop.py").write_text(module, encoding="utf-8")
+    sys.path.append(str(elsewhere))
+    try:
+        session = started("outside_shop:atom")
+        before = (session.state(), sys.modules["outside_shop"])
+        (elsewhere / "outside_shop.py").write_text(
+            module.replace("Be brief.", "Be very kind."), encoding="utf-8"
+        )
+        with pytest.raises(ChatomonConfigError) as error:
+            await session.reload()
+        assert str(error.value) == (
+            "'outside_shop' is outside the directory the studio was started from, so it is "
+            "not loaded again: restart the studio to load its changes"
+        )
+        assert (session.state(), sys.modules["outside_shop"]) == before
+        assert session.reloads == 0
+    finally:
+        sys.modules.pop("outside_shop", None)
 
 
 async def test_a_module_that_runs_a_loop_of_its_own_when_imported_can_be_reloaded(shop):

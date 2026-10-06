@@ -29,6 +29,15 @@ def _inside(path: Path, directory: Path) -> bool:
     return path == directory or directory in path.parents
 
 
+def _forms(path: str | os.PathLike[str]) -> set[Path]:
+    """Return a path as it is written and with its links followed.
+
+    A folder of the project can be a link to somewhere else, and so can the
+    project: what is under a directory is asked of both forms.
+    """
+    return {Path(os.path.abspath(path)), Path(path).resolve()}
+
+
 def project_modules(root: Path) -> dict[str, ModuleType]:
     """Return the imported modules that belong to the project in a directory.
 
@@ -43,11 +52,11 @@ def project_modules(root: Path) -> dict[str, ModuleType]:
     Returns:
         The modules by name.
     """
-    root = root.resolve()
-    prefixes = {Path(p).resolve() for p in (sys.prefix, sys.base_prefix, sys.exec_prefix)}
+    roots = _forms(root)
+    prefixes = {form for p in (sys.prefix, sys.base_prefix, sys.exec_prefix) for form in _forms(p)}
     # Only an environment inside the project hides files of it: with a system
     # interpreter in /usr, a project in /usr/src/app is still the project.
-    environments = [prefix for prefix in prefixes if root in prefix.parents]
+    environments = [p for p in prefixes if any(base in p.parents for base in roots)]
     found: dict[str, ModuleType] = {}
     for name, module in list(sys.modules.items()):
         if name == "__main__" or not isinstance(module, ModuleType):
@@ -59,12 +68,13 @@ def project_modules(root: Path) -> dict[str, ModuleType]:
             # A library can give a module it builds a bare file name: it is not on disk here.
             if not isinstance(place, str) or not os.path.isabs(place):
                 continue
-            path = Path(place).resolve()
+            forms = _forms(place)
+            inside = [f.relative_to(base) for f in forms for base in roots if base in f.parents]
             if (
-                root in path.parents
-                and not _INSTALLED.intersection(path.relative_to(root).parts)
-                and not any(_inside(path, environment) for environment in environments)
-                and not _inside(path, _OWN)
+                inside
+                and not any(_INSTALLED.intersection(relative.parts) for relative in inside)
+                and not any(_inside(f, environment) for f in forms for environment in environments)
+                and not any(_inside(f, _OWN) for f in forms)
             ):
                 found[name] = module
                 break
@@ -72,7 +82,7 @@ def project_modules(root: Path) -> dict[str, ModuleType]:
 
 
 @contextmanager
-def reimporting(root: Path) -> Iterator[None]:
+def reimporting(root: Path) -> Iterator[frozenset[str]]:
     """Make the project's modules be imported again inside the block, or not at all.
 
     On entry the modules of the project leave `sys.modules`, so an import inside
@@ -84,8 +94,8 @@ def reimporting(root: Path) -> Iterator[None]:
         root: The directory the studio was started from.
 
     Yields:
-        Nothing: the block imports what it needs, usually with
-        [load][chatomon.studio._loading.load].
+        The names of the modules that were taken out. A module that is not among
+        them is not imported again by the block: it is not part of the project.
     """
     removed = project_modules(root)
     for name in removed:
@@ -93,7 +103,7 @@ def reimporting(root: Path) -> Iterator[None]:
     # A file created since the last import is not in the finders' caches.
     importlib.invalidate_caches()
     try:
-        yield
+        yield frozenset(removed)
     except BaseException:
         for name in project_modules(root):
             del sys.modules[name]

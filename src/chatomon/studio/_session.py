@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -482,7 +483,14 @@ class Session:
             ChatomonConfigError: If the import, the factory or the framework's build
                 fails. In every case the modules are back as they were.
         """
-        with loading.reimporting(self.root):
+        module = self.source.partition(":")[0]
+        with loading.reimporting(self.root) as removed:
+            if module in sys.modules and module not in removed:
+                # It would be found as it is, and the page would say it was loaded again.
+                raise ChatomonConfigError(
+                    f"{module!r} is outside the directory the studio was started from, so it "
+                    "is not loaded again: restart the studio to load its changes"
+                )
             atom = loading.load(self.source)
             try:
                 return self._prepared(atom)
