@@ -211,6 +211,8 @@ async def test_pydantic_ai_empty_response_is_not_checked():
 class _LoopBoundOrbital(Orbital):
     """Binds to the first event loop it runs on, like a cached async HTTP client."""
 
+    calls_model = False
+
     def __init__(self) -> None:
         super().__init__(name="loop_bound")
         self.loop: asyncio.AbstractEventLoop | None = None

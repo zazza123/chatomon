@@ -333,3 +333,8 @@ def test_scope_guard_keeps_the_mapping_it_was_given():
     assert orbital.mapping is overrides
     assert orbital.rules is not overrides  # the rules are its own, with the defaults
     assert ScopeGuardOrbital(guard=guard, description=DESCRIPTION).mapping is None
+
+
+def test_the_principled_orbitals_call_a_model():
+    assert ScopeGuardOrbital.calls_model is True
+    assert ClaimExtractorOrbital.calls_model is True

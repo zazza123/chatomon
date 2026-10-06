@@ -19,6 +19,8 @@ def make_atom(**overrides) -> Atom[FakeAgent]:
 
 
 class BindRecorder(Orbital):
+    calls_model = False
+
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self.bound: list[Connector] = []
