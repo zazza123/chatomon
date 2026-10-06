@@ -1074,8 +1074,10 @@ RELOADABLE = """
         return ModelResponse(parts=[TextPart(content="We are open Monday to Friday.")])
 
 
-    if pathlib.Path("slow").exists():
-        time.sleep(2)
+    waited = 0.0
+    while pathlib.Path("slow").exists() and waited < 30:  # held until the test lets go
+        time.sleep(0.05)
+        waited += 0.05
     if pathlib.Path("stop").exists():
         raise RuntimeError("no more.")
     limit = MessageLengthOrbital(max_words=60)
@@ -1145,18 +1147,22 @@ def test_reload_from_code_keeps_the_changes_and_the_conversation(page: Page, rel
     expect(page.locator("article.turn")).to_have_count(1)
     send(page, "hello again", REPLY)
 
-    # While a turn runs the atom on stage still opens the card, but nothing can be reloaded.
-    message_box(page).fill("a slow question")
-    page.get_by_role("button", name="Send").click()
-    expect(page.locator(".typing")).to_be_visible()
-    # The atom moves while a turn runs: a real click would wait for it to stand still.
-    page.locator("#atom [data-atom]").dispatch_event("click")
+    # Once a turn plays, the drawer and the atom on stage open no card: a turn can start with
+    # the atom card open only by a hair. The test starts one from a script, as that hair would.
+    open_atom_card(page)
+    page.evaluate(
+        """() => {
+            document.querySelector("#msg").value = "a slow question";
+            document.querySelector("#composer").requestSubmit();
+        }"""
+    )
     expect(reload_button(page)).to_be_disabled()
     expect(reload_button(page)).to_have_attribute("title", "Wait for the turn to finish")
-    expect(page.get_by_role("button", name="Send")).to_be_disabled()
     # The card stays open: when the turn ends the button can be used, with no need to reopen it.
     expect(reload_button(page)).to_be_enabled(timeout=15_000)
     expect(reload_button(page)).to_have_attribute("title", "")
+    card(page).get_by_role("button", name="Done").click()
+    expect(page.locator("article.turn")).to_have_count(3)
 
 
 def test_a_reload_that_fails_shows_why_and_the_atom_keeps_running(page: Page, reloading):
@@ -1216,6 +1222,7 @@ def test_a_reload_that_ends_after_its_card_was_left_does_not_take_the_screen(
     # The first page moves on to another card before the reload ends.
     card(page).get_by_role("button", name="Done").click()
     open_card(page, "message_length")
+    (tmp_path / "slow").unlink()
     expect(page.locator("#toast")).to_contain_text("Reloaded from code", timeout=15_000)
     expect(page.locator("#toast")).to_contain_text("1 change no longer applied")
     expect(card(page).locator("#dlg-title")).to_contain_text("message_length")
