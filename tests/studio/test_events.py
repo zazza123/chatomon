@@ -3,13 +3,11 @@ from typing import Any
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from chatomon import Atom, Orbital, Verdict
-from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.studio._events import Event, EventProcessor, end_event, start_event
 from tests.fakes import ScriptedOrbital
+from tests.studio.frameworks import Reply, StudioHarness
 
 
 def test_unrelated_spans_make_no_event():
@@ -61,18 +59,6 @@ def test_a_detached_processor_forwards_nothing():
     assert events == []
 
 
-def scripted(*replies: str | Exception) -> FunctionModel:
-    steps = list(replies)
-
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        step = steps.pop(0) if len(steps) > 1 else steps[0]
-        if isinstance(step, Exception):
-            raise step
-        return ModelResponse(parts=[TextPart(content=step)])
-
-    return FunctionModel(respond)
-
-
 def compact(event: Event) -> tuple[Any, ...]:
     kind = event["type"]
     if kind == "orbital_started":
@@ -99,7 +85,7 @@ def none() -> Sequence[Orbital]:
     return []
 
 
-# Scenario table: #58 runs the same table against the LangChain and MAF runners.
+# Every runner gives these events: the test below runs the table once for each framework.
 SCENARIOS: list[
     tuple[str, Factory, Factory, tuple[str | Exception, ...], list[tuple[Any, ...]]]
 ] = [
@@ -184,7 +170,10 @@ SCENARIOS: list[
 ]
 
 
-async def run(inputs: Factory, outputs: Factory, replies: Sequence[str | Exception]) -> list[Event]:
+async def run(
+    framework: StudioHarness, inputs: Factory, outputs: Factory, replies: Sequence[Reply]
+) -> list[Event]:
+    """Run one turn through the framework's runner and return the events of its spans."""
     events: list[Event] = []
     processor = EventProcessor()
     processor.attach(events.append)
@@ -193,13 +182,13 @@ async def run(inputs: Factory, outputs: Factory, replies: Sequence[str | Excepti
     agent = Atom(
         name="t",
         instructions="Be brief.",
-        connector=PydanticAIConnector(scripted(*replies)),
+        connector=framework.connector(*replies),
         input_orbitals=inputs(),
         output_orbitals=outputs(),
         tracer_provider=provider,
     ).build()
     try:
-        await agent.run("hello")
+        await framework.runner.run_turn(agent, "hello", None)
     finally:
         processor.detach()
     return events
@@ -210,11 +199,12 @@ async def run(inputs: Factory, outputs: Factory, replies: Sequence[str | Excepti
     [scenario[1:] for scenario in SCENARIOS],
     ids=[scenario[0] for scenario in SCENARIOS],
 )
-async def test_event_sequence(inputs, outputs, replies, expected):
-    assert [compact(event) for event in await run(inputs, outputs, replies)] == expected
+async def test_event_sequence(framework: StudioHarness, inputs, outputs, replies, expected):
+    events = await run(framework, inputs, outputs, replies)
+    assert [compact(event) for event in events] == expected
 
 
-async def test_an_aborted_turn_stops_after_the_input_chain():
+async def test_an_aborted_turn_stops_after_the_input_chain(framework: StudioHarness):
     events: list[Event] = []
     processor = EventProcessor()
     processor.attach(events.append)
@@ -223,12 +213,12 @@ async def test_an_aborted_turn_stops_after_the_input_chain():
     agent = Atom(
         name="t",
         instructions="Be brief.",
-        connector=PydanticAIConnector(scripted(RuntimeError("model down"))),
+        connector=framework.connector(RuntimeError("model down")),
         input_orbitals=[ScriptedOrbital(name="guard")],
         tracer_provider=provider,
     ).build()
     with pytest.raises(RuntimeError, match="model down"):
-        await agent.run("hello")
+        await framework.runner.run_turn(agent, "hello", None)
     assert [compact(event) for event in events] == [
         ("orbital_started", "input", "guard"),
         ("orbital_finished", "guard", "allow"),

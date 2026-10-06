@@ -13,7 +13,7 @@ import pytest
 from chatomon.studio import _testgen as testgen
 from chatomon.studio._chains import RefusedError
 from chatomon.studio._loading import load, namespace
-from chatomon.studio._runners.pydantic_ai import saved_test
+from chatomon.studio._runners import runner_for
 from chatomon.studio._session import Session
 
 MODULE = """
@@ -143,7 +143,7 @@ def save(session: Session, *, alone: bool = False, upto: int | None = None) -> t
         source=session.source,
         namespace=session.namespace,
         signature=session.signature(),
-        framework=saved_test(),
+        framework=runner_for(session.atom.connector).saved_test(session.atom.connector),
     )
 
 
@@ -372,7 +372,7 @@ def test_a_function_called_atom_is_imported_under_another_name(project):
         source="shop:atom",
         namespace={"atom": lambda: session.atom},
         signature=session.signature(),
-        framework=saved_test(),
+        framework=runner_for(session.atom.connector).saved_test(session.atom.connector),
     )
     assert "from shop import atom as atom_source\n" in test.code
     assert "    atom = atom_source()\n" in test.code
@@ -387,7 +387,7 @@ def test_started_from_python_the_import_is_left_to_complete(project):
         source="serve()",
         namespace=None,
         signature=session.signature(),
-        framework=saved_test(),
+        framework=runner_for(session.atom.connector).saved_test(session.atom.connector),
     )
     written = test.code.split("\n")
     assert written[0] == '"""Saved from chatomon studio: serve(), turn 1."""'

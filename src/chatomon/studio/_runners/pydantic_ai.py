@@ -2,44 +2,34 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai.messages import ModelMessage
-
 from chatomon.connectors.base import Connector
+from chatomon.studio._runners import RunOutcome
 from chatomon.studio._testgen import Framework
 
 
-@dataclass(frozen=True)
-class RunOutcome:
-    """The reply of a turn and the conversation history after it."""
-
-    reply: str
-    history: list[ModelMessage]
-
-
-async def run_turn(agent: Any, message: str, history: Sequence[ModelMessage]) -> RunOutcome:
+async def run_turn(agent: Any, message: str, conversation: Any) -> RunOutcome:
     """Run one turn without streaming, as the connector requires with output orbitals.
 
     Args:
         agent: The native `pydantic_ai.Agent` built from the studio's copy of the atom.
         message: The user message.
-        history: The conversation so far, as PydanticAI messages.
+        conversation: The PydanticAI messages so far, or `None` in the first turn.
 
     Returns:
-        The reply and the full history, blocked messages already redacted.
+        The reply and every message of the conversation, blocked ones already redacted.
     """
-    result = await agent.run(message, message_history=list(history))
-    return RunOutcome(reply=result.output, history=result.all_messages())
+    result = await agent.run(message, message_history=list(conversation or ()))
+    return RunOutcome(reply=result.output, conversation=result.all_messages())
 
 
-def describe(connector: Connector[Any]) -> dict[str, str]:
+def describe(connector: Connector[Any], agent: Any) -> dict[str, str]:
     """Name the connector and its model for the atom card.
 
     Args:
         connector: A `PydanticAIConnector`.
+        agent: The native agent; not read.
 
     Returns:
         `{"connector": ..., "model": ...}`.
@@ -71,8 +61,11 @@ def notes(connector: Connector[Any]) -> list[str]:
     return []
 
 
-def saved_test() -> Framework:
+def saved_test(connector: Connector[Any]) -> Framework:
     """Return what a saved test needs from PydanticAI.
+
+    Args:
+        connector: A `PydanticAIConnector`; not read.
 
     Returns:
         The test model and the line that puts it in place of the nucleus, the call
