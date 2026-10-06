@@ -6,6 +6,7 @@ import inspect
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -278,6 +279,8 @@ def save(session: Session, *, alone: bool = False, upto: int | None = None) -> t
         source=session.source,
         namespace=session.namespace,
         signature=session.signature(),
+        code_signature=session.signature(code=True),
+        reloads=session.reloads,
         framework=runner_for(session.atom.connector).saved_test(session.atom.connector),
     )
 
@@ -483,6 +486,8 @@ def test_a_function_called_atom_is_imported_under_another_name(project):
         source="shop:atom",
         namespace={"atom": lambda: session.atom},
         signature=session.signature(),
+        code_signature=session.signature(code=True),
+        reloads=session.reloads,
         framework=runner_for(session.atom.connector).saved_test(session.atom.connector),
     )
     assert "from shop import atom as atom_source\n" in test.code
@@ -498,6 +503,8 @@ def test_started_from_python_the_import_is_left_to_complete(project):
         source="serve()",
         namespace=None,
         signature=session.signature(),
+        code_signature=session.signature(code=True),
+        reloads=session.reloads,
         framework=runner_for(session.atom.connector).saved_test(session.atom.connector),
     )
     written = test.code.split("\n")
@@ -621,6 +628,105 @@ def test_turns_tried_with_the_same_changes_share_one_warning(project):
         "The orbitals have changed since: Copy as code writes them as they are now.",
     ]
     assert save(session, upto=2).warnings[0].startswith("Turns 1 and 2 ran with 1 studio change")
+
+
+def test_turns_that_ran_before_the_code_was_reloaded_are_said(project):
+    session = project()
+    say(session, "hello")
+    assert save(session).warnings == []
+    asyncio.run(session.reload())
+    assert save(session).warnings == [
+        "Turn 1 ran before the code was reloaded: if the code changed what it checks, "
+        "this test fails."
+    ]
+    say(session, "hello again")
+    assert len(save(session).warnings) == 1  # the conversation holds turn 1
+    assert save(session, alone=True).warnings == []  # turn 2 alone ran on this code
+    say(session, "and again")
+    asyncio.run(session.reload())
+    say(session, "once more")
+    assert save(session).warnings == [
+        "Turns 1, 2 and 3 ran before the code was reloaded: if the code changed what they "
+        "check, this test fails."
+    ]
+
+
+LISTENER = """
+
+HEARD: list[int] = []
+
+
+@orbital
+def listener(ctx: OrbitalContext) -> Verdict:
+    HEARD.append(len(ctx.history))
+    return Verdict.allow()
+"""
+
+
+def test_a_module_of_every_framework_is_reloaded_and_its_conversation_goes_on(
+    framework: StudioHarness, project, tmp_path
+):
+    """The whole path on a real module: import it again, build for its framework, go on talking."""
+    module = module_of(framework.name, before_atom=LISTENER).replace(
+        "no_refunds, scope]", "no_refunds, scope, listener]"
+    )
+    session = project(module=module)
+    say(session, "hello")
+    assert sys.modules["shop"].HEARD == [0]
+    path = tmp_path / "shop.py"
+    path.write_text(module.replace('"Be brief."', '"Be kind."'), encoding="utf-8")
+    later = time.time() + 5  # a file written again in the same second would be read from bytecode
+    os.utime(path, (later, later))
+    result = asyncio.run(session.reload())
+    assert (result.dropped, result.restarted) == ([], None)
+    assert session.state()["atom"]["instructions"] == "Be kind."
+    say(session, "hello again")
+    assert [turn.error for turn in session.turns] == [None, None]
+    # The reloaded module's own orbital was given the conversation from before the reload.
+    assert sys.modules["shop"].HEARD == [2]
+
+
+NINE_WORDS = "one two three four five six seven eight nine"
+RELOADED = (
+    "Turn 1 ran before the code was reloaded: if the code changed what it checks, this test fails."
+)
+THEN = (
+    "That is how the turn ran before the code was reloaded: the orbitals your code has now "
+    "run, and they may call a model."
+)
+
+
+def test_changes_the_code_now_has_are_no_longer_warned_about(project, tmp_path):
+    """Tune in the studio, try a turn, paste the orbitals into the code, reload."""
+    session = project()
+    session.edit("input", "message_length", {"max_words": 3})
+    say(session, "one two three four")
+    before = save(session)
+    assert len(before.warnings) == 1 and "copy the configuration" in before.warnings[0]
+    assert any("Until its changes are in your code" in note for note in before.notes)
+    path = tmp_path / "shop.py"
+    path.write_text(MODULE.replace("max_words=8", "max_words=3"), encoding="utf-8")
+    later = time.time() + 5
+    os.utime(path, (later, later))
+    asyncio.run(session.reload())
+    assert session.state()["changes"] == []
+    after = save(session)
+    assert after.warnings == [RELOADED]
+    assert not any("Until its changes are in your code" in note for note in after.notes)
+
+
+def test_an_offline_test_of_a_turn_from_before_a_reload_says_what_it_cannot_know(project):
+    """The code may have gained an orbital that calls a model in front of the one that stopped."""
+    session = project()
+    say(session, NINE_WORDS)
+    first = save(session)
+    assert first.integration is False and THEN not in first.notes
+    asyncio.run(session.reload())
+    reloaded = save(session)
+    assert reloaded.integration is False
+    assert THEN in reloaded.notes
+    say(session, NINE_WORDS)
+    assert THEN not in save(session, alone=True).notes  # turn 2 ran on the code of now
 
 
 def test_a_setting_changed_again_since_the_turn_is_said(project):
@@ -1083,6 +1189,8 @@ def test_started_from_python_a_microsoft_agent_framework_test_still_compiles(pro
         source="serve()",
         namespace=None,
         signature=session.signature(),
+        code_signature=session.signature(code=True),
+        reloads=session.reloads,
         framework=runner_for(session.atom.connector).saved_test(session.atom.connector),
     )
     compile(test.code, "saved.py", "exec")

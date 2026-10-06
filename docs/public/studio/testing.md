@@ -104,6 +104,12 @@ The studio knows whether an orbital calls a model from the orbital itself: see [
 
 A saved test builds the atom from your code. When a turn ran with changes you made in the studio, the test describes a turn your code cannot produce yet, and it fails until those changes are in the code. The card warns about it, lists the changes each turn ran with, and opens [Copy as code](export.md#copy-as-code) so you can paste the orbitals first. Saved before the code changes and passing after, the test shows that the change did what you tried. The same holds for a test that runs offline: it is offline for the turn as it ran in the studio, and until the changes are in your code, the orbitals of your code run, which may call a model.
 
+## Turns from Before a Reload
+
+A saved test runs your code as it is now. A turn that ran before the last [reload](reload.md) ran on the code of that moment, and the test checks what happened then. When a test holds such turns the card says which: if the code changed what they check, the test fails. Run the turn again with **Re-run** to see it on the code you have now.
+
+Two more things follow from the code having changed. A test that is offline was read from what ran then: if your code now has an orbital that calls a model in front of the one that stopped the turn, the test calls it, and the card says that it may. And a turn you tried with studio changes is no longer asked to be copied into the code once your code has exactly those orbitals.
+
 ## Where the File Goes
 
 The card proposes `tests/studio/test_<words of the message>.py`, one file per test. The path can be changed, within these limits:

@@ -73,6 +73,13 @@ _CHANGES = (
     "checks your code, not the studio: copy the configuration into your code first."
 )
 _CHANGED_SINCE = "The orbitals have changed since: Copy as code writes them as they are now."
+_THEN = (
+    "That is how the turn ran before the code was reloaded: the orbitals your code has now "
+    "run, and they may call a model."
+)
+_RELOADED = (
+    "{turns} ran before the code was reloaded: if the code changed what {they}, this test fails."
+)
 _NO_IMPORT = (
     "# The studio was started from Python, so it does not know where your atom lives.",
     "# Import it here, for example: from your_package.app import atom",
@@ -460,6 +467,8 @@ def generate(
     source: str,
     namespace: Mapping[str, object] | None,
     signature: object,
+    code_signature: object,
+    reloads: int,
     framework: Framework,
 ) -> SavedTest:
     """Write a turn, with the turns before it unless `alone`, as a pytest file.
@@ -471,6 +480,11 @@ def generate(
         namespace: The variables of the atom's module, or `None` without a module.
         signature: What identifies the session's orbitals now, to compare with
             what each turn recorded.
+        code_signature: What identifies the orbitals the code has now, with none
+            of the studio's changes: a turn that ran with exactly these needs no
+            copy into the code.
+        reloads: How many times the code was loaded again so far, to compare
+            with what each turn recorded.
         framework: The lines that depend on the agent framework.
 
     Returns:
@@ -533,11 +547,16 @@ def generate(
         )
     lines += [f"    {line}" if line else "" for line in body]
 
+    # A turn whose orbitals are the code's of now ran with changes the code has since taken.
+    changed = [turn for turn in records if turn.changes and turn.signature != code_signature]
+    earlier = [str(turn.n) for turn in records if turn.reloads != reloads]
     notes: list[str] = []
     if offline:
         notes.append(_OFFLINE.format(model=stand_in.label))
-        if any(turn.changes for turn in records):
+        if changed:
             notes.append(_IN_THE_STUDIO)
+        if earlier:
+            notes.append(_THEN)
         notes += stand_in.notes
     else:
         who = _listed([c if c == "the nucleus" else f"`{c}`" for c in callers])
@@ -567,9 +586,8 @@ def generate(
 
     # Turns that ran with the same changes share one sentence.
     groups: dict[tuple[str, ...], list[str]] = {}
-    for turn in records:
-        if turn.changes:
-            groups.setdefault(tuple(turn.changes), []).append(str(turn.n))
+    for turn in changed:
+        groups.setdefault(tuple(turn.changes), []).append(str(turn.n))
     warnings = [
         _CHANGES.format(
             turns=f"Turn{'' if len(numbers) == 1 else 's'} {_listed(numbers)}",
@@ -579,8 +597,17 @@ def generate(
         for group, numbers in groups.items()
     ]
     # Compared by signature: the same sentence can stand for two values of one setting.
-    if any(turn.changes and turn.signature != signature for turn in records):
+    if any(turn.signature != signature for turn in changed):
         warnings.append(_CHANGED_SINCE)
+    # The test runs the code as it is now: what an earlier load of it did may not repeat.
+    if earlier:
+        one = len(earlier) == 1
+        warnings.append(
+            _RELOADED.format(
+                turns=f"Turn{'' if one else 's'} {_listed(earlier)}",
+                they="it checks" if one else "they check",
+            )
+        )
     return SavedTest(
         code="\n".join(lines) + "\n",
         name=name,

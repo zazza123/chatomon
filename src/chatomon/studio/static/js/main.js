@@ -3,7 +3,7 @@ import { deleteOrbital, getState, patchOrbital, resetConversation, resetOrbitals
 import { createStage } from "./stage.js";
 import { renderTurns } from "./turns.js";
 import { createDrawer } from "./drawer.js";
-import { showAtom, showNotice, showReport } from "./cards.js";
+import { showAtom, showNotice, showReport, syncReload } from "./cards.js";
 import { redrawOrbital, showOrbital, showPicker } from "./orbital-card.js";
 import { showCode, showExport, showImport, showTest } from "./export-cards.js";
 
@@ -112,7 +112,7 @@ const move = (side, name, position) => change(() => patchOrbital(side, name, { p
 async function remove(side, name) { if (await change(() => deleteOrbital(side, name), "#undo")) offerUndo(); }
 async function resetAll() { if (await change(() => resetOrbitals(), "#undo")) offerUndo(); }
 
-const cards = { state: () => ui.state, apply, refused, refresh, toast, offerUndo, undo, remove, closed };
+const cards = { state: () => ui.state, busy: () => ui.busy, lost: lostStudio, apply, refused, refresh, toast, offerUndo, undo, remove, closed };
 
 const openOrbital = (side, name) => showOrbital(side, name, cards);
 
@@ -120,7 +120,7 @@ const stage = createStage({
   svgs: [$("#atom"), $("#dock-atom")],
   setCaption,
   onOrbital: openOrbital,
-  onAtom: () => showAtom(ui.state),
+  onAtom: () => showAtom(cards),
   onFinished(turn) {
     ui.state.turns.push(turn);
     ui.pending = null;
@@ -132,7 +132,7 @@ const stage = createStage({
 const drawer = createDrawer({
   onToggle: toggle,
   onOrbital: openOrbital,
-  onAtom: () => showAtom(ui.state),
+  onAtom: () => showAtom(cards),
   onMove: move,
   onDelete: remove,
   onAdd: (side) => showPicker(side, cards),
@@ -158,6 +158,7 @@ function setBusy(value) {
   $("#send").disabled = value;
   $("#new-conv").disabled = value;
   drawer.sync();
+  syncReload(value);
 }
 
 const LOCAL_NOTE = 'The studio runs your atom with capture_content="full": it shows message text, guidance and judge explanations.';

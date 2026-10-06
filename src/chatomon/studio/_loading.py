@@ -1,4 +1,9 @@
-"""Find the atom the studio opens: `module:attribute`, an instance or a factory."""
+"""Find the atom the studio opens: `module:attribute`, an instance or a factory.
+
+The studio can also load it again while it runs:
+[reimporting][chatomon.studio._loading.reimporting] makes the modules of the
+developer's project be imported anew.
+"""
 
 from __future__ import annotations
 
@@ -6,10 +11,126 @@ import importlib
 import inspect
 import os
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 from chatomon.atom import Atom
 from chatomon.errors import ChatomonConfigError
+
+_INSTALLED = {"site-packages", "dist-packages"}
+_OWN = Path(__file__).resolve().parents[1]
+"""chatomon's own package: importing it again would break the studio that is running."""
+
+
+def _inside(path: Path, directory: Path) -> bool:
+    return path == directory or directory in path.parents
+
+
+def _forms(path: str | os.PathLike[str]) -> set[Path]:
+    """Return a path as it is written and with its links followed.
+
+    A folder of the project can be a link to somewhere else, and so can the
+    project: what is under a directory is asked of both forms.
+    """
+    return {Path(os.path.abspath(path)), Path(path).resolve()}
+
+
+def project_modules(root: Path) -> dict[str, ModuleType]:
+    """Return the imported modules that belong to the project in a directory.
+
+    They are read from `sys.modules` every time: nothing is listed or remembered.
+    A module belongs to the project when its file is under `root`. Left out: what
+    is installed (an environment inside the directory, a `site-packages` folder),
+    chatomon's own modules, `__main__`, and a package that also holds modules
+    from outside the project.
+
+    Args:
+        root: The directory the studio was started from.
+
+    Returns:
+        The modules by name.
+    """
+    roots = _forms(root)
+    prefixes = {form for p in (sys.prefix, sys.base_prefix, sys.exec_prefix) for form in _forms(p)}
+    # Only an environment inside the project hides files of it: with a system
+    # interpreter in /usr, a project in /usr/src/app is still the project.
+    environments = [p for p in prefixes if any(base in p.parents for base in roots)]
+    found: dict[str, ModuleType] = {}
+    for name, module in list(sys.modules.items()):
+        if name == "__main__" or not isinstance(module, ModuleType):
+            continue
+        # A package without an `__init__.py` has no file: it is where its folders are.
+        file = getattr(module, "__file__", None)
+        places = [file] if file else list(getattr(module, "__path__", ()))
+        for place in places:
+            # A library can give a module it builds a bare file name: it is not on disk here.
+            if not isinstance(place, str) or not os.path.isabs(place):
+                continue
+            forms = _forms(place)
+            inside = [f.relative_to(base) for f in forms for base in roots if base in f.parents]
+            if (
+                inside
+                and not any(_INSTALLED.intersection(relative.parts) for relative in inside)
+                and not any(_inside(f, environment) for f in forms for environment in environments)
+                and not any(_inside(f, _OWN) for f in forms)
+            ):
+                found[name] = module
+                break
+    # A package that also holds modules from outside the project stays: imported again, it
+    # would not have them as attributes, and `import package.module` would not set them.
+    staying = (name for name in sys.modules if name not in found)
+    parents = {name[:dot] for name in staying for dot, char in enumerate(name) if char == "."}
+    return {name: module for name, module in found.items() if name not in parents}
+
+
+def _bound(name: str, module: ModuleType) -> bool:
+    """Tell whether a module is the attribute its package has under its name.
+
+    Returns:
+        False for a module of the top level, or one its package does not hold.
+    """
+    package, _, attribute = name.rpartition(".")
+    return bool(package) and getattr(sys.modules.get(package), attribute, None) is module
+
+
+@contextmanager
+def reimporting(root: Path) -> Iterator[frozenset[str]]:
+    """Make the project's modules be imported again inside the block, or not at all.
+
+    On entry the modules of the project leave `sys.modules`, so an import inside
+    the block runs their code again and sees what changed in any of them. If the
+    block raises, what it imported is removed and the modules that were there come
+    back, the same objects: the code that was running is still what is imported.
+
+    Args:
+        root: The directory the studio was started from.
+
+    Yields:
+        The names of the modules that were taken out. A module that is not among
+        them is not imported again by the block: it is not part of the project.
+    """
+    removed = project_modules(root)
+    for name in removed:
+        del sys.modules[name]
+    # A file created since the last import is not in the finders' caches.
+    importlib.invalidate_caches()
+    try:
+        yield frozenset(removed)
+    except BaseException:
+        for name, module in project_modules(root).items():
+            del sys.modules[name]
+            # A package that stayed must not keep a module of the attempt as an attribute.
+            if _bound(name, module):
+                delattr(sys.modules[name.rpartition(".")[0]], name.rpartition(".")[2])
+        sys.modules.update(removed)
+        for name, module in removed.items():
+            package, _, attribute = name.rpartition(".")
+            if package in sys.modules:
+                setattr(sys.modules[package], attribute, module)
+        raise
 
 
 def load(spec: str) -> Atom[Any]:

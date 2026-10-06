@@ -49,6 +49,8 @@ Two situations produce more of them:
 
 An atom built with the copied lists has orbitals with the same fingerprints as the session, in the same order. The fingerprint is what turn reports record, so reports from your application match the turns you tried.
 
+After pasting the lists, [reload the code](reload.md): what your code now has is no longer a change of the session, and the foot of the drawer says the session is the same as your code.
+
 ## Presets
 
 A preset is a JSON file with the session's changes: which orbitals are on, their order, the settings you changed on the orbitals from your code, and the orbitals you added. It holds no clients, no connectors and no credentials. It does hold the text you typed, such as a judge's instructions.
@@ -142,6 +144,7 @@ The file is read once, when the studio starts. To apply a file you changed later
 ## Related Documentation
 
 - [Tuning Orbitals](tuning.md) — the changes these two features carry
+- [Reloading the Code](reload.md) — loading your code again once the copied orbitals are in it
 - [Saving a Turn as a Test](testing.md) — a test for a turn you tried, which passes once the copied orbitals are in your code
 - [Studio](index.md) — starting the studio with the command or with `serve()`
 - [Observability and Audit](../observability.md) — fingerprints in turn reports

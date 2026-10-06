@@ -12,7 +12,7 @@ import textwrap
 import threading
 import time
 import urllib.request
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from http.cookiejar import CookieJar
 from typing import Any, Literal
@@ -28,6 +28,7 @@ from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.orbitals import MessageLengthOrbital
 from chatomon.studio import _kinds as kinds
 from chatomon.studio._app import create_app
+from chatomon.studio._loading import load, namespace
 from chatomon.studio._session import Session
 from tests.fakes import ScriptedOrbital
 from tests.studio import frameworks
@@ -69,9 +70,11 @@ class Studio:
 
 
 @contextlib.contextmanager
-def running(atom: Atom, *, namespace: dict[str, object] | None = None) -> Iterator[Studio]:
+def running(
+    atom: Atom, *, source: str = "tests:atom", namespace: dict[str, object] | None = None
+) -> Iterator[Studio]:
     port = free_port()
-    session = Session(atom, source="tests:atom", namespace=namespace)
+    session = Session(atom, source=source, namespace=namespace)
     app = create_app(session, token=TOKEN, host="127.0.0.1", port=port)
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, access_log=False)
     server = uvicorn.Server(config)
@@ -1049,3 +1052,206 @@ def test_an_atom_of_another_framework_runs_a_turn_and_saves_it(page: Page, monke
         expect(code).to_contain_text(call)
         expect(code).to_contain_text("# Turn 2: answered")
         expect(card(page)).to_contain_text("is marked integration")
+
+
+RELOADABLE = """
+    import asyncio
+    import pathlib
+    import time
+
+    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    from chatomon import Atom
+    from chatomon.connectors.pydantic_ai import PydanticAIConnector
+    from chatomon.orbitals import MessageLengthOrbital
+
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        asked = [part.content for part in messages[-1].parts if isinstance(part, UserPromptPart)]
+        if any("slow" in str(text) for text in asked):
+            await asyncio.sleep(3)
+        return ModelResponse(parts=[TextPart(content="We are open Monday to Friday.")])
+
+
+    waited = 0.0
+    while pathlib.Path("slow").exists() and waited < 30:  # held until the test lets go
+        time.sleep(0.05)
+        waited += 0.05
+    if pathlib.Path("stop").exists():
+        raise RuntimeError("no more.")
+    limit = MessageLengthOrbital(max_words=60)
+    extra = MessageLengthOrbital(name="extra", max_words=500)
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(FunctionModel(respond)),
+        input_orbitals=[limit, extra],
+    )
+"""
+
+
+@pytest.fixture
+def reloading(sources) -> Iterator[tuple[Studio, Callable[[str, str], None]]]:
+    """A studio started as the command starts it, on a module the test writes again."""
+    sources("shop.py", RELOADABLE)
+    spec = "shop:atom"
+    with running(load(spec), source=spec, namespace=namespace(spec)) as handle:
+        yield handle, sources
+
+
+def open_atom_card(page: Page) -> None:
+    page.locator("#drawer .atom-card").click()
+    expect(card(page).locator("#dlg-title")).to_have_text("speedypack")
+
+
+def reload_button(page: Page):
+    """The button of the atom card, whatever it reads: its text changes while the code loads."""
+    return card(page).locator('button[data-dlg="reload"]')
+
+
+def outcome(page: Page):
+    """What the atom card says a reload did."""
+    return card(page).locator("#atom-outcome")
+
+
+def test_reload_from_code_keeps_the_changes_and_the_conversation(page: Page, reloading):
+    studio, sources = reloading
+    open_studio(page, studio)
+    row(page, "message_length").get_by_role("switch").click()
+    row(page, "extra").get_by_role("switch").click()
+    expect(page.locator("#changes-text")).to_have_text("2 changes vs code")
+    send(page, "hello", REPLY)
+
+    sources("shop.py", RELOADABLE.replace("Be brief.", "Be kind.").replace(", extra]", "]"))
+    open_atom_card(page)
+    expect(card(page)).to_contain_text("press Reload")
+    expect(reload_button(page)).to_have_text("Reload from code")
+    reload_button(page).click()
+    expect(outcome(page)).to_contain_text("Reloaded from shop:atom.")
+    expect(outcome(page)).to_have_attribute("role", "status")
+    expect(card(page)).to_contain_text("Be kind.")
+    expect(outcome(page)).to_contain_text("No longer applied:")
+    expect(outcome(page)).to_contain_text(
+        "'extra' is no longer in your code: what the studio changed on it was dropped."
+    )
+    # The card was drawn again: the keyboard is still on the button that was used.
+    expect(reload_button(page)).to_be_focused()
+    page.keyboard.press("Enter")
+    expect(outcome(page)).to_have_text("Reloaded from shop:atom.")
+    card(page).get_by_role("button", name="Done").click()
+
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    expect(row(page, "extra")).to_have_count(0)
+    expect(row(page, "message_length").get_by_role("switch")).not_to_be_checked()
+    expect(page.locator("article.turn")).to_have_count(1)
+    send(page, "hello again", REPLY)
+
+    # Once a turn plays, the drawer and the atom on stage open no card: a turn can start with
+    # the atom card open only by a hair. The test starts one from a script, as that hair would.
+    open_atom_card(page)
+    page.evaluate(
+        """() => {
+            document.querySelector("#msg").value = "a slow question";
+            document.querySelector("#composer").requestSubmit();
+        }"""
+    )
+    expect(reload_button(page)).to_be_disabled()
+    expect(reload_button(page)).to_have_attribute("title", "Wait for the turn to finish")
+    # The card stays open: when the turn ends the button can be used, with no need to reopen it.
+    expect(reload_button(page)).to_be_enabled(timeout=15_000)
+    expect(reload_button(page)).to_have_attribute("title", "")
+    card(page).get_by_role("button", name="Done").click()
+    expect(page.locator("article.turn")).to_have_count(3)
+
+
+def test_a_reload_that_fails_shows_why_and_the_atom_keeps_running(page: Page, reloading):
+    studio, sources = reloading
+    open_studio(page, studio)
+    sources("shop.py", RELOADABLE.replace("limit = MessageLengthOrbital(max_words=60)", "limit ="))
+    open_atom_card(page)
+    reload_button(page).click()
+    alert = outcome(page)
+    expect(alert).to_have_attribute("role", "alert")
+    expect(alert).to_contain_text("Reload failed: could not import 'shop': invalid syntax")
+    expect(alert).to_contain_text("The atom from before is still running")
+    expect(alert).not_to_contain_text("Traceback")
+    expect(card(page)).to_contain_text("Be brief.")
+    expect(reload_button(page)).to_be_focused()
+
+    sources("shop.py", RELOADABLE.replace("Be brief.", "Be kind."))
+    reload_button(page).click()
+    expect(outcome(page)).to_have_text("Reloaded from shop:atom.")
+    expect(outcome(page)).to_have_attribute("role", "status")
+    expect(card(page)).to_contain_text("Be kind.")
+    card(page).get_by_role("button", name="Done").click()
+    send(page, "hello", REPLY)
+
+
+def test_started_from_python_the_atom_card_has_no_reload(page: Page, studio: Studio):
+    open_studio(page, studio)
+    open_atom_card(page)
+    expect(reload_button(page)).to_have_count(0)
+    expect(card(page)).to_contain_text("Change it there and restart the studio.")
+
+
+def test_a_reload_that_ends_after_its_card_was_left_does_not_take_the_screen(
+    page: Page, reloading, tmp_path
+):
+    studio, sources = reloading
+    open_studio(page, studio)
+    row(page, "extra").get_by_role("switch").click()
+    sources("shop.py", RELOADABLE.replace(", extra]", "]"))
+    (tmp_path / "slow").touch()
+    open_atom_card(page)
+    reload_button(page).click()
+    expect(reload_button(page)).to_have_text("Reloading…")
+    expect(reload_button(page)).to_be_disabled()
+
+    # A second page asks for a reload meanwhile: it is told to wait, and its card stays as it was.
+    other = page.context.new_page()
+    open_studio(other, studio)
+    open_atom_card(other)
+    reload_button(other).click()
+    expect(other.locator("#toast")).to_contain_text("the atom is being reloaded")
+    expect(outcome(other)).to_have_count(0)
+    expect(reload_button(other)).to_be_enabled()
+    expect(reload_button(other)).to_be_focused()
+    other.close()
+
+    # The first page moves on to another card before the reload ends.
+    card(page).get_by_role("button", name="Done").click()
+    open_card(page, "message_length")
+    (tmp_path / "slow").unlink()
+    expect(page.locator("#toast")).to_contain_text("Reloaded from code", timeout=15_000)
+    expect(page.locator("#toast")).to_contain_text("1 change no longer applied")
+    expect(card(page).locator("#dlg-title")).to_contain_text("message_length")
+    expect(row(page, "extra")).to_have_count(0)
+    card(page).get_by_role("button", name="Done").click()
+
+    # What was dropped is still told, the next time the atom card is opened, and only once.
+    open_atom_card(page)
+    expect(outcome(page)).to_contain_text("'extra' is no longer in your code")
+    card(page).get_by_role("button", name="Done").click()
+    open_atom_card(page)
+    expect(outcome(page)).to_have_count(0)
+
+
+def test_what_the_card_says_when_a_reload_cannot_be_done(page: Page, reloading, tmp_path):
+    studio, _ = reloading
+    open_studio(page, studio)
+    (tmp_path / "stop").touch()
+    open_atom_card(page)
+    reload_button(page).click()
+    # The error's own sentence ends with a period: the card does not add another.
+    expect(outcome(page)).to_have_text(
+        "Reload failed: could not import 'shop': no more. "
+        "The atom from before is still running; the terminal has the details."
+    )
+
+    studio.stop()
+    reload_button(page).click()
+    expect(page.locator("#toast")).to_contain_text("The studio is not answering")
+    # Nothing is known of the atom any more: the card does not say that it is still running.
+    expect(outcome(page)).to_have_count(0)
+    expect(reload_button(page)).to_be_enabled()

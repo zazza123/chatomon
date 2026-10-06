@@ -17,7 +17,7 @@ An atom on a connector you wrote yourself is refused when the studio starts, wit
 
 When the studio starts, the command prints a note for anything about your atom that can make a turn fail, or that the studio writes to. The sections below say which notes each connector has.
 
-In every framework the atom's tools run for real, and replies arrive whole.
+In every framework the atom's tools run for real, and replies arrive whole. A [reload from code](reload.md) keeps the conversation with every connector; code that moves to a connector of another framework starts a new one.
 
 ## PydanticAI
 
@@ -75,7 +75,7 @@ Saved as `app.py`, it opens with `chatomon studio app:atom`. The atom card shows
 
 - **A turn that waits for an answer is shown as failed.** The studio cannot answer a LangGraph interrupt, nor approve a tool call in Microsoft Agent Framework. The conversation goes on as it was before that turn. With a history provider of your own, what the framework wrote to it before stopping stays there.
 - **A turn that ends with no reply is left out.** When the nucleus writes nothing, or a LangGraph run ends on the result of a tool, the turn is shown as aborted and does not enter the conversation.
-- **The agent the studio replaces is not closed.** Every change to the orbitals builds the agent again. A Foundry atom built from an endpoint and a credential leaves a client open for each change, until the studio stops.
+- **The agent the studio replaces is not closed.** Every change to the orbitals builds the agent again, and so does a reload from code. A Foundry atom built from an endpoint and a credential leaves a client open for each of them, until the studio stops.
 
 ## Key Components
 

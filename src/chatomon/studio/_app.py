@@ -6,6 +6,8 @@ import asyncio
 import json
 import re
 import shlex
+import sys
+import traceback
 from collections.abc import AsyncIterator
 from importlib.resources import files
 from typing import Any
@@ -18,7 +20,7 @@ from starlette.responses import HTMLResponse, JSONResponse, Response, StreamingR
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from chatomon.errors import ChatomonError
+from chatomon.errors import ChatomonConfigError, ChatomonError
 from chatomon.studio._chains import InvalidRequestError, UnknownOrbitalError
 from chatomon.studio._events import Event
 from chatomon.studio._files import InvalidPathError, OwnFileExistsError
@@ -242,6 +244,25 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
             return _refusal(exc)
         return JSONResponse({"state": state(), "warnings": warnings})
 
+    async def post_reload(request: Request) -> Response:
+        try:
+            # Nothing in the request says what to import: the session knows where the atom is.
+            result = await session.reload()
+        except ChatomonConfigError as exc:
+            # As when the command starts: the traceback of the developer's code goes to the
+            # terminal, never to the page, which gets the sentence. A refusal of the studio's
+            # own has no cause.
+            if exc.__cause__ is not None:
+                traceback.print_exception(exc.__cause__, file=sys.stderr)
+            print(f"chatomon studio: reload failed: {exc}", file=sys.stderr)
+            return _refusal(exc)
+        except ChatomonError as exc:
+            return _refusal(exc)
+        for note in result.notes:
+            print(f"note: {note}", file=sys.stderr)
+        body = {"state": state(), "dropped": result.dropped, "restarted": result.restarted}
+        return JSONResponse(body)
+
     async def post_reset(request: Request) -> Response:
         try:
             session.reset_conversation()
@@ -264,6 +285,7 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
         Route("/api/orbitals/reset", reset_orbitals, methods=["POST"]),
         Route("/api/orbitals/undo", undo, methods=["POST"]),
         Route("/api/conversation/reset", post_reset, methods=["POST"]),
+        Route("/api/reload", post_reload, methods=["POST"]),
         Mount("/static", StaticFiles(packages=[("chatomon.studio", "static")]), name="static"),
     ]
 
