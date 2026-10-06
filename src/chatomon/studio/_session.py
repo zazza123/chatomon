@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import sys
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
@@ -29,6 +31,8 @@ from chatomon.studio._chains import SIDES, Chains, Entry, RefusedError
 from chatomon.studio._events import Event, EventProcessor
 from chatomon.studio._runners import Runner, runner_for
 
+_T = TypeVar("_T")
+
 
 def _always_recording_provider() -> TracerProvider:
     """Return a provider whose spans are always recorded.
@@ -44,6 +48,46 @@ def _always_recording_provider() -> TracerProvider:
     finally:
         if disabled is not None:
             os.environ["OTEL_SDK_DISABLED"] = disabled
+
+
+def _in_thread(function: Callable[[], _T]) -> asyncio.Future[_T]:
+    """Run a function in a thread of its own; the future has what it returns or raises.
+
+    The thread is as close as it can be to the one the command starts in. It
+    has an event loop of its own as its current one, not running, for code that
+    asks for the loop while it is imported. And it is a daemon: code that hangs
+    while it is loaded must not keep the studio from stopping.
+
+    Returns:
+        A future of the running loop.
+    """
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[_T] = loop.create_future()
+
+    def deliver(settle: Callable[[], None]) -> None:
+        def settled() -> None:
+            if not future.done():
+                settle()
+
+        # When the studio stopped while the function ran, the loop is closed: nobody waits.
+        with contextlib.suppress(RuntimeError):
+            loop.call_soon_threadsafe(settled)
+
+    def run() -> None:
+        own = asyncio.new_event_loop()
+        asyncio.set_event_loop(own)
+        try:
+            result = function()
+        except BaseException as exc:
+            deliver(lambda error=exc: future.set_exception(error))
+        else:
+            deliver(lambda: future.set_result(result))
+        finally:
+            asyncio.set_event_loop(None)
+            own.close()
+
+    threading.Thread(target=run, name="chatomon-studio-reload", daemon=True).start()
+    return future
 
 
 class StudioBusyError(ChatomonError):
@@ -455,7 +499,7 @@ class Session:
         return await asyncio.shield(task)
 
     async def _reloaded(self) -> Reloaded:
-        loaded = await asyncio.to_thread(self._loaded)
+        loaded = await _in_thread(self._loaded)
         restarted = None
         if loaded.runner is not self._runner:
             # Only the runner that returned a conversation can read it.

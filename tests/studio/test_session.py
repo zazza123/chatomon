@@ -1006,6 +1006,40 @@ async def test_a_module_that_runs_a_loop_of_its_own_when_imported_can_be_reloade
     assert session.state()["atom"]["instructions"] == "Be kind."
 
 
+def test_a_module_that_asks_for_the_event_loop_when_imported_can_be_reloaded(shop):
+    """Older code: `asyncio.get_event_loop().run_until_complete(...)` at the top of a module."""
+    code = "import asyncio\n\nasync def fetch():\n    return 60\n\n"
+    words = "WORDS = asyncio.get_event_loop().run_until_complete(fetch())\n"
+    shop("settings.py", code + 'INSTRUCTIONS = "Be brief."\n' + words)
+    main = asyncio.new_event_loop()
+    asyncio.set_event_loop(main)  # what the main thread has when the command starts
+    try:
+        session = started()
+        shop("settings.py", code + 'INSTRUCTIONS = "Be kind."\n' + words)
+        asyncio.run(session.reload())
+    finally:
+        asyncio.set_event_loop(None)
+        main.close()
+    assert session.state()["atom"]["instructions"] == "Be kind."
+
+
+async def test_the_thread_of_a_reload_does_not_hold_the_studios_exit(shop, monkeypatch):
+    """Code that hangs while it is loaded must not keep Ctrl+C from stopping the studio."""
+    session = started()
+    threads: list[threading.Thread] = []
+    real = loading.load
+
+    def seen(spec: str) -> Atom:
+        threads.append(threading.current_thread())
+        return real(spec)
+
+    monkeypatch.setattr(loading, "load", seen)
+    await session.reload()
+    (thread,) = threads
+    assert thread is not threading.main_thread()
+    assert thread.daemon
+
+
 async def test_code_that_exits_while_it_is_loaded_does_not_stop_the_studio(shop):
     """A guard a developer adds: `if "KEY" not in os.environ: sys.exit("set KEY")`."""
     session = started()
