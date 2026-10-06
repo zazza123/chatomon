@@ -381,7 +381,6 @@ details.res > summary:hover { background: var(--line); }
 .attempt + .attempt { margin-top: 8px; }
 .attempt-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12.5px; color: var(--fg-2); }
 .attempt-head strong { color: var(--fg); font-weight: 600; }
-.draft { margin: 0; padding: 8px 11px; border-radius: 10px; background: var(--code-bg); font-size: 13.5px; overflow-wrap: anywhere; }
 .final { padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line-2); background: var(--raised); font-size: 14px; overflow-wrap: anywhere; }
 .foot { margin: 0; font-size: 12px; color: var(--fg-3); }
 .nav-btns { display: inline-flex; gap: 4px; }
