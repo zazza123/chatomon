@@ -550,6 +550,7 @@ async def test_the_session_shows_a_saved_test_and_writes_it(tmp_path, monkeypatc
         "earlier",
         "notes",
         "warnings",
+        "turn",
     }
     assert test["code"].startswith('"""Saved from chatomon studio: app:atom, turn 1."""\n')
     assert (test["path"], test["root"]) == (SAVED, str(tmp_path.resolve()))

@@ -316,9 +316,24 @@ class Session:
             "earlier": test.earlier,
             "notes": test.notes,
             "warnings": test.warnings,
+            # What the page sends back to write: the turn's number alone can name another
+            # turn once the conversation is started again.
+            "turn": self._turn_id(n),
         }
 
-    def write_test(self, n: int, path: str, *, alone: bool = False, overwrite: bool = False) -> str:
+    def _turn_id(self, n: int) -> str | None:
+        report = self.turns[n - 1].report
+        return report.turn_id if report is not None else None
+
+    def write_test(
+        self,
+        n: int,
+        path: str,
+        *,
+        turn: str | None = None,
+        alone: bool = False,
+        overwrite: bool = False,
+    ) -> str:
         """Write turn `n` as a test under the directory the studio was started from.
 
         The content is generated here: the caller chooses the turn and the path,
@@ -327,6 +342,8 @@ class Session:
         Args:
             n: The turn's number in this conversation.
             path: Where to write, relative to that directory.
+            turn: The id of the turn the test was shown for; when given, it must
+                still be turn `n`.
             alone: Whether to leave out the turns before it.
             overwrite: Whether to replace a test the studio wrote earlier.
 
@@ -337,10 +354,16 @@ class Session:
             UnknownTurnError: If the conversation has no such turn.
             InvalidPathError: If the path is not one the studio writes to.
             OwnFileExistsError: If the file is the studio's and `overwrite` is false.
-            RefusedError: If the turn failed, the studio was started from Python,
-                or the file exists and the studio did not write it.
+            RefusedError: If the turn failed or is no longer the one shown, the studio
+                was started from Python, or the file exists and the studio did not
+                write it.
         """  # noqa: DOC502 - raised by the helpers
         test = self._saved(n, alone)
+        if turn is not None and turn != self._turn_id(n):
+            raise RefusedError(
+                f"turn {n} is not the turn this test was made from: the conversation "
+                "changed. Open the turn again"
+            )
         if self.namespace is None:
             raise RefusedError(
                 "the studio was started from Python and does not know where the atom "

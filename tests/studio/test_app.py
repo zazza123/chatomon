@@ -478,7 +478,7 @@ def test_a_reset_with_a_body_that_is_not_an_object_resets_nothing(tunable):
 
 LONG = "one two three four"
 SAVED = "tests/studio/test_one_two_three_four.py"
-KEYS = {"code", "path", "root", "writable", "integration", "earlier", "notes", "warnings"}
+KEYS = {"code", "path", "root", "writable", "integration", "earlier", "notes", "warnings", "turn"}
 
 
 def serving(atom: Atom, **kwargs):
@@ -506,6 +506,10 @@ def turn(client, message: str) -> None:
 
 
 def write(client, n: int = 1, **body):
+    """Ask to write turn `n`, naming the turn the card was made from unless the test does."""
+    if "turn" not in body:
+        shown = client.get(f"/api/turns/{n}/test")
+        body["turn"] = shown.json()["turn"] if shown.status_code == 200 else "none"
     return client.post(f"/api/turns/{n}/test", json=body, headers=ORIGIN)
 
 
@@ -545,7 +549,8 @@ def test_writing_the_test(saving, tmp_path):
     turn(saving, LONG)
     code = saving.get("/api/turns/1/test").json()["code"]
     response = write(saving, path=SAVED)
-    assert (response.status_code, response.json()) == (200, {"path": SAVED})
+    written = {"path": SAVED, "command": f"python -m pytest {SAVED}"}
+    assert (response.status_code, response.json()) == (200, written)
     assert (tmp_path / SAVED).read_text(encoding="utf-8") == code
     again = saving.get("/api/turns/1/test").json()
     assert again["path"] == "tests/studio/test_one_two_three_four_2.py"
@@ -604,7 +609,13 @@ def test_an_absolute_path_is_refused(saving, tmp_path):
 
 @pytest.mark.parametrize(
     "body",
-    [{}, {"path": 3}, {"path": SAVED, "alone": "yes"}, {"path": SAVED, "overwrite": 1}],
+    [
+        {},
+        {"path": 3},
+        {"path": SAVED, "alone": "yes"},
+        {"path": SAVED, "overwrite": 1},
+        {"path": SAVED, "turn": None},
+    ],
 )
 def test_a_malformed_request_to_write(saving, tmp_path, body):
     turn(saving, LONG)
@@ -620,6 +631,8 @@ def test_writing_needs_the_studios_origin(saving, tmp_path):
     )
     assert saving.post("/api/turns/1/test", json={"path": SAVED}).status_code == 403
     assert list(tmp_path.iterdir()) == []
+    # The same request from the studio's own page is the one that writes: it was the Origin.
+    assert write(saving, path=SAVED).status_code == 200
 
 
 def test_a_failed_turn_has_no_test(tmp_path, monkeypatch):
@@ -667,3 +680,26 @@ def test_a_path_the_system_refuses_is_a_message_not_a_failure(saving, tmp_path):
     assert response.json()["error"]["message"].startswith("could not write tests/xxx")
     assert refused(write(saving, path="~/test_x.py")) == (422, "InvalidPath")
     assert not (tmp_path / "~").exists()
+
+
+def test_a_card_that_is_out_of_date_writes_nothing(saving, tmp_path):
+    turn(saving, LONG)
+    shown = saving.get("/api/turns/1/test").json()
+    assert saving.post("/api/conversation/reset", headers=ORIGIN).status_code == 200
+    turn(saving, "hello")  # the conversation was started again elsewhere: another turn 1
+    response = write(saving, path=SAVED, turn=shown["turn"])
+    assert refused(response) == (409, "Refused")
+    assert response.json()["error"]["message"] == (
+        "turn 1 is not the turn this test was made from: the conversation changed. "
+        "Open the turn again"
+    )
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_the_command_to_run_a_test_quotes_what_a_shell_would_split(saving):
+    turn(saving, LONG)
+    written = write(saving, path="my tests/test_x.py").json()
+    assert written == {
+        "path": "my tests/test_x.py",
+        "command": "python -m pytest 'my tests/test_x.py'",
+    }

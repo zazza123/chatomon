@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import shlex
 from collections.abc import AsyncIterator
 from importlib.resources import files
 from typing import Any
@@ -32,7 +33,10 @@ _NO_STORE = {"Cache-Control": "no-store"}
 
 _PATCH_HELP = 'send {"side": "input", "name": "..."} and one of "enabled", "settings" or "position"'
 
-_TEST_HELP = 'send {"path": "tests/studio/test_turn.py"}; "alone" and "overwrite" are true or false'
+_TEST_HELP = (
+    'send {"path": "tests/studio/test_turn.py", "turn": "<the id the test came with>"}; '
+    '"alone" and "overwrite" are true or false'
+)
 
 
 def _error(status: int, kind: str, message: str, **extra: Any) -> JSONResponse:
@@ -200,9 +204,10 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
     async def post_test(request: Request) -> Response:
         body = await _body(request) or {}
         path, alone = body.get("path"), body.get("alone", False)
-        overwrite = body.get("overwrite", False)
+        overwrite, shown = body.get("overwrite", False), body.get("turn")
         if (
             not isinstance(path, str)
+            or not isinstance(shown, str)
             or not isinstance(alone, bool)
             or not isinstance(overwrite, bool)
         ):
@@ -210,11 +215,13 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
         try:
             # The body names the turn and the path; what is written is computed here.
             written = session.write_test(
-                request.path_params["n"], path, alone=alone, overwrite=overwrite
+                request.path_params["n"], path, turn=shown, alone=alone, overwrite=overwrite
             )
         except ChatomonError as exc:
             return _refusal(exc)
-        return JSONResponse({"path": written})
+        # Quoted for a shell: a path may hold spaces.
+        command = f"python -m pytest {shlex.quote(written)}"
+        return JSONResponse({"path": written, "command": command})
 
     async def get_preset(request: Request) -> Response:
         text = json.dumps(session.export_preset(), indent=2, ensure_ascii=False) + "\n"

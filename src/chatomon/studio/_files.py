@@ -99,6 +99,8 @@ def write(root: Path, path: str, text: str, *, header: str, overwrite: bool) -> 
         reason = exc.strerror if isinstance(exc, OSError) and exc.strerror else exc
         raise RefusedError(f"could not write {path.strip()}: {reason}") from exc
     shown = target.relative_to(root).as_posix()
+    # The folders this call makes, deepest first: they are removed if the write is refused.
+    made = [folder for folder in target.parents if not folder.exists()]
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -114,5 +116,10 @@ def write(root: Path, path: str, text: str, *, header: str, overwrite: bool) -> 
             raise OwnFileExistsError(f"{shown} exists and was saved by the studio: overwrite it?")
         target.write_text(text, encoding="utf-8", newline="\n")
     except OSError as exc:
+        for folder in made:
+            try:
+                folder.rmdir()
+            except OSError:
+                break
         raise RefusedError(f"could not write {shown}: {exc.strerror or exc}") from exc
     return shown

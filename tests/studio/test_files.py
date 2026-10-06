@@ -114,6 +114,7 @@ def test_the_proposed_path_is_the_first_free_one(tmp_path):
 def test_what_the_system_refuses_is_reported_not_raised(tmp_path):
     with pytest.raises(RefusedError, match="could not write"):
         write(tmp_path, "tests/" + "x" * 300 + ".py")
+    assert list(tmp_path.iterdir()) == []  # the folder made for it is gone again
     try:
         (tmp_path / "loop").symlink_to(tmp_path / "loop")
     except OSError:
