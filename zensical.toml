@@ -17,6 +17,7 @@ nav = [
       { "Reading the screen" = "studio/screen.md" },
       { "Tuning orbitals" = "studio/tuning.md" },
       { "Back to code" = "studio/export.md" },
+      { "Reloading the code" = "studio/reload.md" },
       { "Saving a turn as a test" = "studio/testing.md" },
       { "Frameworks" = "studio/frameworks.md" },
     ] },

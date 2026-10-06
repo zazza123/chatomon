@@ -12,6 +12,8 @@ Every orbital has a switch. Turning one off takes effect from the next turn and 
 
 Clicking an orbital opens its card. Clicking the atom or the nucleus opens the atom's card: instructions, knowledge, connector and model, retries and refusal texts. The dashes and the nucleus of the atom on stage open the same cards.
 
+The atom's card also has **Reload from code**, which loads the atom from your code again after you changed it: see [Reloading the Code](reload.md).
+
 The foot of the drawer counts the changes against your code and holds **Copy as code** and the preset buttons, described in [Back to Code](export.md).
 
 ## The Atom on Stage
