@@ -77,7 +77,8 @@ def test_the_runner_supplies_pydantic_ais_part_of_a_saved_test():
     lines = saved_test()
     assert lines.test_model == ("pydantic_ai.models.test", "TestModel")
     assert lines.test_model_label == "PydanticAI's `TestModel`"
-    assert lines.offline == 'monkeypatch.setattr(atom.connector, "model", TestModel())'
+    offline = 'monkeypatch.setattr(atom.connector, "model", TestModel(call_tools=[]))'
+    assert lines.offline == offline
     assert lines.run == "agent.run_sync"
     assert lines.resume == "message_history=result.all_messages()"
     assert lines.reply == "result.output"

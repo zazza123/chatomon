@@ -106,12 +106,18 @@ def project(tmp_path, monkeypatch):
         monkeypatch.delitem(sys.modules, name)
     (tmp_path / "pytest.ini").write_text(PYTEST_INI, encoding="utf-8")
 
+    loaded: set[str] = set()
+
     def open_session(spec: str = "shop:atom", *, module: str = MODULE) -> Session:
-        (tmp_path / "shop.py").write_text(module, encoding="utf-8")
+        name = spec.partition(":")[0]
+        (tmp_path / f"{name}.py").write_text(module, encoding="utf-8")
+        loaded.add(name)
         atom = load(spec)  # the namespace exists once the module is imported
         return Session(atom, source=spec, namespace=namespace(spec))
 
-    return open_session
+    yield open_session
+    for name in loaded - {"shop"}:
+        sys.modules.pop(name, None)
 
 
 def say(session: Session, *messages: str) -> None:
@@ -132,7 +138,7 @@ def save(session: Session, *, alone: bool = False, upto: int | None = None) -> t
         alone=alone,
         source=session.source,
         namespace=session.namespace,
-        changes=[change.text for change in session.chains.changes()],
+        signature=session.signature(),
         framework=saved_test(),
     )
 
@@ -218,7 +224,8 @@ def test_a_test_is_offline_only_when_no_model_is_needed(project, monkeypatch, me
     if who is None:
         assert "@pytest.mark" not in test.code
         assert "from pydantic_ai.models.test import TestModel\n" in test.code
-        assert '    monkeypatch.setattr(atom.connector, "model", TestModel())\n' in test.code
+        offline = '    monkeypatch.setattr(atom.connector, "model", TestModel(call_tools=[]))\n'
+        assert offline in test.code
         assert test.notes[0] == OFFLINE
     else:
         assert f"@pytest.mark.integration  # {who}\n" in test.code
@@ -357,7 +364,7 @@ def test_a_function_called_atom_is_imported_under_another_name(project):
         alone=False,
         source="shop:atom",
         namespace={"atom": lambda: session.atom},
-        changes=[],
+        signature=session.signature(),
         framework=saved_test(),
     )
     assert "from shop import atom as atom_source\n" in test.code
@@ -372,7 +379,7 @@ def test_started_from_python_the_import_is_left_to_complete(project):
         alone=False,
         source="serve()",
         namespace=None,
-        changes=[],
+        signature=session.signature(),
         framework=saved_test(),
     )
     written = test.code.split("\n")
@@ -517,3 +524,71 @@ def test_turns_tried_with_the_same_changes_share_one_warning(project):
         "The orbitals have changed since: Copy as code writes them as they are now.",
     ]
     assert save(session, upto=2).warnings[0].startswith("Turns 1 and 2 ran with 1 studio change")
+
+
+TOOLS = MODULE.replace(
+    "def nucleus(",
+    '''CALLED: list[str] = []
+
+
+def refund_order(order_id: str) -> str:
+    """Refund an order."""
+    CALLED.append(order_id)
+    return "refunded"
+
+
+def nucleus(''',
+).replace(
+    "PydanticAIConnector(FunctionModel(nucleus))",
+    "PydanticAIConnector(FunctionModel(nucleus), tools=[refund_order])",
+)
+
+
+def test_an_offline_test_never_runs_the_atoms_tools(project, monkeypatch):
+    assert TOOLS.count("refund_order") == 2
+    session = project(module=TOOLS)
+    say(session, "I want a refund")
+    test = save(session)
+    assert test.integration is False
+    # The code changes and lets the message through: the test fails, and no tool has run.
+    atom = session.atom
+    kept = tuple(orb for orb in atom.input_orbitals if orb.name != "no_refunds")
+    monkeypatch.setattr(atom, "input_orbitals", kept)
+    with pytest.raises(AssertionError):
+        run_saved(test, monkeypatch)
+    assert sys.modules["shop"].CALLED == []
+
+
+def test_a_setting_changed_again_since_the_turn_is_said(project):
+    session = project()
+    session.edit("input", "message_length", {"max_words": 3})
+    say(session, "one two three four")
+    assert len(save(session).warnings) == 1
+    session.edit("input", "message_length", {"max_words": 6})  # the same sentence, another value
+    assert save(session).warnings == [
+        "Turn 1 ran with 1 studio change (message_length.max_words changed). The test builds "
+        "the atom from your code, so it checks your code, not the studio: copy the "
+        "configuration into your code first.",
+        "The orbitals have changed since: Copy as code writes them as they are now.",
+    ]
+
+
+def test_a_module_whose_name_is_not_a_python_name_leaves_the_import_to_complete(project):
+    session = project("my-shop:atom")
+    say(session, "I want a refund")
+    test = save(session)
+    assert test.importable is False
+    written = test.code.split("\n")
+    assert not any(line.startswith("from my-shop") for line in written)
+    assert "# Import it here, for example: from your_package.app import atom" in written
+    compile(test.code, "saved.py", "exec")
+    assert test.notes[-1] == (
+        "The atom's module cannot be written as an import, because its name is not a Python "
+        "name: complete the import and save the file yourself."
+    )
+    assert session.saved_test(1)["writable"] is False
+    with pytest.raises(RefusedError, match="the import of this test has to be completed by hand"):
+        session.write_test(1, "tests/studio/test_x.py")
+    plain = project()
+    say(plain, "I want a refund")
+    assert save(plain).importable is True

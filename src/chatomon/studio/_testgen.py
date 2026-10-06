@@ -9,6 +9,7 @@ orbital names, actions and replies fixed in code are written.
 
 from __future__ import annotations
 
+import keyword
 import re
 import unicodedata
 from collections.abc import Mapping, Sequence
@@ -31,6 +32,10 @@ NO_MODULE = (
     "The studio was started from Python, so it does not know where the atom lives: "
     "complete the import and save the file yourself. To let the studio write it, start "
     "it with `chatomon studio module:attribute`."
+)
+_NOT_A_NAME = (
+    "The atom's module cannot be written as an import, because its name is not a Python "
+    "name: complete the import and save the file yourself."
 )
 _OFFLINE = "No model is called in this test: it runs offline, with {model} in place of the nucleus."
 _MARKED = (
@@ -101,6 +106,8 @@ class SavedTest:
     integration: bool
     earlier: int
     """How many turns before the saved one the test can replay."""
+    importable: bool
+    """Whether the test imports the atom; when not, the import is left to complete."""
     notes: list[str]
     warnings: list[str]
 
@@ -212,16 +219,20 @@ def _read(turn: TurnRecord) -> _Turn:
 
 def _atom(
     source: str, namespace: Mapping[str, object] | None, framework: Framework
-) -> tuple[list[str], list[str], list[str]]:
+) -> tuple[list[str], list[str], list[str]] | None:
     """Write how the test gets the atom.
 
     Returns:
-        The lines among the imports, those after the imports and the first of the test.
+        The lines among the imports, those after the imports and the first of the test;
+        `None` when there is no module, or its name cannot be written in an import.
     """
     if namespace is None:
-        return ["", *_NO_IMPORT], [], []
+        return None
     module, _, attribute = source.partition(":")
     head, *rest = attribute.split(".")
+    # importlib loads `my-shop`; an import statement cannot name it.
+    if not all(_is_name(part) for part in (*module.split("."), head, *rest)):
+        return None
     value: object = namespace.get(head)
     for part in rest:
         value = getattr(value, part, None)
@@ -233,6 +244,10 @@ def _atom(
     if isinstance(value, Atom):
         return [line], [f"atom = {path}"], []
     return [line], [], [f"atom = {path}()"]
+
+
+def _is_name(text: str) -> bool:
+    return text.isidentifier() and not keyword.iskeyword(text)
 
 
 def _marker(callers: Sequence[str]) -> list[str]:
@@ -304,7 +319,7 @@ def generate(
     alone: bool,
     source: str,
     namespace: Mapping[str, object] | None,
-    changes: Sequence[str],
+    signature: object,
     framework: Framework,
 ) -> SavedTest:
     """Write a turn, with the turns before it unless `alone`, as a pytest file.
@@ -314,7 +329,8 @@ def generate(
         alone: Whether to leave the earlier turns out.
         source: How the studio was started: `module:attribute` or `serve()`.
         namespace: The variables of the atom's module, or `None` without a module.
-        changes: How the session differs from the code now.
+        signature: What identifies the session's orbitals now, to compare with
+            what each turn recorded.
         framework: The lines that depend on the agent framework.
 
     Returns:
@@ -339,7 +355,8 @@ def generate(
     numbers = [turn.n for turn in replayed]
     span = f"turn {numbers[0]}" if len(numbers) == 1 else f"turns {numbers[0]}-{numbers[-1]}"
     shown = source if re.fullmatch(r"[\w.:()]+", source) else "an atom"
-    imports, after, first = _atom(source, namespace, framework)
+    written = _atom(source, namespace, framework)
+    imports, after, first = written if written is not None else (["", *_NO_IMPORT], [], [])
     lines = [f'{HEADER}: {shown}, {span}."""', "", "import pytest", ""]
     lines.append("from chatomon import TurnReport")
     if offline:
@@ -386,6 +403,8 @@ def generate(
         notes += [_SKIPPED.format(n=n) for n in skipped]
     if namespace is None:
         notes.append(NO_MODULE)
+    elif written is None:
+        notes.append(_NOT_A_NAME)
 
     # Turns that ran with the same changes share one sentence.
     groups: dict[tuple[str, ...], list[str]] = {}
@@ -400,13 +419,15 @@ def generate(
         )
         for group, numbers in groups.items()
     ]
-    if any(list(group) != list(changes) for group in groups):
+    # Compared by signature: the same sentence can stand for two values of one setting.
+    if any(turn.changes and turn.signature != signature for turn in records):
         warnings.append(_CHANGED_SINCE)
     return SavedTest(
         code="\n".join(lines) + "\n",
         name=name,
         integration=not offline,
         earlier=len(before),
+        importable=written is not None,
         notes=notes,
         warnings=warnings,
     )

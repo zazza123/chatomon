@@ -63,6 +63,8 @@ class TurnRecord:
     """How the session differed from the code when the turn started."""
     models: frozenset[str] = frozenset()
     """The enabled orbitals that call a model, by name, when the turn started."""
+    signature: tuple[tuple[str, str, str, bool], ...] = ()
+    """Every orbital of the session when the turn started: side, name, fingerprint, on."""
     reply: str | None = None
     report: TurnReport | None = None
     error: dict[str, str] | None = None
@@ -261,6 +263,21 @@ class Session:
             raise presets.InvalidPresetError([str(exc)]) from exc
         return warnings
 
+    def signature(self) -> tuple[tuple[str, str, str, bool], ...]:
+        """Return what identifies the session's orbitals now.
+
+        Two sessions with the same signature build the same chains: the sentences
+        of `changes` cannot tell a setting changed once from one changed again.
+
+        Returns:
+            Side, name, fingerprint and whether it is on, for every orbital in order.
+        """
+        return tuple(
+            (side, entry.orbital.name, entry.orbital.fingerprint(), entry.enabled)
+            for side in SIDES
+            for entry in self.chains.work[side]
+        )
+
     def _saved(self, n: int, alone: bool) -> testgen.SavedTest:
         if not 1 <= n <= len(self.turns):
             raise UnknownTurnError(f"there is no turn {n} in this conversation")
@@ -269,7 +286,7 @@ class Session:
             alone=alone,
             source=self.source,
             namespace=self.namespace,
-            changes=[change.text for change in self.chains.changes()],
+            signature=self.signature(),
             framework=self._runner.saved_test(),
         )
 
@@ -289,7 +306,7 @@ class Session:
             RefusedError: If the turn failed.
         """  # noqa: DOC502 - raised by the helpers
         test = self._saved(n, alone)
-        writable = self.namespace is not None
+        writable = self.namespace is not None and test.importable
         return {
             "code": test.code,
             "path": files.proposed(self.root, test.name) if writable else None,
@@ -328,6 +345,10 @@ class Session:
             raise RefusedError(
                 "the studio was started from Python and does not know where the atom "
                 "lives: copy the test instead"
+            )
+        if not test.importable:
+            raise RefusedError(
+                "the import of this test has to be completed by hand: copy the test instead"
             )
         return files.write(self.root, path, test.code, header=testgen.HEADER, overwrite=overwrite)
 
@@ -383,6 +404,7 @@ class Session:
             models=frozenset(
                 orb.name for side in SIDES for orb in enabled[side] if orb.calls_model
             ),
+            signature=self.signature(),
         )
         self._task = loop.create_task(self._run(record, emit))
         return queue

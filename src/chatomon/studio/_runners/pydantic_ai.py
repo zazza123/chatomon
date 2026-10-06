@@ -81,7 +81,8 @@ def saved_test() -> Framework:
     return Framework(
         test_model=("pydantic_ai.models.test", "TestModel"),
         test_model_label="PydanticAI's `TestModel`",
-        offline='monkeypatch.setattr(atom.connector, "model", TestModel())',
+        # No tool is called: by default the test model calls every tool the atom has.
+        offline='monkeypatch.setattr(atom.connector, "model", TestModel(call_tools=[]))',
         run="agent.run_sync",
         resume="message_history=result.all_messages()",
         reply="result.output",
