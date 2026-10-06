@@ -39,6 +39,7 @@ The command imports the module from the current directory, prints a link and ope
 | `--host` | `127.0.0.1` | The address to listen on |
 | `--port` | `8016` | The port to listen on |
 | `--no-browser` | off | Print the link without opening it |
+| `--preset` | none | A preset file to apply to the atom before the page opens: see [Starting with a Preset](export.md#starting-with-a-preset) |
 
 The default port is 8016 for oxygen-16, the most common oxygen atom: the "o" of chatomon is the letter the atom replaces in the wordmark.
 
@@ -54,7 +55,7 @@ from speedypack.app import atom
 serve(atom)
 ```
 
-Started this way the studio does not know which module the atom comes from, which limits what [Copy as code](export.md#copy-as-code) can name.
+`serve` takes the options of the command as arguments: `host`, `port`, `open_browser` and `preset`, the path of a preset file. Started this way the studio does not know which module the atom comes from, which limits what [Copy as code](export.md#copy-as-code) can name.
 
 ## Content in the Studio
 
@@ -80,7 +81,7 @@ The studio shows conversation text and calls models with your credentials, so it
 
 - **No streaming.** Replies arrive whole, because output orbitals check a reply before it is sent.
 - **Your own orbitals are read-only.** The studio edits the settings of chatomon's own orbitals. `@orbital` functions and orbital classes you wrote can be turned off and moved; their settings are changed in your code.
-- **Changes live in the session.** Stopping the studio discards them: copy the code or export a preset first.
+- **Changes live in the session.** Stopping the studio discards them: copy the code first, or export a preset and [start the studio with it](export.md#starting-with-a-preset) the next time.
 - **Restart to reload.** After changing the code, stop the command and start it again.
 - **What a turn can rely on depends on the framework.** Dependencies, runtime contexts, checkpointers, history providers and turns that wait for an answer are covered in [Frameworks in the Studio](frameworks.md); the command says what applies to your atom when it starts.
 - **A saved test does not repeat what the output chain decided.** It runs the real nucleus, which writes something else every time: for a turn in which an output orbital stopped a reply, the test checks only how the turn ended.

@@ -84,7 +84,19 @@ class TurnRecord:
 
 
 class Session:
-    """Runs turns on a copy of the developer's atom; one conversation, one turn at a time."""
+    """Runs turns on a copy of the developer's atom; one conversation, one turn at a time.
+
+    Args:
+        atom: The developer's atom; it is read, never changed.
+        source: How the studio was started: `module:attribute` or `serve()`.
+        namespace: The variables of the atom's module, or `None` without a module.
+        preset: A preset to start with, as JSON text; its warnings join the notes.
+
+    Raises:
+        ChatomonConfigError: If the studio has no runner for the atom's connector, or
+            the atom does not build.
+        InvalidPresetError: With every problem of the preset; no session is created.
+    """
 
     def __init__(
         self,
@@ -92,6 +104,7 @@ class Session:
         *,
         source: str,
         namespace: Mapping[str, object] | None = None,
+        preset: str | None = None,
     ) -> None:
         runner = runner_for(atom.connector)
         self.atom = atom
@@ -111,6 +124,10 @@ class Session:
         self.chains = Chains.from_atom(atom)
         self._undo: tuple[Chains, str] | None = None
         self._agent: Any = self._build(self.chains)
+        if preset is not None:
+            self.notes = [*self.notes, *self.import_preset(preset)]
+            # The session starts here: there is no earlier state of it to go back to.
+            self._undo = None
 
     def _build(self, chains: Chains) -> Any:
         a = self.atom
