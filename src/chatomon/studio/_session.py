@@ -19,6 +19,7 @@ from chatomon.atom import Atom
 from chatomon.errors import ChatomonConfigError, ChatomonError
 from chatomon.schemas import Side, TurnReport
 from chatomon.studio import _codegen as codegen
+from chatomon.studio import _files as files
 from chatomon.studio import _kinds as kinds
 from chatomon.studio import _presets as presets
 from chatomon.studio import _testgen as testgen
@@ -45,6 +46,10 @@ def _always_recording_provider() -> TracerProvider:
 
 class StudioBusyError(ChatomonError):
     """A turn is running, so the session cannot start another one or change its orbitals."""
+
+
+class UnknownTurnError(ChatomonError):
+    """The conversation has no turn with that number."""
 
 
 @dataclass
@@ -255,6 +260,76 @@ class Session:
         except ChatomonConfigError as exc:
             raise presets.InvalidPresetError([str(exc)]) from exc
         return warnings
+
+    def _saved(self, n: int, alone: bool) -> testgen.SavedTest:
+        if not 1 <= n <= len(self.turns):
+            raise UnknownTurnError(f"there is no turn {n} in this conversation")
+        return testgen.generate(
+            self.turns[:n],
+            alone=alone,
+            source=self.source,
+            namespace=self.namespace,
+            changes=[change.text for change in self.chains.changes()],
+            framework=self._runner.saved_test(),
+        )
+
+    def saved_test(self, n: int, *, alone: bool = False) -> dict[str, Any]:
+        """Return turn `n` as a test: the code, where it would go and what to know.
+
+        Args:
+            n: The turn's number in this conversation.
+            alone: Whether to leave out the turns before it.
+
+        Returns:
+            The code, the proposed path and the root (both `None` when the studio
+            cannot write), and the notes and warnings.
+
+        Raises:
+            UnknownTurnError: If the conversation has no such turn.
+            RefusedError: If the turn failed.
+        """  # noqa: DOC502 - raised by the helpers
+        test = self._saved(n, alone)
+        writable = self.namespace is not None
+        return {
+            "code": test.code,
+            "path": files.proposed(self.root, test.name) if writable else None,
+            "root": str(self.root) if writable else None,
+            "writable": writable,
+            "integration": test.integration,
+            "earlier": test.earlier,
+            "notes": test.notes,
+            "warnings": test.warnings,
+        }
+
+    def write_test(self, n: int, path: str, *, alone: bool = False, overwrite: bool = False) -> str:
+        """Write turn `n` as a test under the directory the studio was started from.
+
+        The content is generated here: the caller chooses the turn and the path,
+        never what is written.
+
+        Args:
+            n: The turn's number in this conversation.
+            path: Where to write, relative to that directory.
+            alone: Whether to leave out the turns before it.
+            overwrite: Whether to replace a test the studio wrote earlier.
+
+        Returns:
+            The written path, relative to that directory.
+
+        Raises:
+            UnknownTurnError: If the conversation has no such turn.
+            InvalidPathError: If the path is not one the studio writes to.
+            OwnFileExistsError: If the file is the studio's and `overwrite` is false.
+            RefusedError: If the turn failed, the studio was started from Python,
+                or the file exists and the studio did not write it.
+        """  # noqa: DOC502 - raised by the helpers
+        test = self._saved(n, alone)
+        if self.namespace is None:
+            raise RefusedError(
+                "the studio was started from Python and does not know where the atom "
+                "lives: copy the test instead"
+            )
+        return files.write(self.root, path, test.code, header=testgen.HEADER, overwrite=overwrite)
 
     def reset_conversation(self) -> None:
         """Start a new conversation.

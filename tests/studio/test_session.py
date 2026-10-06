@@ -13,7 +13,7 @@ from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.orbitals import JudgeOrbital, MessageLengthOrbital
 from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER
 from chatomon.studio._chains import RefusedError, UnknownOrbitalError
-from chatomon.studio._session import Session, StudioBusyError
+from chatomon.studio._session import Session, StudioBusyError, UnknownTurnError
 from tests.fakes import FakeConnector, ScriptedOrbital
 
 
@@ -524,3 +524,72 @@ async def test_a_turn_says_whether_it_can_be_saved_as_a_test():
 def test_the_session_knows_the_directory_it_was_started_from(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert Session(make_atom(), source="app:atom").root == tmp_path.resolve()
+
+
+LONG = "one two three four"
+SAVED = "tests/studio/test_one_two_three_four.py"
+
+
+def saving_session() -> Session:
+    """A session started from a module, in the current directory."""
+    atom = make_atom(input_orbitals=[MessageLengthOrbital(max_words=3, reply="Too long.")])
+    return Session(atom, source="app:atom", namespace={"atom": atom})
+
+
+async def test_the_session_shows_a_saved_test_and_writes_it(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    session = saving_session()
+    await drain(session.start_turn(LONG))
+    test = session.saved_test(1)
+    assert set(test) == {
+        "code",
+        "path",
+        "root",
+        "writable",
+        "integration",
+        "earlier",
+        "notes",
+        "warnings",
+    }
+    assert test["code"].startswith('"""Saved from chatomon studio: app:atom, turn 1."""\n')
+    assert (test["path"], test["root"]) == (SAVED, str(tmp_path.resolve()))
+    assert (test["writable"], test["integration"], test["earlier"]) == (True, False, 0)
+    assert list(tmp_path.iterdir()) == []  # showing a test writes nothing
+
+    assert session.write_test(1, SAVED) == SAVED
+    assert (tmp_path / SAVED).read_text(encoding="utf-8") == test["code"]
+    assert session.saved_test(1)["path"] == "tests/studio/test_one_two_three_four_2.py"
+
+
+async def test_the_turn_alone_or_with_the_turns_before_it(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    session = saving_session()
+    await drain(session.start_turn("hello"))
+    await drain(session.start_turn(LONG))
+    whole, alone = session.saved_test(2), session.saved_test(2, alone=True)
+    assert "hello" in whole["code"] and "hello" not in alone["code"]
+    assert (whole["integration"], alone["integration"]) == (True, False)
+    session.write_test(2, "a.py")
+    session.write_test(2, "b.py", alone=True)
+    assert (tmp_path / "a.py").read_text(encoding="utf-8") == whole["code"]
+    assert (tmp_path / "b.py").read_text(encoding="utf-8") == alone["code"]
+
+
+async def test_started_from_python_the_test_is_shown_and_not_written(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    session = Session(make_atom(), source="serve()")
+    await drain(session.start_turn("hello"))
+    test = session.saved_test(1)
+    assert (test["writable"], test["path"], test["root"]) == (False, None, None)
+    with pytest.raises(RefusedError, match="the studio was started from Python"):
+        session.write_test(1, SAVED)
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("n", [0, 1, -1, 99])
+def test_a_turn_that_does_not_exist_is_reported(n):
+    session = Session(make_atom(), source="app:atom")
+    with pytest.raises(UnknownTurnError, match=f"there is no turn {n} in this conversation"):
+        session.saved_test(n)
+    with pytest.raises(UnknownTurnError):
+        session.write_test(n, SAVED)
