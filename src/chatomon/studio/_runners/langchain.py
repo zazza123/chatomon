@@ -24,9 +24,22 @@ _CHECKPOINTER = (
     "writes every turn to the checkpointer as a thread of its own"
 )
 _THREAD = '{"configurable": {"thread_id": uuid4().hex}}'
-_NO_TOOLS = (
-    "If your code lets a message through, the test fails; on an atom with tools it fails "
-    "with `NotImplementedError`, because `FakeListChatModel` cannot take them."
+_ASYNC = (
+    "The studio runs a LangChain agent asynchronously, and so does the test: it needs "
+    "`pytest-asyncio` 0.24 or later."
+)
+_MIDDLEWARE = (
+    "This atom has middleware of its own: one that chooses the model can still reach a "
+    "real model in this test."
+)
+# LangChain's fake chat model refuses tools with an error, which a fallback middleware
+# takes as a reason to call another model: the stand-in takes them and calls none.
+_OFFLINE_NUCLEUS = (
+    "class OfflineNucleus(FakeListChatModel):",
+    '    """Stands in for the nucleus: it calls no model and no tool."""',
+    "",
+    "    def bind_tools(self, tools, **kwargs):",
+    "        return self",
 )
 
 
@@ -103,33 +116,39 @@ def notes(connector: Connector[Any]) -> list[str]:
 def saved_test(connector: Connector[Any]) -> Framework:
     """Return what a saved test needs from LangChain.
 
+    The test awaits `ainvoke`, as the studio does: tools and middleware that are
+    asynchronous only would work in the studio and fail under `invoke`.
+
     Args:
         connector: A `LangChainConnector`; with a checkpointer every call takes a thread.
 
     Returns:
-        The call that runs a turn around the conversation's messages, the reply, and
-        the fake chat model that stands in for the nucleus offline.
+        The awaited call that runs a turn around the conversation's messages, the
+        reply, and the chat model the test defines to stand in for the nucleus offline.
     """
     thread = (_THREAD,) if _set(connector, "checkpointer") else ()
+    middleware = getattr(connector, "agent_kwargs", {}).get("middleware")
     return Framework(
         imports=(
             "from langchain_core.messages import HumanMessage",
             *(("from uuid import uuid4",) if thread else ()),
         ),
-        run="agent.invoke",
+        run="await agent.ainvoke",
         first=Call('{"messages": [HumanMessage(', ")]}", thread),
         later=Call('{"messages": [*result["messages"], HumanMessage(', ")]}", thread),
         reply='result["messages"][-1].content',
+        marker='@pytest.mark.asyncio(loop_scope="session")',
+        notes=(_ASYNC,),
         offline=Offline(
-            label="LangChain's `FakeListChatModel`",
+            label="a chat model of its own, `OfflineNucleus`,",
             imports=(
                 "from langchain_core.language_models.fake_chat_models import FakeListChatModel",
             ),
+            definitions=_OFFLINE_NUCLEUS,
             before_build=(
-                "monkeypatch.setattr(",
-                '    atom.connector, "model", FakeListChatModel(responses=["offline"])',
-                ")",
+                'monkeypatch.setattr(atom.connector, "model", '
+                'OfflineNucleus(responses=["offline"]))',
             ),
-            notes=(_NO_TOOLS,),
+            notes=(_MIDDLEWARE,) if middleware else (),
         ),
     )

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
+from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
@@ -26,6 +27,14 @@ CHECKPOINTER = (
     "writes every turn to the checkpointer as a thread of its own"
 )
 THREAD = '{"configurable": {"thread_id": uuid4().hex}}'
+ASYNC = (
+    "The studio runs a LangChain agent asynchronously, and so does the test: it needs "
+    "`pytest-asyncio` 0.24 or later."
+)
+MIDDLEWARE = (
+    "This atom has middleware of its own: one that chooses the model can still reach a "
+    "real model in this test."
+)
 
 
 @dataclass
@@ -117,22 +126,52 @@ async def test_an_interrupt_is_a_failed_turn_and_the_conversation_goes_on(kwargs
     assert (await run_turn(agent, "again", first.conversation)).reply == "three"
 
 
-def test_a_saved_test_carries_the_messages_and_gives_a_checkpointer_a_thread():
+def test_a_saved_test_awaits_its_turns_and_carries_the_messages():
     plain = saved_test(LangChainConnector(ScriptedChatModel()))
-    assert plain.run == "agent.invoke"
+    # The studio runs the agent with ainvoke: so does the test, or tools and middleware
+    # that are asynchronous only would work in the studio and fail in the test.
+    assert plain.run == "await agent.ainvoke"
+    assert plain.awaited
+    assert plain.marker == '@pytest.mark.asyncio(loop_scope="session")'
+    assert plain.notes == (ASYNC,)
     assert (plain.first.before, plain.first.after) == ('{"messages": [HumanMessage(', ")]}")
     assert plain.later.before == '{"messages": [*result["messages"], HumanMessage('
     assert plain.first.arguments == plain.later.arguments == ()
     assert plain.imports == ("from langchain_core.messages import HumanMessage",)
     assert plain.reply == 'result["messages"][-1].content'
-    assert plain.offline.before_build == (
-        "monkeypatch.setattr(",
-        '    atom.connector, "model", FakeListChatModel(responses=["offline"])',
-        ")",
-    )
     assert plain.offline.after_build == ()
-    assert not plain.awaited
 
     kept = saved_test(LangChainConnector(ScriptedChatModel(), checkpointer=InMemorySaver()))
     assert kept.first.arguments == kept.later.arguments == (THREAD,)
     assert kept.imports[-1] == "from uuid import uuid4"
+
+
+def test_the_stand_in_of_an_offline_test_takes_the_atoms_tools_and_calls_none():
+    offline = saved_test(LangChainConnector(ScriptedChatModel())).offline
+    assert offline.definitions[0] == "class OfflineNucleus(FakeListChatModel):"
+    assert offline.before_build == (
+        'monkeypatch.setattr(atom.connector, "model", OfflineNucleus(responses=["offline"]))',
+    )
+    assert offline.notes == ()
+    scope: dict[str, Any] = {}
+    exec("\n".join([*offline.imports, "", "", *offline.definitions]), scope)
+    stand_in = scope["OfflineNucleus"](responses=["offline"])
+    # LangChain's own fake refuses tools with an error, which a fallback middleware
+    # takes as a reason to call another model.
+    assert stand_in.bind_tools([lookup]) is stand_in
+    assert stand_in.invoke("hello").tool_calls == []
+
+
+class Quiet(AgentMiddleware):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("middleware", "expected"), [(None, ()), ([], ()), ([Quiet()], (MIDDLEWARE,))]
+)
+def test_an_atom_with_middleware_is_told_what_an_offline_test_cannot_promise(
+    middleware: Any, expected: tuple[str, ...]
+):
+    kwargs = {} if middleware is None else {"middleware": middleware}
+    connector = LangChainConnector(ScriptedChatModel(), **kwargs)
+    assert saved_test(connector).offline.notes == expected

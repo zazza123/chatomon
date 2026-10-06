@@ -1015,7 +1015,7 @@ def test_a_checkbox_whose_request_fails_goes_back_to_what_the_card_shows(page: P
 
 
 SMOKE = {
-    "langchain": ("LangChainConnector · ScriptedChatModel", "agent.invoke("),
+    "langchain": ("LangChainConnector · ScriptedChatModel", "await agent.ainvoke("),
     "maf": ("MAFConnector · ScriptedClient", "await agent.run("),
     "maf_foundry": ("MAFFoundryConnector · remote-agent (version 3)", "await agent.run("),
 }

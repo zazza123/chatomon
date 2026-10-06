@@ -783,6 +783,10 @@ def refund_order(order_id: str) -> str:
 '''
 KEEPS_OFFLINE = "    # No model is called in this test: the test model keeps the nucleus offline."
 ASYNC = "Microsoft Agent Framework is asynchronous: the test needs `pytest-asyncio` 0.24 or later."
+LANGCHAIN_ASYNC = (
+    "The studio runs a LangChain agent asynchronously, and so does the test: it needs "
+    "`pytest-asyncio` 0.24 or later."
+)
 
 
 def sent(code: str, name: str) -> list[str]:
@@ -887,9 +891,7 @@ def test_every_framework_keeps_the_atoms_tools_from_running_offline(
     atom = session.atom
     kept = tuple(orb for orb in atom.input_orbitals if orb.name != "no_refunds")
     monkeypatch.setattr(atom, "input_orbitals", kept)
-    # LangChain's fake model cannot take the atom's tools: the card says so in a note.
-    failure = NotImplementedError if framework.name == "langchain" else AssertionError
-    with pytest.raises(failure):
+    with pytest.raises(AssertionError):  # on what the test expects, in every framework
         run_saved(test, monkeypatch)
     assert sys.modules["shop"].CALLED == []
 
@@ -901,9 +903,10 @@ def test_a_langchain_test_offline_needs_neither_the_providers_package_nor_its_ke
     session = project(module=text)
     say(session, "I want a refund")
     test = save(session)
-    assert (
-        '        atom.connector, "model", FakeListChatModel(responses=["offline"])\n' in test.code
+    offline = (
+        '    monkeypatch.setattr(atom.connector, "model", OfflineNucleus(responses=["offline"]))'
     )
+    assert f"{offline}\n" in test.code
     # Only now a model the atom cannot build here: the saved test replaces it before it builds.
     named = text.replace("LangChainConnector(Nucleus())", 'LangChainConnector("nowhere:model")')
     assert named != text
@@ -927,17 +930,96 @@ def test_a_langchain_atom_with_a_checkpointer_gives_every_call_a_thread(project,
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_a_langchain_test_says_what_its_fake_model_cannot_do(project):
+def test_a_langchain_test_is_a_coroutine_with_a_stand_in_of_its_own(project, monkeypatch):
     session = project(module=module_of("langchain"))
     say(session, "I want a refund")
-    assert save(session).notes[:2] == [
-        "No model is called in this test: it runs offline, with LangChain's "
-        "`FakeListChatModel` in place of the nucleus.",
-        "If your code lets a message through, the test fails; on an atom with tools it fails "
-        "with `NotImplementedError`, because `FakeListChatModel` cannot take them.",
+    offline = save(session)
+    lines = offline.code.split("\n")
+    marker = lines.index('@pytest.mark.asyncio(loop_scope="session")')
+    assert lines[marker + 1] == (
+        "async def test_i_want_a_refund(monkeypatch: pytest.MonkeyPatch) -> None:"
+    )
+    assert "class OfflineNucleus(FakeListChatModel):" in lines
+    call = '    result = await agent.ainvoke({"messages": [HumanMessage("I want a refund")]})'
+    assert call in lines
+    assert offline.notes[:2] == [
+        "No model is called in this test: it runs offline, with a chat model of its own, "
+        "`OfflineNucleus`, in place of the nucleus.",
+        LANGCHAIN_ASYNC,
     ]
+    run_saved(offline, monkeypatch)
+
     say(session, "hello")
-    assert all("FakeListChatModel" not in note for note in save(session, alone=True).notes)
+    online = save(session, alone=True)
+    assert "OfflineNucleus" not in online.code
+    assert "    await agent.ainvoke(" in online.code
+    assert online.notes[1] == LANGCHAIN_ASYNC
+    run_saved(online, monkeypatch)
+
+
+HOOK = '''
+from langchain.agents.middleware import AgentMiddleware  # noqa: E402
+
+
+class Audit(AgentMiddleware):
+    """A middleware written for an asynchronous application: it has no synchronous hook."""
+
+    async def aafter_agent(self, state: Any, runtime: Any) -> None:
+        return None
+'''
+
+
+def test_a_langchain_atom_with_an_asynchronous_hook_saves_a_test_that_passes(project, monkeypatch):
+    text = module_of(
+        "langchain",
+        connector="LangChainConnector(Nucleus(), middleware=[Audit()])",
+        before_atom=HOOK,
+    )
+    session = project(module=text)
+    say(session, "I want a refund", "hello")
+    assert [turn.error for turn in session.turns] == [None, None]
+    # The studio ran both turns: the tests saved from them run on the unchanged code.
+    run_saved(save(session, upto=1), monkeypatch)
+    run_saved(save(session, alone=True), monkeypatch)
+
+
+FALLBACK = (
+    TOOL
+    + '''
+from langchain.agents.middleware import ModelFallbackMiddleware  # noqa: E402
+
+
+class Fallback(Nucleus):
+    """The model a fallback middleware turns to when the first one fails."""
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs: Any) -> ChatResult:
+        CALLED.append("the fallback model")
+        return super()._generate(messages, stop, run_manager, **kwargs)
+'''
+)
+
+
+def test_a_langchain_fallback_is_not_reached_by_an_offline_test(project, monkeypatch):
+    connector = (
+        "LangChainConnector(Nucleus(), tools=[refund_order], "
+        "middleware=[ModelFallbackMiddleware(Fallback())])"
+    )
+    session = project(module=module_of("langchain", connector=connector, before_atom=FALLBACK))
+    say(session, "I want a refund")
+    test = save(session)
+    assert test.integration is False
+    assert (
+        "This atom has middleware of its own: one that chooses the model can still reach a "
+        "real model in this test."
+    ) in test.notes
+    # The code changes and lets the message through. A stand-in that refused the atom's
+    # tools with an error would send the fallback middleware to its other model.
+    atom = session.atom
+    kept = tuple(orb for orb in atom.input_orbitals if orb.name != "no_refunds")
+    monkeypatch.setattr(atom, "input_orbitals", kept)
+    with pytest.raises(AssertionError):
+        run_saved(test, monkeypatch)
+    assert sys.modules["shop"].CALLED == []
 
 
 @pytest.mark.parametrize("name", ["maf", "maf_foundry"])
