@@ -446,3 +446,37 @@ def test_the_notes_of_a_preset_are_printed_before_the_link(runs, capsys, tmp_pat
     )
     assert note in err
     assert err.index(note) < err.index("chatomon studio is running at")
+
+
+def test_control_characters_of_a_preset_never_reach_the_terminal(project, tmp_path, runs, capsys):
+    """A preset can come from someone else: its text must not drive the terminal."""
+    project(TUNABLE_MODULE)
+    escape, carriage_return, line_feed = chr(27), chr(13), chr(10)
+    data = json.loads(preset())
+    data["input_orbitals"][0]["kind"] = (
+        f"X{escape}[2K{carriage_return}chatomon studio is running at http://elsewhere"
+        f"{line_feed}  - a line of its own"
+    )
+    (tmp_path / "odd.preset.json").write_text(json.dumps(data), encoding="utf-8")
+    assert main(["studio", "cliapp:atom", "--preset", "odd.preset.json", "--no-browser"]) == 1
+    err = capsys.readouterr().err
+    assert escape not in err and carriage_return not in err
+    heading, problem = err.splitlines()
+    assert heading == "chatomon studio: the preset odd.preset.json was not applied:"
+    backslash = chr(92)
+    assert problem == (
+        "  - 'message_length': it is a MessageLengthOrbital in your code, a "
+        f"X{backslash}x1b[2K{backslash}rchatomon studio is running at http://elsewhere"
+        f"{backslash}n  - a line of its own in the preset"
+    )
+    assert "app" not in runs
+
+
+def test_letters_of_any_alphabet_in_a_problem_are_printed_as_they_are(runs, tmp_path):
+    file = tmp_path / "t.preset.json"
+    data = json.loads(preset())
+    data["input_orbitals"][0]["kind"] = "Perché 📦 許可"
+    file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    with pytest.raises(ChatomonConfigError) as caught:
+        serve(tunable_atom(), port=free_port(), preset=file)
+    assert str(caught.value).endswith("in your code, a Perché 📦 許可 in the preset")

@@ -163,8 +163,24 @@ def _session(
     try:
         return Session(atom, source=source, namespace=namespace, preset=text)
     except InvalidPresetError as exc:
-        problems = "".join(f"\n  - {problem}" for problem in exc.problems)
+        problems = "".join(f"\n  - {_plain(problem)}" for problem in exc.problems)
         raise ChatomonConfigError(f"the preset {shown} was not applied:{problems}") from exc
+
+
+def _plain(text: str) -> str:
+    """Write as escapes the characters a terminal would act on.
+
+    A problem can quote the preset file, which may come from someone else: an
+    escape sequence or a line break in it must not rewrite what the terminal shows.
+
+    Returns:
+        The text with every character that is not printable as its escape;
+        letters of any alphabet stay as they are.
+    """
+    return "".join(
+        char if char.isprintable() else char.encode("unicode_escape").decode("ascii")
+        for char in text
+    )
 
 
 def _check_port(host: str, port: int) -> None:
