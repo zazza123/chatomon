@@ -1006,6 +1006,21 @@ async def test_a_module_that_runs_a_loop_of_its_own_when_imported_can_be_reloade
     assert session.state()["atom"]["instructions"] == "Be kind."
 
 
+async def test_code_that_exits_while_it_is_loaded_does_not_stop_the_studio(shop):
+    """A guard a developer adds: `if "KEY" not in os.environ: sys.exit("set KEY")`."""
+    session = started()
+    before = (session.state(), sys.modules["shop"])
+    shop("settings.py", 'import sys\n\nsys.exit("set SHOP_KEY first")\n')
+    with pytest.raises(ChatomonConfigError) as error:
+        await session.reload()
+    assert str(error.value) == (
+        "the code called sys.exit('set SHOP_KEY first') while it was loaded"
+    )
+    assert isinstance(error.value.__cause__, SystemExit)
+    assert (session.state(), sys.modules["shop"]) == before
+    assert (await say(session, "hello")).reply == "Hi"
+
+
 async def test_the_notes_the_reloaded_atom_adds_are_told_once(shop):
     session = started()
     assert session.notes == []

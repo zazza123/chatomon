@@ -491,11 +491,16 @@ class Session:
                     f"{module!r} is outside the directory the studio was started from, so it "
                     "is not loaded again: restart the studio to load its changes"
                 )
-            atom = loading.load(self.source)
             try:
+                atom = loading.load(self.source)
                 return self._prepared(atom)
             except ChatomonError:
                 raise
+            except SystemExit as exc:
+                # In the loop it would end the studio, with the session and its conversation.
+                raise ChatomonConfigError(
+                    f"the code called sys.exit({exc.code!r}) while it was loaded"
+                ) from exc
             except Exception as exc:
                 # What a framework raises when it builds, such as a model whose key is not set.
                 raise ChatomonConfigError(
