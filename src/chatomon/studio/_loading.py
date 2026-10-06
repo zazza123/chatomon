@@ -1,4 +1,9 @@
-"""Find the atom the studio opens: `module:attribute`, an instance or a factory."""
+"""Find the atom the studio opens: `module:attribute`, an instance or a factory.
+
+The studio can also load it again while it runs:
+[reimporting][chatomon.studio._loading.reimporting] makes the modules of the
+developer's project be imported anew.
+"""
 
 from __future__ import annotations
 
@@ -6,10 +11,91 @@ import importlib
 import inspect
 import os
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 from chatomon.atom import Atom
 from chatomon.errors import ChatomonConfigError
+
+_INSTALLED = {"site-packages", "dist-packages"}
+_OWN = Path(__file__).resolve().parents[1]
+"""chatomon's own package: importing it again would break the studio that is running."""
+
+
+def _inside(path: Path, directory: Path) -> bool:
+    return path == directory or directory in path.parents
+
+
+def project_modules(root: Path) -> dict[str, ModuleType]:
+    """Return the imported modules that belong to the project in a directory.
+
+    They are read from `sys.modules` every time: nothing is listed or remembered.
+    A module belongs to the project when its file is under `root`. Left out: what
+    is installed (an environment inside the directory, a `site-packages` folder),
+    chatomon's own modules, and `__main__`.
+
+    Args:
+        root: The directory the studio was started from.
+
+    Returns:
+        The modules by name.
+    """
+    root = root.resolve()
+    prefixes = {Path(p).resolve() for p in (sys.prefix, sys.base_prefix, sys.exec_prefix)}
+    # Only an environment inside the project hides files of it: with a system
+    # interpreter in /usr, a project in /usr/src/app is still the project.
+    environments = [prefix for prefix in prefixes if root in prefix.parents]
+    found: dict[str, ModuleType] = {}
+    for name, module in list(sys.modules.items()):
+        if name == "__main__" or not isinstance(module, ModuleType):
+            continue
+        # A package without an `__init__.py` has no file: it is where its folders are.
+        file = getattr(module, "__file__", None)
+        places = [file] if file else list(getattr(module, "__path__", ()))
+        for place in places:
+            path = Path(place).resolve()
+            if (
+                root in path.parents
+                and not _INSTALLED.intersection(path.relative_to(root).parts)
+                and not any(_inside(path, environment) for environment in environments)
+                and not _inside(path, _OWN)
+            ):
+                found[name] = module
+                break
+    return found
+
+
+@contextmanager
+def reimporting(root: Path) -> Iterator[None]:
+    """Make the project's modules be imported again inside the block, or not at all.
+
+    On entry the modules of the project leave `sys.modules`, so an import inside
+    the block runs their code again and sees what changed in any of them. If the
+    block raises, what it imported is removed and the modules that were there come
+    back, the same objects: the code that was running is still what is imported.
+
+    Args:
+        root: The directory the studio was started from.
+
+    Yields:
+        Nothing: the block imports what it needs, usually with
+        [load][chatomon.studio._loading.load].
+    """
+    removed = project_modules(root)
+    for name in removed:
+        del sys.modules[name]
+    # A file created since the last import is not in the finders' caches.
+    importlib.invalidate_caches()
+    try:
+        yield
+    except BaseException:
+        for name in project_modules(root):
+            del sys.modules[name]
+        sys.modules.update(removed)
+        raise
 
 
 def load(spec: str) -> Atom[Any]:
