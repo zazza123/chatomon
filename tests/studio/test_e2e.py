@@ -30,6 +30,7 @@ from chatomon.studio import _kinds as kinds
 from chatomon.studio._app import create_app
 from chatomon.studio._session import Session
 from tests.fakes import ScriptedOrbital
+from tests.studio import frameworks
 
 pytestmark = pytest.mark.e2e
 TOKEN = "e2e-token"
@@ -1011,3 +1012,40 @@ def test_a_checkbox_whose_request_fails_goes_back_to_what_the_card_shows(page: P
     # The card still shows the test with both turns, and that is what would be written.
     expect(box).to_be_checked()
     expect(card(page).locator("pre.code")).to_contain_text('agent.run_sync("hello")')
+
+
+SMOKE = {
+    "langchain": ("LangChainConnector · ScriptedChatModel", "agent.invoke("),
+    "maf": ("MAFConnector · ScriptedClient", "await agent.run("),
+    "maf_foundry": ("MAFFoundryConnector · remote-agent (version 3)", "await agent.run("),
+}
+
+
+@pytest.mark.parametrize("name", list(SMOKE))
+def test_an_atom_of_another_framework_runs_a_turn_and_saves_it(page: Page, monkeypatch, name):
+    described, call = SMOKE[name]
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=frameworks.harness(name, monkeypatch).connector(REPLY, "Again."),
+        input_orbitals=[ScriptedOrbital(name="guard")],
+        output_orbitals=[ScriptedOrbital(name="judge")],
+    )
+    with running(atom) as studio:
+        open_studio(page, studio)
+        send(page, "Are you open?", REPLY)
+        send(page, "And tomorrow?", "Again.")  # the conversation goes on in this framework too
+        open_report(page, 1)
+        expect(card(page)).to_contain_text("guard")
+        expect(card(page)).to_contain_text("judge")
+        card(page).get_by_role("button", name="Close").last.click()
+
+        page.get_by_role("button", name="speedypack tests:atom").click()
+        expect(card(page)).to_contain_text(described)
+        card(page).get_by_role("button", name="Close").last.click()
+
+        save_as_test(page, 2)
+        code = card(page).locator("pre.code")
+        expect(code).to_contain_text(call)
+        expect(code).to_contain_text("# Turn 2: answered")
+        expect(card(page)).to_contain_text("is marked integration")
