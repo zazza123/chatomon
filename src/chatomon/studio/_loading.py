@@ -44,7 +44,8 @@ def project_modules(root: Path) -> dict[str, ModuleType]:
     They are read from `sys.modules` every time: nothing is listed or remembered.
     A module belongs to the project when its file is under `root`. Left out: what
     is installed (an environment inside the directory, a `site-packages` folder),
-    chatomon's own modules, and `__main__`.
+    chatomon's own modules, `__main__`, and a package that also holds modules
+    from outside the project.
 
     Args:
         root: The directory the studio was started from.
@@ -78,7 +79,21 @@ def project_modules(root: Path) -> dict[str, ModuleType]:
             ):
                 found[name] = module
                 break
-    return found
+    # A package that also holds modules from outside the project stays: imported again, it
+    # would not have them as attributes, and `import package.module` would not set them.
+    staying = (name for name in sys.modules if name not in found)
+    parents = {name[:dot] for name in staying for dot, char in enumerate(name) if char == "."}
+    return {name: module for name, module in found.items() if name not in parents}
+
+
+def _bound(name: str, module: ModuleType) -> bool:
+    """Tell whether a module is the attribute its package has under its name.
+
+    Returns:
+        False for a module of the top level, or one its package does not hold.
+    """
+    package, _, attribute = name.rpartition(".")
+    return bool(package) and getattr(sys.modules.get(package), attribute, None) is module
 
 
 @contextmanager
@@ -105,9 +120,16 @@ def reimporting(root: Path) -> Iterator[frozenset[str]]:
     try:
         yield frozenset(removed)
     except BaseException:
-        for name in project_modules(root):
+        for name, module in project_modules(root).items():
             del sys.modules[name]
+            # A package that stayed must not keep a module of the attempt as an attribute.
+            if _bound(name, module):
+                delattr(sys.modules[name.rpartition(".")[0]], name.rpartition(".")[2])
         sys.modules.update(removed)
+        for name, module in removed.items():
+            package, _, attribute = name.rpartition(".")
+            if package in sys.modules:
+                setattr(sys.modules[package], attribute, module)
         raise
 
 

@@ -349,3 +349,56 @@ def test_reimporting_says_which_modules_it_took_out(sources, tmp_path):
         assert removed == {"app", "helpers"}
         assert "app" not in sys.modules
         load("app:atom")
+
+
+SHARED_INIT = "__path__ = __import__('pkgutil').extend_path(__path__, __name__)\n"
+COMPANY_APP = """
+    from pydantic_ai.models.test import TestModel
+    from chatomon import Atom
+    from chatomon.connectors.pydantic_ai import PydanticAIConnector
+    import company.lib
+
+    NAME = "one"
+    atom = Atom(
+        name=NAME + company.lib.SUFFIX,
+        instructions="Be brief.",
+        connector=PydanticAIConnector(TestModel()),
+    )
+"""
+
+
+@pytest.fixture(params=["namespace package", "package extended with pkgutil"])
+def company(request, sources, tmp_path_factory):
+    """A package shared with code outside the project: `company.app` here, `company.lib` there."""
+    elsewhere = tmp_path_factory.mktemp("elsewhere")
+    (elsewhere / "company").mkdir()
+    (elsewhere / "company" / "lib.py").write_text('SUFFIX = "-lib"\n', encoding="utf-8")
+    if request.param != "namespace package":
+        (elsewhere / "company" / "__init__.py").write_text(SHARED_INIT, encoding="utf-8")
+        sources("company/__init__.py", SHARED_INIT)
+    sys.path.append(str(elsewhere))
+    sources("company/app.py", COMPANY_APP)
+    yield sources
+    for name in [name for name in sys.modules if name.split(".")[0] == "company"]:
+        del sys.modules[name]
+
+
+def test_a_package_shared_with_code_outside_the_project_can_be_reloaded(company, tmp_path):
+    assert load("company.app:atom").name == "one-lib"
+    library = sys.modules["company.lib"]
+    company("company/app.py", COMPANY_APP.replace('"one"', '"two"'))
+    assert again("company.app:atom", tmp_path).name == "two-lib"
+    assert sys.modules["company.lib"] is library
+    assert sys.modules["company"].app is sys.modules["company.app"]
+
+
+def test_a_failed_import_puts_the_attributes_of_a_shared_package_back(company, tmp_path):
+    load("company.app:atom")
+    before = sys.modules["company.app"]
+    company("company/app.py", "import company.fresh\ndef broken(:\n")
+    company("company/fresh.py", "VALUE = 1\n")
+    with pytest.raises(ChatomonConfigError):
+        again("company.app:atom", tmp_path)
+    assert sys.modules["company.app"] is before
+    assert sys.modules["company"].app is before
+    assert not hasattr(sys.modules["company"], "fresh")
