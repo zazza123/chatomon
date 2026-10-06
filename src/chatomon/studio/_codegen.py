@@ -108,8 +108,8 @@ def literal(value: Any) -> str:
     return repr(value)
 
 
-def _text(value: str) -> str:
-    """Write text; with line breaks, one literal per line, to go inside parentheses.
+def text_literal(value: str) -> str:
+    """Write text as code; with line breaks, one literal per line, to go inside parentheses.
 
     Returns:
         One literal, or several separated by line breaks.
@@ -181,7 +181,7 @@ class _Writer:
             return name, None, set()
         if isinstance(value, Knowledge):
             if value.title is None:
-                return _text(value.text), None, set()
+                return text_literal(value.text), None, set()
             text = f"Knowledge({literal(value.text)}, title={literal(value.title)})"
             return text, None, {("chatomon", "Knowledge")}
         if isinstance(value, str | int | float):
@@ -213,7 +213,7 @@ class _Writer:
                 if isinstance(raw, Knowledge):
                     text, comment, more = self._object(orb.name, key, raw)
                 elif isinstance(raw, str):
-                    text, comment, more = _text(raw), None, set()
+                    text, comment, more = text_literal(raw), None, set()
                 else:
                     text, comment, more = literal(kinds.plain(raw)), None, set()
             args.append((key, text, comment))

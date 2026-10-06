@@ -9,7 +9,7 @@ from chatomon import Atom, ChatomonConfigError, Verdict
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER
 from chatomon.studio._runners import check_supported
-from chatomon.studio._runners.pydantic_ai import describe, run_turn
+from chatomon.studio._runners.pydantic_ai import describe, run_turn, saved_test
 from tests.fakes import FakeConnector, ScriptedOrbital
 
 
@@ -71,3 +71,13 @@ def test_describe_names_the_connector_and_the_model(model: Any, expected: str):
         "connector": "PydanticAIConnector",
         "model": expected,
     }
+
+
+def test_the_runner_supplies_pydantic_ais_part_of_a_saved_test():
+    lines = saved_test()
+    assert lines.test_model == ("pydantic_ai.models.test", "TestModel")
+    assert lines.test_model_label == "PydanticAI's `TestModel`"
+    assert lines.offline == 'monkeypatch.setattr(atom.connector, "model", TestModel())'
+    assert lines.run == "agent.run_sync"
+    assert lines.resume == "message_history=result.all_messages()"
+    assert lines.reply == "result.output"
