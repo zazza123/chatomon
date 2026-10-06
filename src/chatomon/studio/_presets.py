@@ -4,6 +4,10 @@ A preset never holds an atom. It says which orbitals are on, their order, the
 settings the studio changed on the orbitals from code, and the orbitals added
 in the studio. Applying it starts from the atom's own chains, so the code stays
 the source of truth for whatever the preset does not mention.
+
+The same layer takes a session's changes over code that was loaded again:
+[carried][chatomon.studio._presets.carried] applies it entry by entry and
+drops, instead of refusing, what no longer applies.
 """
 
 from __future__ import annotations
@@ -37,6 +41,18 @@ class InvalidPresetError(ChatomonError):
     def __init__(self, problems: list[str]) -> None:
         super().__init__("the preset was not applied")
         self.problems = problems
+
+
+class _GoneError(RefusedError):
+    """The code does not define the orbital an entry names, on that side."""
+
+
+class _OtherClassError(RefusedError):
+    """The code defines the orbital an entry names as another class."""
+
+    def __init__(self, message: str, *, now: str) -> None:
+        super().__init__(message)
+        self.now = now
 
 
 def _entry(chains: Chains, entry: Entry) -> dict[str, Any]:
@@ -133,7 +149,9 @@ def _from_code(
         The chains with the entry's settings applied.
 
     Raises:
-        RefusedError: With the reason the entry cannot be applied.
+        _GoneError: If the code does not define it on that side.
+        _OtherClassError: If the code defines it as another class.
+        RefusedError: With any other reason the entry cannot be applied.
     """
     name = raw["name"]
     try:
@@ -142,12 +160,13 @@ def _from_code(
     except UnknownOrbitalError:
         base = None
     if base is None:
-        raise RefusedError(
+        raise _GoneError(
             "it is not in your code, so a preset cannot bring it back: add it to your code first"
         )
     if type(base).__name__ != raw["kind"]:
-        raise RefusedError(
-            f"it is a {type(base).__name__} in your code, a {raw['kind']} in the preset"
+        raise _OtherClassError(
+            f"it is a {type(base).__name__} in your code, a {raw['kind']} in the preset",
+            now=type(base).__name__,
         )
     if id(base) in shared:
         if shared[id(base)] != settings:
@@ -158,6 +177,25 @@ def _from_code(
         return result
     shared[id(base)] = settings
     return result.edited(side, name, settings) if settings else result
+
+
+def _entry_applied(
+    result: Chains, side: Side, raw: dict[str, Any], shared: dict[int, dict[str, Any]]
+) -> Chains:
+    """Apply one well-formed entry: its settings, or the orbital it adds, and its switch.
+
+    Returns:
+        The chains with the entry applied.
+
+    Raises:
+        ChatomonError: With the reason the entry cannot be applied.
+    """  # noqa: DOC502 - raised by the helpers
+    name, settings = raw["name"], raw.get("settings") or {}
+    if raw["from"] == "code":
+        result = _from_code(result, side, raw, settings, shared)
+    else:
+        result = result.added(side, raw["kind"], {**settings, "name": name})
+    return result if raw["enabled"] else result.switched(side, name, False)
 
 
 def applied(text: str, chains: Chains, *, atom: str) -> tuple[Chains, list[str]]:
@@ -203,12 +241,7 @@ def applied(text: str, chains: Chains, *, atom: str) -> tuple[Chains, list[str]]
                 problems.append(f"{name!r}: `name` is the entry's own field, not a setting")
                 continue
             try:
-                if raw["from"] == "code":
-                    result = _from_code(result, side, raw, settings, shared)
-                else:
-                    result = result.added(side, raw["kind"], {**settings, "name": name})
-                if not raw["enabled"]:
-                    result = result.switched(side, name, False)
+                result = _entry_applied(result, side, raw, shared)
             except ChatomonError as exc:
                 problems.append(f"{name!r}: {exc}")
                 continue
@@ -235,3 +268,82 @@ def applied(text: str, chains: Chains, *, atom: str) -> tuple[Chains, list[str]]
         for name in differing
     ]
     return result, warnings
+
+
+_LOST = "what the studio changed on it was dropped."
+
+
+def carried(session: Chains, code: Chains) -> tuple[Chains, list[str]]:
+    """Lay a session's changes over chains built from code that was loaded again.
+
+    The rules of an entry are those of [applied][chatomon.studio._presets.applied],
+    but an entry that no longer applies is dropped and said, and the others are
+    kept. An orbital from code that the session had not changed is not looked
+    at: whether it is still there is the code's matter.
+
+    Args:
+        session: The session's chains before the code was loaded again.
+        code: The chains of the atom the code gives now.
+
+    Returns:
+        The new chains, and one sentence for each entry that was dropped.
+    """
+    result = code.initial()
+    in_code = {orb.name for side in SIDES for orb in code.code[side]}
+    dropped: list[str] = []
+    shared: dict[int, dict[str, Any]] = {}
+    for side in SIDES:
+        for entry in session.work[side]:
+            raw = _entry(session, entry)
+            name = raw["name"]
+            if entry.base is not None and raw["enabled"] and "settings" not in raw:
+                continue
+            if entry.base is None and name in in_code:
+                dropped.append(
+                    f"{name!r} is now in your code: the one added in the studio was dropped."
+                )
+                continue
+            try:
+                result = _entry_applied(result, side, raw, shared)
+            except _GoneError:
+                dropped.append(f"{name!r} is no longer in your code: {_LOST}")
+            except _OtherClassError as exc:
+                dropped.append(f"{name!r} is a {exc.now} in your code now: {_LOST}")
+            except ChatomonError as exc:
+                if entry.base is not None:
+                    dropped.append(f"what the studio changed on {name!r} was dropped: {exc}")
+                else:
+                    dropped.append(f"{name!r}, added in the studio, was dropped: {exc}")
+    for side in SIDES:
+        result = _ordered(result, session, side)
+    return result, dropped
+
+
+def _ordered(result: Chains, session: Chains, side: Side) -> Chains:
+    """Give a chain its order after the code was loaded again.
+
+    A chain the studio had reordered keeps the session's order, and what is new
+    in the code goes last, as in a preset. Any other chain takes the order of
+    the code, and an orbital added in the studio stays after the entry it
+    followed, or after the nearest earlier one that is still there.
+
+    Returns:
+        The chains with that side in order.
+    """
+    present = [entry.orbital.name for entry in result.work[side]]
+    was = [entry.orbital.name for entry in session.work[side]]
+    if any(change.type == "order" and change.side == side for change in session.changes()):
+        order = [name for name in was if name in present]
+        order += [name for name in present if name not in order]
+    else:
+        added = {entry.orbital.name for entry in result.work[side] if entry.base is None}
+        order = [name for name in present if name not in added]
+        anchor: str | None = None
+        for name in was:
+            if name in added:
+                order.insert(order.index(anchor) + 1 if anchor is not None else 0, name)
+            if name in present:
+                anchor = name
+    for position, name in enumerate(order):
+        result = result.moved(side, name, position)
+    return result

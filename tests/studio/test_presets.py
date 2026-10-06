@@ -8,9 +8,12 @@ from pydantic_ai.models.test import TestModel
 from chatomon import Atom, ChatomonConfigError, Knowledge, Verdict
 from chatomon._version import __version__
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
-from chatomon.orbitals import JudgeOrbital, MessageLengthOrbital
-from chatomon.studio._chains import RefusedError
-from chatomon.studio._presets import InvalidPresetError
+from chatomon.orbitals import JudgeOrbital, MessageLengthOrbital, TurnLimitOrbital
+from chatomon.orbitals.base import Orbital
+from chatomon.schemas import Side
+from chatomon.studio import _kinds as kinds
+from chatomon.studio._chains import Chains, RefusedError
+from chatomon.studio._presets import InvalidPresetError, carried
 from chatomon.studio._runners import pydantic_ai as pydantic_ai_runner
 from chatomon.studio._session import Session
 from tests.fakes import ScriptedOrbital
@@ -591,3 +594,227 @@ def test_the_list_of_notes_a_runner_returns_is_not_changed_by_a_preset(monkeypat
         "'faithfulness' differs from the exported preset: your code or chatomon changed since.",
     ]
     assert kept == ["a note the runner keeps"]
+
+
+# --- The changes of a session carried over code that was loaded again -----------------------
+
+
+def limit(max_words: int | None = 60, max_chars: int | None = None) -> MessageLengthOrbital:
+    return MessageLengthOrbital(max_words=max_words, max_chars=max_chars)
+
+
+def scope() -> ScriptedOrbital:
+    return ScriptedOrbital(name="scope")
+
+
+def refunds() -> ScriptedOrbital:
+    return ScriptedOrbital(name="no_refunds")
+
+
+def judge(name: str = "faithfulness") -> JudgeOrbital:
+    return JudgeOrbital(name=name, model="test:judge", instructions="Check.")
+
+
+def code(inputs: list[Orbital], outputs: list[Orbital] | None = None) -> Session:
+    """A session on code with these orbitals: what the studio has after a load."""
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(TestModel(custom_output_text="Hi")),
+        input_orbitals=inputs,
+        output_orbitals=outputs or [],
+    )
+    return Session(atom, source="app:atom")
+
+
+def names(chains: Chains, side: Side = "input") -> list[str]:
+    return [entry.orbital.name for entry in chains.work[side]]
+
+
+def changes(chains: Chains) -> list[str]:
+    return [change.text for change in chains.changes()]
+
+
+def test_a_setting_changed_in_the_studio_goes_over_the_new_values_of_the_code():
+    session = code([limit(), scope()])
+    session.edit("input", "message_length", {"max_words": 80})
+    after = code([limit(max_chars=500), scope()]).chains
+    result, dropped = carried(session.chains, after)
+    assert dropped == []
+    values = kinds.values(result.work["input"][0].orbital)
+    assert (values["max_words"], values["max_chars"]) == (80, 500)
+    assert result.work["input"][0].base is after.code["input"][0]
+    assert changes(result) == ["message_length.max_words changed"]
+
+
+def test_a_setting_the_code_now_has_gives_back_the_codes_object():
+    """What pasting Copy as code into the code and loading it again gives."""
+    session = code([limit(), scope()])
+    session.edit("input", "message_length", {"max_words": 80})
+    after = code([limit(max_words=80), scope()]).chains
+    result, dropped = carried(session.chains, after)
+    assert dropped == []
+    assert result.work["input"][0].orbital is after.code["input"][0]
+    assert changes(result) == []
+
+
+def test_an_orbital_that_was_off_stays_off_also_when_it_is_read_only():
+    session = code([limit(), scope()])
+    session.switch("input", "scope", False)
+    session.switch("input", "message_length", False)
+    result, dropped = carried(session.chains, code([limit(), scope()]).chains)
+    assert dropped == []
+    assert [entry.enabled for entry in result.work["input"]] == [False, False]
+    assert changes(result) == ["message_length turned off", "scope turned off"]
+
+
+def test_an_orbital_added_in_the_studio_is_carried_with_its_settings():
+    session = code([limit()], [judge()])
+    session.add("output", "JudgeOrbital", TONE)
+    before = session.chains.work["output"][1].orbital
+    result, dropped = carried(session.chains, code([limit()], [judge()]).chains)
+    assert dropped == []
+    tone = result.work["output"][1]
+    assert (tone.origin, tone.orbital.fingerprint()) == ("studio", before.fingerprint())
+    assert changes(result) == ["tone added"]
+
+
+def test_a_changed_orbital_that_left_the_code_is_dropped_and_said():
+    session = code([limit(), scope(), refunds()])
+    session.switch("input", "scope", False)
+    session.edit("input", "message_length", {"max_words": 80})
+    result, dropped = carried(session.chains, code([refunds()]).chains)
+    assert dropped == [
+        "'message_length' is no longer in your code: what the studio changed on it was dropped.",
+        "'scope' is no longer in your code: what the studio changed on it was dropped.",
+    ]
+    assert names(result) == ["no_refunds"]
+    assert changes(result) == []
+
+
+def test_an_untouched_orbital_that_left_the_code_says_nothing():
+    session = code([limit(), scope()])
+    session.edit("input", "message_length", {"max_words": 80})
+    result, dropped = carried(session.chains, code([limit()]).chains)
+    assert dropped == []
+    assert names(result) == ["message_length"]
+    assert changes(result) == ["message_length.max_words changed"]
+
+
+def test_an_orbital_that_became_another_class_loses_its_changes():
+    session = code([limit(), scope()])
+    session.edit("input", "message_length", {"max_words": 80})
+    after = code([ScriptedOrbital(name="message_length"), scope()]).chains
+    result, dropped = carried(session.chains, after)
+    assert dropped == [
+        "'message_length' is a ScriptedOrbital in your code now: "
+        "what the studio changed on it was dropped."
+    ]
+    assert result.work["input"][0].orbital is after.code["input"][0]
+    assert changes(result) == []
+
+
+def test_an_added_orbital_the_code_now_has_is_dropped_for_the_codes():
+    session = code([limit()], [judge()])
+    session.add("output", "JudgeOrbital", TONE)
+    after = code([limit()], [judge(), judge("tone")]).chains
+    result, dropped = carried(session.chains, after)
+    assert dropped == ["'tone' is now in your code: the one added in the studio was dropped."]
+    assert [entry.origin for entry in result.work["output"]] == ["code", "code"]
+    assert changes(result) == []
+
+
+def test_changes_the_new_code_refuses_are_dropped_with_the_reason():
+    session = code([limit(max_chars=100)])
+    session.edit("input", "message_length", {"max_words": None})
+    result, dropped = carried(session.chains, code([limit()]).chains)
+    assert dropped == [
+        "what the studio changed on 'message_length' was dropped: set max_words, max_chars or both"
+    ]
+    assert changes(result) == []
+
+
+def test_an_added_orbital_that_can_no_longer_be_added_is_dropped_with_the_reason(monkeypatch):
+    session = code([limit()])
+    session.add("input", "TurnLimitOrbital", {"max_turns": 3})
+    others = tuple(kind for kind in kinds.addable() if kind.cls is not TurnLimitOrbital)
+    monkeypatch.setattr(kinds, "addable", lambda: others)
+    result, dropped = carried(session.chains, code([limit()]).chains)
+    assert dropped == [
+        "'turn_limit', added in the studio, was dropped: "
+        "TurnLimitOrbital cannot be added from the studio: add it in your code"
+    ]
+    assert names(result) == ["message_length"]
+
+
+def test_a_chain_the_studio_never_reordered_takes_the_order_of_the_new_code():
+    session = code([limit(), scope(), refunds()], [judge()])
+    session.switch("input", "scope", False)
+    session.add("input", "TurnLimitOrbital", {"max_turns": 3})
+    after = code([ScriptedOrbital(name="first"), refunds(), scope(), limit()], [judge()]).chains
+    result, dropped = carried(session.chains, after)
+    assert dropped == []
+    # turn_limit followed no_refunds, and still does.
+    assert names(result) == ["first", "no_refunds", "turn_limit", "scope", "message_length"]
+    assert changes(result) == ["turn_limit added", "scope turned off"]
+
+
+def test_an_added_orbital_stays_after_the_entry_it_followed():
+    session = code([limit(), scope(), refunds()])
+    session.add("input", "TurnLimitOrbital", {"max_turns": 3, "name": "a"})
+    session.add("input", "TurnLimitOrbital", {"max_turns": 4, "name": "b"})
+    session.add("input", "TurnLimitOrbital", {"max_turns": 5, "name": "c"})
+    session.move("input", "a", 1)  # after message_length
+    session.move("input", "b", 2)  # after a
+    session.move("input", "c", 0)  # first
+    assert names(session.chains) == ["c", "message_length", "a", "b", "scope", "no_refunds"]
+    assert "input order changed" not in changes(session.chains)
+    after = code([ScriptedOrbital(name="first"), scope(), limit(), refunds()]).chains
+    result, dropped = carried(session.chains, after)
+    assert dropped == []
+    assert names(result) == ["c", "first", "scope", "message_length", "a", "b", "no_refunds"]
+
+
+def test_an_added_orbital_whose_neighbour_left_goes_after_the_one_before_it():
+    session = code([limit(), scope(), refunds()])
+    session.add("input", "TurnLimitOrbital", {"max_turns": 3})
+    session.move("input", "turn_limit", 2)  # after scope
+    result, dropped = carried(session.chains, code([limit(), refunds()]).chains)
+    assert dropped == []
+    assert names(result) == ["message_length", "turn_limit", "no_refunds"]
+    result, _ = carried(session.chains, code([refunds()]).chains)
+    assert names(result) == ["turn_limit", "no_refunds"]
+
+
+def test_a_chain_the_studio_reordered_keeps_its_order_and_new_orbitals_go_last():
+    session = code([limit(), scope(), refunds()])
+    session.move("input", "no_refunds", 0)
+    session.add("input", "TurnLimitOrbital", {"max_turns": 3})
+    after = code([ScriptedOrbital(name="first"), limit(), scope(), refunds()]).chains
+    result, dropped = carried(session.chains, after)
+    assert dropped == []
+    assert names(result) == ["no_refunds", "message_length", "scope", "turn_limit", "first"]
+    assert "input order changed" in changes(result)
+
+
+def test_an_instance_in_both_chains_is_carried_as_one():
+    def both() -> Session:
+        shared = limit()
+        return code([shared], [shared])
+
+    session = both()
+    session.edit("output", "message_length", {"max_words": 80})
+    result, dropped = carried(session.chains, both().chains)
+    assert dropped == []
+    assert result.work["input"][0].orbital is result.work["output"][0].orbital
+    assert kinds.values(result.work["input"][0].orbital)["max_words"] == 80
+    assert changes(result) == ["message_length.max_words changed"]
+
+
+def test_carrying_changes_never_touches_the_chains_it_reads():
+    session = code([limit(), scope()])
+    session.edit("input", "message_length", {"max_words": 80})
+    after = code([scope(), limit()]).chains
+    before = (dict(session.chains.work), dict(after.work))
+    carried(session.chains, after)
+    assert (dict(session.chains.work), dict(after.work)) == before
