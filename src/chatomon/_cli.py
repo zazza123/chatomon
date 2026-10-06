@@ -28,6 +28,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     studio.add_argument("--port", type=int, default=None, help="port to listen on (default: 8016)")
     studio.add_argument("--no-browser", action="store_true", help="print the link, do not open it")
+    studio.add_argument(
+        "--preset",
+        metavar="FILE",
+        default=None,
+        help="a preset file to apply to the atom when the studio starts",
+    )
     return parser
 
 
@@ -63,6 +69,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             host=args.host,
             port=port,
             open_browser=not args.no_browser,
+            preset=args.preset,
         )
     except ChatomonConfigError as exc:
         print(f"chatomon studio: {exc}", file=sys.stderr)

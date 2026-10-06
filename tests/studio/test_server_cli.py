@@ -1,3 +1,4 @@
+import json
 import logging
 import socket
 import subprocess
@@ -7,15 +8,19 @@ import threading
 import time
 import urllib.request
 from http.cookiejar import CookieJar
+from pathlib import Path
 
 import pytest
 from pydantic_ai.models.test import TestModel
+from starlette.testclient import TestClient
 
 import chatomon.studio.server as server
 from chatomon import Atom, ChatomonConfigError
 from chatomon._cli import main
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
+from chatomon.orbitals import MessageLengthOrbital
 from chatomon.studio import DEFAULT_PORT, serve
+from chatomon.studio._session import Session
 
 ATOM_MODULE = """
     from pydantic_ai.models.test import TestModel
@@ -176,6 +181,7 @@ def test_python_m_chatomon_studio_shows_the_help():
     assert result.returncode == 0
     assert "MODULE:ATTRIBUTE" in result.stdout
     assert "8016" in result.stdout
+    assert "--preset FILE" in result.stdout
 
 
 def test_a_port_in_time_wait_after_a_restart_is_not_reported_as_in_use(runs):
@@ -273,3 +279,170 @@ def test_a_function_that_needs_arguments_is_explained_without_a_traceback(projec
     err = capsys.readouterr().err
     assert "Traceback" not in err
     assert "chatomon studio: cliapp:judge needs arguments (messages, info)" in err
+
+
+TUNABLE_MODULE = """
+    from pydantic_ai.models.test import TestModel
+    from chatomon import Atom
+    from chatomon.connectors.pydantic_ai import PydanticAIConnector
+    from chatomon.orbitals import MessageLengthOrbital
+    atom = Atom(
+        name="t",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(TestModel()),
+        input_orbitals=[MessageLengthOrbital(max_words=60)],
+    )
+"""
+NOT_APPLIED = (
+    "  - this preset is for the atom 'other', but the studio has 't' loaded\n"
+    "  - 'message_length': max_words must be a positive integer, got 0"
+)
+
+
+def tunable_atom(max_words: int = 60) -> Atom:
+    """The atom of `TUNABLE_MODULE`, built here."""
+    return Atom(
+        name="t",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(TestModel()),
+        input_orbitals=[MessageLengthOrbital(max_words=max_words)],
+    )
+
+
+def preset(*, max_words: int | None = 80, atom: str = "t") -> str:
+    """A preset exported from a session on `tunable_atom()`, as the page downloads it."""
+    session = Session(tunable_atom(), source="app:atom")
+    if max_words is not None:
+        session.edit("input", "message_length", {"max_words": max_words})
+    return json.dumps({**session.export_preset(), "atom": atom}, indent=2)
+
+
+def broken_preset() -> str:
+    """A preset with two problems: another atom's name and a value the orbital refuses."""
+    data = json.loads(preset(atom="other"))
+    data["input_orbitals"][0]["settings"] = {"max_words": 0}
+    return json.dumps(data)
+
+
+def state_of(runs: dict, err: str) -> dict:
+    """Ask the app `serve()` built for its state, with the link it printed."""
+    link = next(word for word in err.split() if word.startswith("http://"))
+    base, _, query = link.partition("/?")
+    with TestClient(runs["app"], base_url=base) as client:
+        client.get(f"/?{query}")
+        return client.get("/api/state").json()
+
+
+@pytest.mark.parametrize("given", [str, Path], ids=["str", "Path"])
+def test_serve_starts_with_a_preset_applied(runs, capsys, tmp_path, given):
+    file = tmp_path / "t.preset.json"
+    file.write_text(preset(), encoding="utf-8")
+    serve(tunable_atom(), port=free_port(), open_browser=False, preset=given(file))
+    err = capsys.readouterr().err
+    assert "note:" not in err
+    state = state_of(runs, err)
+    assert [change["text"] for change in state["changes"]] == ["message_length.max_words changed"]
+    settings = {s["key"]: s["value"] for s in state["orbitals"]["input"][0]["settings"]}
+    assert settings["max_words"] == 80
+    assert state["undo"] is None
+
+
+def test_without_a_preset_the_studio_starts_as_the_code_has_it(runs, capsys):
+    serve(tunable_atom(), port=free_port(), open_browser=False)
+    assert state_of(runs, capsys.readouterr().err)["changes"] == []
+
+
+def test_a_preset_with_problems_stops_serve_before_the_port_is_looked_at(runs, tmp_path):
+    file = tmp_path / "old.preset.json"
+    file.write_text(broken_preset(), encoding="utf-8")
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        with pytest.raises(ChatomonConfigError) as caught:
+            serve(tunable_atom(), port=taken.getsockname()[1], preset=file)
+    assert str(caught.value) == f"the preset {file} was not applied:\n{NOT_APPLIED}"
+    assert "app" not in runs
+
+
+def test_the_command_passes_the_preset_on(project, monkeypatch):
+    project(ATOM_MODULE)
+    started: dict = {}
+    monkeypatch.setattr(server, "_start", lambda atom, **kwargs: started.update(kwargs))
+    assert main(["studio", "cliapp:atom", "--preset", "tuned.preset.json"]) == 0
+    assert started["preset"] == "tuned.preset.json"
+    assert main(["studio", "cliapp:atom"]) == 0
+    assert started["preset"] is None
+
+
+def test_the_command_starts_with_a_preset_applied(project, tmp_path, runs, capsys):
+    project(TUNABLE_MODULE)
+    (tmp_path / "t.preset.json").write_text(preset(), encoding="utf-8")
+    command = ["studio", "cliapp:atom", "--preset", "t.preset.json", "--no-browser"]
+    assert main([*command, "--port", str(free_port())]) == 0
+    state = state_of(runs, capsys.readouterr().err)
+    assert [change["text"] for change in state["changes"]] == ["message_length.max_words changed"]
+
+
+def test_a_preset_with_problems_exits_with_1_and_a_line_for_each(project, tmp_path, runs, capsys):
+    project(TUNABLE_MODULE)
+    (tmp_path / "old.preset.json").write_text(broken_preset(), encoding="utf-8")
+    assert main(["studio", "cliapp:atom", "--preset", "old.preset.json", "--no-browser"]) == 1
+    err = capsys.readouterr().err
+    assert err == f"chatomon studio: the preset old.preset.json was not applied:\n{NOT_APPLIED}\n"
+    assert "app" not in runs
+
+
+def test_a_preset_file_that_is_not_there_exits_with_1(project, runs, capsys):
+    project(TUNABLE_MODULE)
+    assert main(["studio", "cliapp:atom", "--preset", "nowhere.json", "--no-browser"]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("chatomon studio: cannot read the preset nowhere.json: ")
+    assert len(err.splitlines()) == 1
+    assert "app" not in runs
+
+
+def test_a_directory_given_as_a_preset_is_explained_not_a_traceback(runs, tmp_path):
+    with pytest.raises(ChatomonConfigError, match="cannot read the preset "):
+        serve(tunable_atom(), port=free_port(), preset=tmp_path)
+    assert "app" not in runs
+
+
+def test_a_preset_file_that_is_not_text_is_explained(runs, tmp_path):
+    file = tmp_path / "picture.preset.json"
+    file.write_bytes(b"\xff\xfe\x00\x01")
+    with pytest.raises(ChatomonConfigError) as caught:
+        serve(tunable_atom(), port=free_port(), preset=file)
+    assert str(caught.value) == f"cannot read the preset {file}: it is not UTF-8 text"
+    assert "app" not in runs
+
+
+def test_an_empty_preset_file_is_a_problem_of_the_preset(runs, tmp_path):
+    file = tmp_path / "empty.preset.json"
+    file.write_text("", encoding="utf-8")
+    with pytest.raises(ChatomonConfigError) as caught:
+        serve(tunable_atom(), port=free_port(), preset=file)
+    heading, problem = str(caught.value).splitlines()
+    assert heading == f"the preset {file} was not applied:"
+    assert problem.startswith("  - this is not valid JSON: ")
+
+
+def test_a_preset_saved_with_a_byte_order_mark_is_read(runs, capsys, tmp_path):
+    """What an editor on Windows can put in front of the text."""
+    file = tmp_path / "t.preset.json"
+    file.write_text(preset(), encoding="utf-8-sig")
+    serve(tunable_atom(), port=free_port(), open_browser=False, preset=file)
+    state = state_of(runs, capsys.readouterr().err)
+    assert [change["text"] for change in state["changes"]] == ["message_length.max_words changed"]
+
+
+def test_the_notes_of_a_preset_are_printed_before_the_link(runs, capsys, tmp_path):
+    file = tmp_path / "t.preset.json"
+    file.write_text(preset(max_words=None), encoding="utf-8")
+    serve(tunable_atom(max_words=50), port=free_port(), open_browser=False, preset=file)
+    err = capsys.readouterr().err
+    note = (
+        "note: 'message_length' differs from the exported preset: "
+        "your code or chatomon changed since.\n"
+    )
+    assert note in err
+    assert err.index(note) < err.index("chatomon studio is running at")

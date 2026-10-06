@@ -9,6 +9,7 @@ import sys
 import threading
 import webbrowser
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 import uvicorn
@@ -17,6 +18,7 @@ from chatomon.atom import Atom
 from chatomon.errors import ChatomonConfigError
 from chatomon.studio._app import create_app
 from chatomon.studio._loading import resolve
+from chatomon.studio._presets import InvalidPresetError
 from chatomon.studio._security import LOOPBACK, is_bind_all, new_token
 from chatomon.studio._session import Session
 
@@ -37,6 +39,7 @@ def serve(
     host: str = "127.0.0.1",
     port: int = DEFAULT_PORT,
     open_browser: bool = True,
+    preset: str | os.PathLike[str] | None = None,
 ) -> None:
     """Open the studio for an atom and block until interrupted.
 
@@ -49,10 +52,14 @@ def serve(
         host: The address to listen on; another machine's address only with care.
         port: The port to listen on.
         open_browser: Whether to open the link in the browser.
+        preset: The path of a preset exported from the studio, applied to the atom
+            before the page opens. What differs from the exported session is
+            printed as notes.
 
     Raises:
         ChatomonConfigError: If the atom is invalid or unsupported, the host is a
-            bind-all address, or the port is in use.
+            bind-all address, the port is in use, or the preset cannot be read or
+            applied; the message has one line for each problem of the preset.
 
     Examples:
         ```{.python test="skip"}
@@ -62,6 +69,16 @@ def serve(
 
         serve(atom)  # open the printed link, then chat with the atom
         ```
+
+        Start with the orbital changes of an earlier session:
+
+        ```{.python test="skip"}
+        from chatomon.studio import serve
+
+        from speedypack.app import atom
+
+        serve(atom, preset="speedypack.preset.json")
+        ```
     """  # noqa: DOC502 - raised by resolve() and _start()
     _start(
         resolve(atom, label="the atom given to serve()"),
@@ -69,6 +86,7 @@ def serve(
         host=host,
         port=port,
         open_browser=open_browser,
+        preset=preset,
     )
 
 
@@ -80,12 +98,13 @@ def _start(
     port: int,
     open_browser: bool,
     namespace: Mapping[str, object] | None = None,
+    preset: str | os.PathLike[str] | None = None,
 ) -> None:
     if is_bind_all(host):
         raise ChatomonConfigError(
             f"the studio listens on one address; pass the address to use instead of {host!r}"
         )
-    session = Session(atom, source=source, namespace=namespace)
+    session = _session(atom, source, namespace, preset)
     _check_port(host, port)
     for note in session.notes:
         print(f"note: {note}", file=sys.stderr)
@@ -114,6 +133,38 @@ def _start(
         timeout_graceful_shutdown=3,
     )
     print("chatomon studio stopped.", file=sys.stderr)
+
+
+def _session(
+    atom: Atom[Any],
+    source: str,
+    namespace: Mapping[str, object] | None,
+    preset: str | os.PathLike[str] | None,
+) -> Session:
+    """Create the session, with the changes of a preset file when one is given.
+
+    Returns:
+        The session the page will drive.
+
+    Raises:
+        ChatomonConfigError: If the file cannot be read, or the preset cannot be
+            applied: the message has a heading and one line for each problem.
+    """
+    if preset is None:
+        return Session(atom, source=source, namespace=namespace)
+    shown = os.fspath(preset)
+    try:
+        # Some editors put a byte order mark in front of the text: it is not part of it.
+        text = Path(preset).read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ChatomonConfigError(f"cannot read the preset {shown}: it is not UTF-8 text") from exc
+    except OSError as exc:
+        raise ChatomonConfigError(f"cannot read the preset {shown}: {exc.strerror or exc}") from exc
+    try:
+        return Session(atom, source=source, namespace=namespace, preset=text)
+    except InvalidPresetError as exc:
+        problems = "".join(f"\n  - {problem}" for problem in exc.problems)
+        raise ChatomonConfigError(f"the preset {shown} was not applied:{problems}") from exc
 
 
 def _check_port(host: str, port: int) -> None:
