@@ -11,11 +11,14 @@ from typing import Any
 
 import pytest
 
+from chatomon.connectors.maf import MAFConnector
 from chatomon.studio import _testgen as testgen
 from chatomon.studio._chains import RefusedError
 from chatomon.studio._loading import load, namespace
+from chatomon.studio._runners import maf as maf_runner
 from chatomon.studio._runners import runner_for
 from chatomon.studio._session import Session
+from tests.contract.harness_maf import ScriptedMAFClient
 from tests.studio.frameworks import StudioHarness
 
 ORBITALS = """
@@ -124,10 +127,50 @@ class Nucleus(BaseChatModel):
     "LangChainConnector(Nucleus())",
 )
 
+MAF_IMPORTS = """
+from types import SimpleNamespace
+from typing import Any
+from uuid import uuid4
+
+from agent_framework import (
+    BaseChatClient,
+    ChatMiddlewareLayer,
+    ChatResponse,
+    FunctionInvocationLayer,
+    Message,
+)
+
+from chatomon import Atom, OrbitalContext, Verdict, orbital
+from chatomon.connectors.maf import MAFConnector, MAFFoundryConnector
+from chatomon.orbitals import MessageLengthOrbital
+"""
+
+MAF_NUCLEUS = """
+
+class Nucleus(FunctionInvocationLayer, ChatMiddlewareLayer, BaseChatClient):
+    def _inner_get_response(self, *, messages: Any, stream: bool, options: Any, **kwargs: Any):
+        asked = next(m.text for m in reversed(messages) if m.role == "user")
+        told = [str(options.get("instructions", ""))]
+        told += [m.text for m in messages if m.role == "developer"]  # where Foundry gets them
+
+        async def respond() -> ChatResponse:
+            if "boom" in asked:
+                raise RuntimeError("model down")
+            text = "Damn right." if "angry" in asked and "politely" not in " ".join(told) else "Hi."
+            # An id, as real providers give: without one a repeated reply leaves the history.
+            reply = Message("assistant", [text], message_id=uuid4().hex)
+            return ChatResponse(messages=[reply], finish_reason="stop")
+
+        return respond()
+"""
+
+MAF = (MAF_IMPORTS, MAF_NUCLEUS, "MAFConnector(Nucleus())")
+
 
 PARTS = {
     "pydantic_ai": PYDANTIC_AI,
     "langchain": LANGCHAIN,
+    "maf": MAF,
 }
 
 
@@ -713,6 +756,8 @@ def refund_order(order_id: str) -> str:
     CALLED.append(order_id)
     return "refunded"
 '''
+KEEPS_OFFLINE = "    # No model is called in this test: the test model keeps the nucleus offline."
+ASYNC = "Microsoft Agent Framework is asynchronous: the test needs `pytest-asyncio` 0.24 or later."
 
 
 def sent(code: str, name: str) -> list[str]:
@@ -868,3 +913,78 @@ def test_a_langchain_test_says_what_its_fake_model_cannot_do(project):
     ]
     say(session, "hello")
     assert all("FakeListChatModel" not in note for note in save(session, alone=True).notes)
+
+
+@pytest.mark.parametrize("name", ["maf"])
+def test_a_microsoft_agent_framework_test_is_a_coroutine_with_a_stand_in_of_its_own(
+    project, monkeypatch, name
+):
+    session = project(module=module_of(name))
+    say(session, "I want a refund")
+    offline = save(session)
+    lines = offline.code.split("\n")
+    marker = lines.index('@pytest.mark.asyncio(loop_scope="session")')
+    assert lines[marker + 1] == (
+        "async def test_i_want_a_refund(monkeypatch: pytest.MonkeyPatch) -> None:"
+    )
+    assert "class OfflineNucleus(ChatMiddlewareLayer, BaseChatClient):" in lines
+    build = lines.index("    agent = atom.build()")
+    assert lines[build + 1 : build + 4] == [
+        KEEPS_OFFLINE,
+        "    agent.client = OfflineNucleus()",
+        "    session = agent.create_session()",
+    ]
+    assert '    result = await agent.run("I want a refund", session=session)' in lines
+    assert offline.notes[:3] == [
+        "No model is called in this test: it runs offline, with a client of its own, "
+        "`OfflineNucleus`, in place of the nucleus.",
+        "`OfflineNucleus` is written on Microsoft Agent Framework's client classes: "
+        "if they change, save the test again.",
+        ASYNC,
+    ]
+    run_saved(offline, monkeypatch)
+
+    say(session, "hello")
+    online = save(session, alone=True)
+    lines = online.code.split("\n")
+    marker = lines.index('@pytest.mark.asyncio(loop_scope="session")')
+    assert lines[marker - 1].startswith("@pytest.mark.integration")
+    assert lines[marker + 1].startswith("async def test_hello(")
+    assert "OfflineNucleus" not in online.code
+    assert "agent_framework" not in online.code
+    assert online.notes[1] == ASYNC
+    run_saved(online, monkeypatch)
+
+
+def test_a_factory_named_like_something_the_runners_lines_use_gets_the_alias(project, monkeypatch):
+    text = module_of("maf") + "\n\ndef session() -> Atom:\n    return atom\n"
+    opened = project("shop:session", module=text)
+    say(opened, "I want a refund")
+    test = save(opened)
+    assert "from shop import session as atom_source\n" in test.code
+    assert "    atom = atom_source()\n" in test.code
+    run_saved(test, monkeypatch)
+
+
+def test_started_from_python_a_microsoft_agent_framework_test_still_compiles(project):
+    session = project(module=module_of("maf"))
+    say(session, "I want a refund")
+    test = testgen.generate(
+        session.turns,
+        alone=False,
+        source="serve()",
+        namespace=None,
+        signature=session.signature(),
+        framework=runner_for(session.atom.connector).saved_test(session.atom.connector),
+    )
+    compile(test.code, "saved.py", "exec")
+    # The import left to complete stays with the imports, above the class the test defines.
+    assert test.code.index("# Import it here") < test.code.index("class OfflineNucleus")
+    assert "async def test_i_want_a_refund(" in test.code
+
+
+def test_the_names_a_runners_lines_use_are_read_from_the_lines():
+    names = maf_runner.saved_test(MAFConnector(ScriptedMAFClient([], []))).names()
+    assert {"session", "agent", "OfflineNucleus", "ChatResponse", "Message", "pytest"} <= names
+    # An attribute is not a name of the test, and neither is a word inside a string.
+    assert not {"client", "text", "create_session", "offline", "assistant", "Stands"} & names

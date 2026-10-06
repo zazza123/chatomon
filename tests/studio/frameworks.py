@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
@@ -12,12 +13,15 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from chatomon.connectors import Connector
 from chatomon.connectors.langchain import LangChainConnector
+from chatomon.connectors.maf import MAFConnector
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.studio._runners import Runner
 from chatomon.studio._runners import langchain as langchain_runner
+from chatomon.studio._runners import maf as maf_runner
 from chatomon.studio._runners import pydantic_ai as pydantic_ai_runner
 from tests.contract.harness import ToolCall
 from tests.contract.harness_langchain import ScriptedChatModel
+from tests.contract.harness_maf import ScriptedMAFClient
 
 Reply = str | Exception | ToolCall
 """One step of a nucleus's script: a text to reply with, an error to raise, a call to `lookup`."""
@@ -72,10 +76,38 @@ def _langchain(
     return LangChainConnector(ScriptedChatModel(script=list(replies)), **kwargs)
 
 
+class ScriptedClient(ScriptedMAFClient):
+    """The contract suite's client, with an id on every reply as real providers give.
+
+    Without ids Microsoft Agent Framework's in-memory history drops a reply that
+    repeats an earlier one.
+    """
+
+    def _inner_get_response(self, *, messages: Any, stream: bool, options: Any, **kwargs: Any):
+        inner = super()._inner_get_response(
+            messages=messages, stream=stream, options=options, **kwargs
+        )
+
+        async def respond() -> Any:
+            response = await inner
+            for message in response.messages:
+                message.message_id = uuid4().hex
+            return response
+
+        return respond()
+
+
+def _maf(
+    replies: Sequence[Reply], kwargs: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> Connector[Any]:
+    return MAFConnector(ScriptedClient(list(replies), []), **kwargs)
+
+
 # Typed, so pyright checks every runner module against the protocol.
 _FRAMEWORKS: dict[str, tuple[Runner, Maker]] = {
     "pydantic_ai": (pydantic_ai_runner, _pydantic_ai),
     "langchain": (langchain_runner, _langchain),
+    "maf": (maf_runner, _maf),
 }
 
 NAMES = tuple(_FRAMEWORKS)

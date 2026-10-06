@@ -1,10 +1,13 @@
 """What every studio runner does, and how the studio finds the runner of a connector."""
 
+import importlib
+import pkgutil
 from typing import Any
 
 import pytest
 from pydantic_ai.models.test import TestModel
 
+import chatomon.connectors
 from chatomon import Atom, ChatomonConfigError, Verdict
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER
@@ -133,3 +136,13 @@ def test_a_connector_of_the_developers_own_is_refused_by_name():
     )
     with pytest.raises(ChatomonConfigError, match=message):
         runner_for(FakeConnector())
+
+
+def test_every_connector_module_has_a_runner_with_the_four_functions():
+    frameworks = [m.name for m in pkgutil.iter_modules(chatomon.connectors.__path__)]
+    frameworks.remove("base")
+    assert frameworks  # the search itself must find chatomon's connectors
+    for name in frameworks:
+        runner = importlib.import_module(f"chatomon.studio._runners.{name}")
+        for function in ("run_turn", "describe", "notes", "saved_test"):
+            assert callable(getattr(runner, function, None)), f"{name} has no {function}()"

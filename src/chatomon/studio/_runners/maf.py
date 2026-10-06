@@ -1,0 +1,124 @@
+"""Studio turns on atoms built with `MAFConnector`."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from agent_framework import HistoryProvider, InMemoryHistoryProvider
+
+from chatomon.connectors.base import Connector
+from chatomon.studio._runners import InterruptedTurnError, RunOutcome
+from chatomon.studio._testgen import Call, Framework, Offline
+
+_INTERRUPTED = (
+    "the agent stopped to wait for an approval, which the studio cannot give; "
+    "the request stays in the conversation: start a new one"
+)
+_HISTORY = "this atom keeps its history in {name}; the studio's conversations are written there"
+_ASYNC = "Microsoft Agent Framework is asynchronous: the test needs `pytest-asyncio` 0.24 or later."
+_OWN_CLASS = (
+    "`OfflineNucleus` is written on Microsoft Agent Framework's client classes: "
+    "if they change, save the test again."
+)
+_OFFLINE_NUCLEUS = (
+    "class OfflineNucleus(ChatMiddlewareLayer, BaseChatClient):",
+    '    """Stands in for the nucleus: it calls no model and no tool."""',
+    "",
+    "    def _inner_get_response(self, *, messages, stream, options, **kwargs):",
+    "        async def respond() -> ChatResponse:",
+    '            return ChatResponse(messages=[Message("assistant", ["offline"])])',
+    "",
+    "        return respond()",
+)
+
+
+def _text(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+async def run_turn(agent: Any, message: str, conversation: Any) -> RunOutcome:
+    """Run one turn on the conversation's session.
+
+    Args:
+        agent: The native agent built from the studio's copy of the atom.
+        message: The user message.
+        conversation: The `AgentSession` of the conversation, or `None` in the first turn.
+
+    Returns:
+        The reply and the session, which holds blocked messages already redacted.
+
+    Raises:
+        InterruptedTurnError: If a tool asked for an approval. The session then keeps
+            the request.
+    """
+    session = conversation if conversation is not None else agent.create_session()
+    response = await agent.run(message, session=session)
+    if response.user_input_requests:
+        raise InterruptedTurnError(_INTERRUPTED)
+    return RunOutcome(reply=response.text, conversation=session)
+
+
+def describe(connector: Connector[Any], agent: Any) -> dict[str, str]:
+    """Name the connector and its model for the atom card.
+
+    Args:
+        connector: A `MAFConnector`.
+        agent: The native agent, whose client knows its model.
+
+    Returns:
+        `{"connector": ..., "model": ...}`.
+    """
+    client = getattr(agent, "client", None)
+    model = _text(getattr(client, "model", None)) or type(client).__name__
+    return {"connector": type(connector).__name__, "model": model}
+
+
+def notes(connector: Connector[Any]) -> list[str]:
+    """Say what the developer should know before trying this atom in the studio.
+
+    Args:
+        connector: A `MAFConnector`.
+
+    Returns:
+        One sentence for every history provider of the developer's.
+    """
+    kwargs = getattr(connector, "agent_kwargs", {})
+    return [
+        _HISTORY.format(name=type(provider).__name__)
+        for provider in kwargs.get("context_providers") or ()
+        if isinstance(provider, HistoryProvider)
+        and provider.load_messages
+        and not isinstance(provider, InMemoryHistoryProvider)
+    ]
+
+
+def saved_test(connector: Connector[Any]) -> Framework:
+    """Return what a saved test needs from Microsoft Agent Framework.
+
+    Args:
+        connector: A `MAFConnector`; not read.
+
+    Returns:
+        The awaited call that runs a turn on a session, the reply, and the client the
+        test defines to stand in for the nucleus offline, put on the built agent.
+    """
+    turn = Call(arguments=("session=session",))
+    return Framework(
+        run="await agent.run",
+        first=turn,
+        later=turn,
+        reply="result.text",
+        setup=("session = agent.create_session()",),
+        marker='@pytest.mark.asyncio(loop_scope="session")',
+        notes=(_ASYNC,),
+        offline=Offline(
+            label="a client of its own, `OfflineNucleus`,",
+            imports=(
+                "from agent_framework import "
+                "BaseChatClient, ChatMiddlewareLayer, ChatResponse, Message",
+            ),
+            definitions=_OFFLINE_NUCLEUS,
+            after_build=("agent.client = OfflineNucleus()",),
+            notes=(_OWN_CLASS,),
+        ),
+    )
