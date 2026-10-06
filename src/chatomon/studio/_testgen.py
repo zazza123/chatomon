@@ -86,24 +86,90 @@ _USED = frozenset(
     {"atom", "agent", "reports", "report", "result", "monkeypatch", "pytest", "TurnReport"}
 )
 _FUNCTION_KIND = "FunctionOrbital"
+_STRING = re.compile(r'"[^"\n]*"')
+_NAME = re.compile(r"(?<![\w.])[A-Za-z_]\w*")
+
+
+@dataclass(frozen=True)
+class Call:
+    """How the call that runs a turn is written around the message."""
+
+    before: str = ""
+    """What the first argument has before the message."""
+    after: str = ""
+    """What it has after the message."""
+    arguments: tuple[str, ...] = ()
+    """The arguments that follow the first."""
+
+
+@dataclass(frozen=True)
+class Offline:
+    """What puts a stand-in in place of the nucleus in a test that calls no model."""
+
+    label: str
+    """How a note names the stand-in."""
+    imports: tuple[str, ...] = ()
+    """The import lines it needs."""
+    definitions: tuple[str, ...] = ()
+    """The lines after the imports that define it, when the framework ships none."""
+    before_build: tuple[str, ...] = ()
+    """The lines that put it in place before the atom is built."""
+    after_build: tuple[str, ...] = ()
+    """The lines that put it in place on the built agent."""
+    notes: tuple[str, ...] = ()
+    """What the developer should know about the stand-in."""
 
 
 @dataclass(frozen=True)
 class Framework:
     """The lines of a saved test that depend on the agent framework."""
 
-    test_model: tuple[str, str]
-    """The module and the name of the model that stands in for the nucleus offline."""
-    test_model_label: str
-    """How a note names that model."""
-    offline: str
-    """The line that puts it in place of the nucleus, before the atom is built."""
     run: str
-    """What is called with the message to run a turn."""
-    resume: str
-    """The argument that carries the conversation from the previous turn."""
+    """What is called to run a turn; a call that starts with `await` makes the test async."""
+    first: Call
+    """The call of the first turn."""
+    later: Call
+    """The call of a turn after another, which carries the conversation."""
     reply: str
     """The expression of the reply the user received."""
+    offline: Offline
+    """What stands in for the nucleus when no model is needed."""
+    imports: tuple[str, ...] = ()
+    """The import lines every test needs."""
+    setup: tuple[str, ...] = ()
+    """The lines that follow the build of the agent."""
+    marker: str = ""
+    """A decorator every test takes."""
+    notes: tuple[str, ...] = ()
+    """What the developer should know about every test."""
+
+    @property
+    def awaited(self) -> bool:
+        """Whether the turns are awaited, so the test is a coroutine."""
+        return self.run.startswith("await ")
+
+    def names(self) -> frozenset[str]:
+        """Return the names these lines use, which nothing else in a test may take.
+
+        Returns:
+            Every identifier outside a string literal that is not an attribute.
+        """
+        offline = self.offline
+        lines = [
+            self.run,
+            self.reply,
+            self.marker,
+            *self.imports,
+            *self.setup,
+            *offline.imports,
+            *offline.definitions,
+            *offline.before_build,
+            *offline.after_build,
+        ]
+        for call in (self.first, self.later):
+            lines += [call.before, call.after, *call.arguments]
+        code = _STRING.sub("", "\n".join(lines))
+        return frozenset(_NAME.findall(code))
 
 
 @dataclass(frozen=True)
@@ -250,7 +316,7 @@ def _atom(
         value = getattr(value, part, None)
     if isinstance(value, Atom) and not rest:
         return [f"from {module} import {head}" + ("" if head == "atom" else " as atom")], [], []
-    local = "atom_source" if head in _USED | {framework.test_model[1]} else head
+    local = "atom_source" if head in _USED | framework.names() else head
     line = f"from {module} import {head}" + ("" if local == head else f" as {local}")
     path = ".".join([local, *rest])
     if isinstance(value, Atom):
@@ -262,11 +328,12 @@ def _is_name(text: str) -> bool:
     return text.isidentifier() and not keyword.iskeyword(text)
 
 
-def _definition(name: str) -> list[str]:
-    line = f"def {name}(monkeypatch: pytest.MonkeyPatch) -> None:"
+def _definition(name: str, framework: Framework) -> list[str]:
+    start = f"{'async ' if framework.awaited else ''}def {name}("
+    line = f"{start}monkeypatch: pytest.MonkeyPatch) -> None:"
     if len(line) <= codegen.WIDTH:
         return [line]
-    return [f"def {name}(", "    monkeypatch: pytest.MonkeyPatch,", ") -> None:"]
+    return [start, "    monkeypatch: pytest.MonkeyPatch,", ") -> None:"]
 
 
 def _marker(callers: Sequence[str]) -> list[str]:
@@ -287,22 +354,26 @@ def _marker(callers: Sequence[str]) -> list[str]:
     return [*(f"# {line}" for line in wrapped), "@pytest.mark.integration"]
 
 
-def _call(prefix: str, function: str, message: str, extra: Sequence[str]) -> list[str]:
+def _call(prefix: str, function: str, message: str, call: Call) -> list[str]:
     """Lay the call that runs a turn out on one line when it fits.
 
     Returns:
         The lines of the call, without the test's indentation.
     """
     text = codegen.text_literal(message)
-    one = f"{prefix}{function}({', '.join([text, *extra])})"
+    one = f"{prefix}{function}({', '.join([call.before + text + call.after, *call.arguments])})"
     if "\n" not in text and len(one) + 4 <= codegen.WIDTH:
         return [one]
     lines = [f"{prefix}{function}("]
     if "\n" in text:
-        lines += ["    (", *(f"        {part}" for part in text.split("\n")), "    ),"]
+        # One literal per line, inside the parentheses the framework opens or in its own.
+        opened = call.before.endswith("(")
+        lines.append(f"    {call.before}{'' if opened else '('}")
+        lines += [f"        {part}" for part in text.split("\n")]
+        lines.append(f"    {'' if opened else ')'}{call.after},")
     else:
-        lines.append(f"    {text},")
-    return [*lines, *(f"    {argument}," for argument in extra), ")"]
+        lines.append(f"    {call.before}{text}{call.after},")
+    return [*lines, *(f"    {argument}," for argument in call.arguments), ")"]
 
 
 def _checks(turn: _Turn, *, first: bool, last: bool, framework: Framework) -> list[str]:
@@ -317,7 +388,7 @@ def _checks(turn: _Turn, *, first: bool, last: bool, framework: Framework) -> li
         "result = " if keep else "",
         framework.run,
         turn.message,
-        [] if first else [framework.resume],
+        framework.first if first else framework.later,
     )
     lines += [
         "report = reports[-1]",
@@ -387,20 +458,29 @@ def generate(
     imports, after, first = written if written is not None else (["", *_NO_IMPORT], [], [])
     lines = [f'{HEADER}: {shown}, {span}."""', "", "import pytest", ""]
     lines.append("from chatomon import TurnReport")
+    lines += framework.imports
+    stand_in = framework.offline
     if offline:
-        lines.append(f"from {framework.test_model[0]} import {framework.test_model[1]}")
+        lines += stand_in.imports
     lines += imports
     if after:
         lines += ["", *after]
+    if offline and stand_in.definitions:
+        lines += ["", "", *stand_in.definitions]
     lines += ["", ""]
     if not offline:
         lines += _marker(callers)
-    lines += _definition(name)
+    if framework.marker:
+        lines.append(framework.marker)
+    lines += _definition(name, framework)
     body = [*first, "reports: list[TurnReport] = []"]
     body.append('monkeypatch.setattr(atom, "on_turn", reports.append)')
-    if offline:
-        body += [_KEEPS_OFFLINE, framework.offline]
+    if offline and stand_in.before_build:
+        body += [_KEEPS_OFFLINE, *stand_in.before_build]
     body.append("agent = atom.build()")
+    if offline and stand_in.after_build:
+        body += [_KEEPS_OFFLINE, *stand_in.after_build]
+    body += framework.setup
     for index, turn in enumerate(replayed):
         body.append("")
         body += _checks(
@@ -410,13 +490,15 @@ def generate(
 
     notes: list[str] = []
     if offline:
-        notes.append(_OFFLINE.format(model=framework.test_model_label))
+        notes.append(_OFFLINE.format(model=stand_in.label))
         if any(turn.changes for turn in records):
             notes.append(_IN_THE_STUDIO)
+        notes += stand_in.notes
     else:
         who = _listed([c if c == "the nucleus" else f"`{c}`" for c in callers])
         call = "call real models" if len(callers) > 1 else "calls a real model"
         notes.append(_MARKED.format(who=who[0].upper() + who[1:], call=call))
+    notes += framework.notes
     notes += [_OUTPUT.format(n=turn.n) for turn in replayed if turn.output_stopped]
     assumed = (
         [name for turn in replayed for name in turn.functions]

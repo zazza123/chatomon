@@ -6,7 +6,7 @@ from typing import Any
 
 from chatomon.connectors.base import Connector
 from chatomon.studio._runners import RunOutcome
-from chatomon.studio._testgen import Framework
+from chatomon.studio._testgen import Call, Framework, Offline
 
 
 async def run_turn(agent: Any, message: str, conversation: Any) -> RunOutcome:
@@ -68,15 +68,20 @@ def saved_test(connector: Connector[Any]) -> Framework:
         connector: A `PydanticAIConnector`; not read.
 
     Returns:
-        The test model and the line that puts it in place of the nucleus, the call
-        that runs a turn, the argument that carries the conversation and the reply.
+        The call that runs a turn, the argument that carries the conversation, the
+        reply, and the test model that stands in for the nucleus offline.
     """
     return Framework(
-        test_model=("pydantic_ai.models.test", "TestModel"),
-        test_model_label="PydanticAI's `TestModel`",
-        # No tool is called: by default the test model calls every tool the atom has.
-        offline='monkeypatch.setattr(atom.connector, "model", TestModel(call_tools=[]))',
         run="agent.run_sync",
-        resume="message_history=result.all_messages()",
+        first=Call(),
+        later=Call(arguments=("message_history=result.all_messages()",)),
         reply="result.output",
+        offline=Offline(
+            label="PydanticAI's `TestModel`",
+            imports=("from pydantic_ai.models.test import TestModel",),
+            # No tool is called: by default the test model calls every tool the atom has.
+            before_build=(
+                'monkeypatch.setattr(atom.connector, "model", TestModel(call_tools=[]))',
+            ),
+        ),
     )

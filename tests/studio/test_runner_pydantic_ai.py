@@ -30,10 +30,16 @@ def test_an_atom_that_declares_deps_gets_a_note():
 
 def test_the_runner_supplies_pydantic_ais_part_of_a_saved_test():
     lines = saved_test(PydanticAIConnector(TestModel()))
-    assert lines.test_model == ("pydantic_ai.models.test", "TestModel")
-    assert lines.test_model_label == "PydanticAI's `TestModel`"
-    offline = 'monkeypatch.setattr(atom.connector, "model", TestModel(call_tools=[]))'
-    assert lines.offline == offline
     assert lines.run == "agent.run_sync"
-    assert lines.resume == "message_history=result.all_messages()"
+    assert not lines.awaited
+    assert (lines.first.before, lines.first.after, lines.first.arguments) == ("", "", ())
+    assert lines.later.arguments == ("message_history=result.all_messages()",)
     assert lines.reply == "result.output"
+    assert lines.imports == lines.setup == ()
+    assert lines.marker == ""
+    assert lines.offline.label == "PydanticAI's `TestModel`"
+    assert lines.offline.imports == ("from pydantic_ai.models.test import TestModel",)
+    assert lines.offline.before_build == (
+        'monkeypatch.setattr(atom.connector, "model", TestModel(call_tools=[]))',
+    )
+    assert lines.offline.after_build == lines.offline.definitions == ()
