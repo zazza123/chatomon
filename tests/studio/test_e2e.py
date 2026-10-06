@@ -907,6 +907,7 @@ def test_a_test_holds_the_conversation_or_the_turn_alone(page: Page, saving):
     earlier.click()
     expect(code).not_to_contain_text('agent.run_sync("hello")')
     expect(card(page).locator("#dlg-sub")).to_contain_text("Runs offline")
+    expect(card(page)).to_contain_text("Turn 2 is saved alone")
     expect(card(page).get_by_label("File, inside")).to_have_value("tests/mine.py")
     again = card(page).get_by_role("checkbox", name="Replay the 1 turn before it")
     expect(again).not_to_be_checked()
@@ -996,3 +997,17 @@ def test_the_test_card_fits_a_phone(page: Page, saving):
         }"""
     )
     assert past_the_edge == []
+
+
+def test_a_checkbox_whose_request_fails_goes_back_to_what_the_card_shows(page: Page, saving):
+    open_studio(page, saving)
+    send(page, "hello", REPLY)
+    send(page, LONG, "Too long.")
+    save_as_test(page, 2)
+    page.route("**/api/turns/2/test?alone=1", lambda route: route.abort())
+    box = card(page).get_by_role("checkbox", name="Replay the 1 turn before it")
+    box.click()
+    expect(page.locator("#toast")).to_contain_text("fetch")
+    # The card still shows the test with both turns, and that is what would be written.
+    expect(box).to_be_checked()
+    expect(card(page).locator("pre.code")).to_contain_text('agent.run_sync("hello")')

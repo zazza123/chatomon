@@ -162,8 +162,9 @@ export async function showTest(n, ctx, { onBack, onClose, alone = false, path = 
     done.hidden = true;
     field.removeAttribute("aria-invalid");
     try {
-      const saved = await writeTest(n, field.value, alone, overwrite);
-      done.innerHTML = rich(`Saved as \`${saved.path}\`. Run it with \`python -m pytest ${saved.path}\`.`);
+      // The turn is named by the id the test came with: its number alone can be another turn by now.
+      const saved = await writeTest(n, data.turn, field.value, alone, overwrite);
+      done.innerHTML = rich(`Saved as \`${saved.path}\`. Run it with \`${saved.command}\`.`);
       done.hidden = false;
       ctx.toast("Test saved");
       // The Overwrite button that had the focus is hidden again: the result takes it.
@@ -180,7 +181,12 @@ export async function showTest(n, ctx, { onBack, onClose, alone = false, path = 
 
   $("#dlg-body").onchange = (e) => {
     if (e.target.id !== "test-earlier") return;
-    showTest(n, ctx, { onBack, onClose, alone: !e.target.checked, path: typed(), focus: "#test-earlier" }).catch(ctx.refused);
+    const box = e.target;
+    showTest(n, ctx, { onBack, onClose, alone: !box.checked, path: typed(), focus: "#test-earlier" }).catch((error) => {
+      // The card still shows the other test, which is the one that would be written.
+      box.checked = !box.checked;
+      ctx.refused(error);
+    });
   };
   $("#dlg-body").onkeydown = (e) => {
     if (e.key === "Enter" && e.target.id === "test-path") { e.preventDefault(); write(false); }
