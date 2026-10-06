@@ -846,6 +846,8 @@ def save_as_test(page: Page, n: int) -> None:
     open_report(page, n)
     card(page).get_by_role("button", name="Save as test").click()
     expect(card(page).locator("#dlg-title")).to_have_text(f"Save turn {n} as a test")
+    # The report's button is gone with the report: the focus stays in the card, on its title.
+    expect(card(page).locator("#dlg-title")).to_be_focused()
 
 
 def test_saving_a_turn_writes_a_test_and_asks_before_replacing_it(page: Page, saving, tmp_path):
@@ -876,6 +878,7 @@ def test_saving_a_turn_writes_a_test_and_asks_before_replacing_it(page: Page, sa
     expect(overwrite).to_be_focused()
     overwrite.click()
     expect(done).to_contain_text(f"Saved as {SAVED}")
+    expect(done).to_be_focused()  # the button that had the focus is hidden again
     assert "old" not in (tmp_path / SAVED).read_text(encoding="utf-8")
 
     path.fill("../outside.py")
@@ -886,6 +889,7 @@ def test_saving_a_turn_writes_a_test_and_asks_before_replacing_it(page: Page, sa
 
     card(page).get_by_role("button", name="Back to the report").click()
     expect(card(page).locator("#dlg-title")).to_contain_text("Turn 1")
+    expect(card(page).locator("#dlg-title")).to_be_focused()
 
 
 def test_a_test_holds_the_conversation_or_the_turn_alone(page: Page, saving):

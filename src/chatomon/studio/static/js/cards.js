@@ -21,6 +21,9 @@ export function openDialog({ title, sub = "", extra = "", body, actions, size = 
   dlg.dataset.size = size;
   $("#dlg-body").scrollTop = 0;
   if (!dlg.open) dlg.showModal();
+  // A card drawn over another loses the control that had the focus: the title takes it, so the
+  // keyboard and screen readers stay inside the card.
+  else if (!dlg.contains(document.activeElement)) $("#dlg-title").focus();
   // A modal card blurs and blocks everything outside it: the toast goes inside, to stay
   // readable and usable (Undo, the reason of a refusal).
   dlg.append($("#toast"));

@@ -147,7 +147,7 @@ export async function showTest(n, ctx, { onBack, onClose, alone = false, path = 
     sub: data.integration ? "Runs the real atom: marked <code>integration</code>" : "Runs offline: no model is called",
     body: `${warnings}${data.notes.map((note) => `<p class="note">${rich(note)}</p>`).join("")}${earlier}${file}
       <pre class="code"><code>${highlight(data.code, "python")}</code></pre>
-      <p class="note" id="test-done" role="status" hidden></p>`,
+      <p class="note" id="test-done" role="status" tabindex="-1" hidden></p>`,
     actions: `<button class="btn" type="button" data-dlg="back">Back to the report</button><span class="spacer"></span>${data.writable ? `<button class="btn" type="button" data-dlg="copy">Copy</button><button class="btn primary" type="button" data-dlg="write">Write file</button>` : COPY}`,
   });
   // The card was drawn again: the focus goes back to what was used.
@@ -166,6 +166,8 @@ export async function showTest(n, ctx, { onBack, onClose, alone = false, path = 
       done.innerHTML = rich(`Saved as \`${saved.path}\`. Run it with \`python -m pytest ${saved.path}\`.`);
       done.hidden = false;
       ctx.toast("Test saved");
+      // The Overwrite button that had the focus is hidden again: the result takes it.
+      if (overwrite) done.focus();
     } catch (error) {
       // A file of the studio that exists is replaced only on a second, explicit click.
       const own = error.type === "Exists";
