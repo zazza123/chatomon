@@ -593,3 +593,15 @@ def test_a_turn_that_does_not_exist_is_reported(n):
         session.saved_test(n)
     with pytest.raises(UnknownTurnError):
         session.write_test(n, SAVED)
+
+
+def test_an_orbital_that_never_said_whether_it_calls_a_model_stops_the_studio_at_the_start():
+    class Bare(ScriptedOrbital):
+        def __init__(self) -> None:  # never calls Orbital.__init__
+            self.name, self.reads, self.timeout, self.on_error = "bare", (), 30.0, "block"
+
+    del_calls_model = type("Undeclared", (Bare,), {})
+    orb = del_calls_model()
+    orb.calls_model = "sometimes"  # type: ignore[assignment]
+    with pytest.raises(ChatomonConfigError, match="Undeclared must say whether it calls a model"):
+        Session(make_atom(input_orbitals=[orb]), source="app:atom")

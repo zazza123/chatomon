@@ -94,6 +94,10 @@ MARKED = (
     "configuration and run it when the credentials are set."
 )
 OUTPUT_CHECK = '(r.name, r.action) for a in report.output for r in a if r.action != "allow"'
+ALONE = (
+    "Turn {n} is saved alone: if it depended on what came before it, as a turn limit does, "
+    "the test fails. Replay the earlier turns in that case."
+)
 NINE_WORDS = "one two three four five six seven eight nine"
 
 
@@ -319,6 +323,9 @@ def test_the_conversation_or_the_turn_alone(project, monkeypatch):
     assert '    result = agent.run_sync("I want a refund")\n' in alone.code
     assert alone.integration is False
     assert alone.name == whole.name == "test_i_want_a_refund"
+    assert alone.notes[-1] == ALONE.format(n=2)
+    assert all("saved alone" not in note for note in whole.notes)
+    assert all("saved alone" not in note for note in save(session, upto=1, alone=True).notes)
     run_saved(alone, monkeypatch)
 
 
@@ -490,7 +497,7 @@ def test_a_function_taken_as_calling_no_model_is_named(project):
         "does, declare it with `@orbital(calls_model=True)`.",
     ]
     say(session, NINE_WORDS)  # stopped by a class of the library before any function ran
-    assert save(session, alone=True).notes == [OFFLINE]
+    assert save(session, alone=True).notes == [OFFLINE, ALONE.format(n=2)]
     say(session, "hello")  # functions ran, but nothing in the test rests on them
     assert all("function of yours" not in note for note in save(session, alone=True).notes)
 
@@ -592,3 +599,102 @@ def test_a_module_whose_name_is_not_a_python_name_leaves_the_import_to_complete(
     plain = project()
     say(plain, "I want a refund")
     assert save(plain).importable is True
+
+
+MODEL_WORDING = MODULE.replace(
+    "@orbital\ndef polite(",
+    """@orbital(calls_model=True)
+def classify(ctx: OrbitalContext) -> Verdict:
+    return Verdict.allow(annotations={"text": "wording a model chose"})
+
+
+@orbital(reads=["classify"])
+def answer(ctx: OrbitalContext) -> Verdict:
+    if "advice" in ctx.message:
+        return Verdict.block(ctx.annotations["classify"]["text"])
+    return Verdict.allow()
+
+
+@orbital
+def polite(""",
+).replace("no_refunds, scope]", "no_refunds, classify, answer, scope]")
+
+
+def test_a_reply_that_may_carry_a_models_words_is_not_checked(project, monkeypatch):
+    assert MODEL_WORDING.count("classify") == 4
+    session = project(module=MODEL_WORDING)
+    say(session, "some advice please")  # answered by a function, with text a model left behind
+    test = save(session)
+    assert session.turns[0].reply == "wording a model chose"
+    assert "result.output" not in test.code
+    assert "wording a model chose" not in test.code
+    run_saved(test, monkeypatch)
+    say(session, "I want a refund")  # no orbital that calls a model ran before this one
+    assert "    assert result.output ==" in save(session, alone=True).code
+
+
+LONG_NAMES = MODULE.replace(
+    "@orbital(calls_model=True)\ndef scope",
+    '@orbital(calls_model=True, name="a_very_long_name_for_the_orbital_that_classifies_scope")'
+    "\ndef scope",
+).replace(
+    "@orbital\ndef polite",
+    '@orbital(calls_model=True, name="another_long_name_for_the_orbital_that_checks_the_tone")'
+    "\ndef polite",
+)
+
+
+def test_long_names_stay_within_88_columns(project, monkeypatch):
+    assert LONG_NAMES.count("long_name_for_the_orbital") == 2
+    session = project(module=LONG_NAMES)
+    say(session, "Please explain your delivery policy today thanks")
+    test = save(session)
+    lines = test.code.split("\n")
+    assert test.name == "test_please_explain_your_delivery_policy_today"
+    assert [line for line in lines if len(line) > 88] == []
+    assert "@pytest.mark.integration" in lines  # the comment went above it, on lines of its own
+    assert f"def {test.name}(" in lines
+    run_saved(test, monkeypatch)
+
+
+def test_an_offline_turn_tried_with_studio_changes_says_what_offline_rests_on(project):
+    module = MODULE.replace("no_refunds, scope]", "scope, no_refunds]")
+    assert module != MODULE
+    session = project(module=module)
+    session.switch("input", "scope", False)  # in the code it calls a model before no_refunds
+    say(session, "I want a refund")
+    test = save(session)
+    assert test.integration is False
+    assert test.notes[:2] == [
+        OFFLINE,
+        "That is how the turn ran in the studio. Until its changes are in your code, your "
+        "code's own orbitals run, and they may call a model.",
+    ]
+
+
+def test_a_name_that_is_not_an_orbitals_stays_out_of_the_comment(project):
+    module = MODULE + 'scope.name = "scope\\nimport os"\n'
+    session = project(module=module)
+    say(session, "hello")
+    test = save(session)
+    lines = test.code.split("\n")
+    assert "import os" not in lines
+    assert "@pytest.mark.integration  # the nucleus and an orbital call real models" in lines
+    compile(test.code, "saved.py", "exec")
+
+
+def test_a_reply_over_several_lines_is_checked_as_written(project, monkeypatch):
+    module = MODULE.replace(
+        "We don't handle refunds in chat.", "We don't handle refunds in chat.\\nWrite to us."
+    )
+    assert module != MODULE
+    session = project(module=module)
+    say(session, "I want a refund")
+    test = save(session)
+    assert (
+        "    assert result.output == (\n"
+        '        "We don\'t handle refunds in chat.\\n"\n'
+        '        "Write to us."\n'
+        "    )\n"
+    ) in test.code
+    run_saved(test, monkeypatch)

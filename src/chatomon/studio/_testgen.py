@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import keyword
 import re
+import textwrap
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -55,6 +56,15 @@ _FAILED = (
     "the test expects the same."
 )
 _SKIPPED = "Turn {n} failed and left nothing in the conversation: the test leaves it out."
+_ALONE = (
+    "Turn {n} is saved alone: if it depended on what came before it, as a turn limit does, "
+    "the test fails. Replay the earlier turns in that case."
+)
+_IN_THE_STUDIO = (
+    "That is how the turn ran in the studio. Until its changes are in your code, your "
+    "code's own orbitals run, and they may call a model."
+)
+_ORBITAL_NAME = re.compile(r"[A-Za-z0-9_.\-]+")
 _CHANGES = (
     "{turns} ran with {count} ({changes}). The test builds the atom from your code, so it "
     "checks your code, not the studio: copy the configuration into your code first."
@@ -195,7 +205,9 @@ def _read(turn: TurnRecord) -> _Turn:
         if last.reply is None:
             # The verdict carried no reply: the atom's refusal was used.
             reply = "atom.refusal"
-        elif last.name not in turn.models and turn.reply is not None:
+        elif turn.reply is not None and not any(r.name in turn.models for r in report.input):
+            # Fixed in code only if no orbital that calls a model ran: the one that stopped
+            # the turn may reply with what an earlier one left in its annotations.
             reply = codegen.text_literal(turn.reply)
             reply_by = last.name if last.kind == _FUNCTION_KIND else None
     return _Turn(
@@ -250,13 +262,29 @@ def _is_name(text: str) -> bool:
     return text.isidentifier() and not keyword.iskeyword(text)
 
 
+def _definition(name: str) -> list[str]:
+    line = f"def {name}(monkeypatch: pytest.MonkeyPatch) -> None:"
+    if len(line) <= codegen.WIDTH:
+        return [line]
+    return [f"def {name}(", "    monkeypatch: pytest.MonkeyPatch,", ") -> None:"]
+
+
 def _marker(callers: Sequence[str]) -> list[str]:
+    # A comment takes a name only when it is an orbital's: anything else could end the comment.
+    safe = [
+        c if c == "the nucleus" or _ORBITAL_NAME.fullmatch(c) else "an orbital" for c in callers
+    ]
+    callers = list(dict.fromkeys(safe))
     call = "call real models" if len(callers) > 1 else "calls a real model"
     comment = f"{_listed(callers)} {call}"
     line = f"@pytest.mark.integration  # {comment}"
     if len(line) <= codegen.WIDTH:
         return [line]
-    return [f"# {comment[0].upper()}{comment[1:]}.", "@pytest.mark.integration"]
+    sentence = f"{comment[0].upper()}{comment[1:]}."
+    wrapped = textwrap.wrap(
+        sentence, codegen.WIDTH - 2, break_long_words=False, break_on_hyphens=False
+    )
+    return [*(f"# {line}" for line in wrapped), "@pytest.mark.integration"]
 
 
 def _call(prefix: str, function: str, message: str, extra: Sequence[str]) -> list[str]:
@@ -367,7 +395,7 @@ def generate(
     lines += ["", ""]
     if not offline:
         lines += _marker(callers)
-    lines.append(f"def {name}(monkeypatch: pytest.MonkeyPatch) -> None:")
+    lines += _definition(name)
     body = [*first, "reports: list[TurnReport] = []"]
     body.append('monkeypatch.setattr(atom, "on_turn", reports.append)')
     if offline:
@@ -383,6 +411,8 @@ def generate(
     notes: list[str] = []
     if offline:
         notes.append(_OFFLINE.format(model=framework.test_model_label))
+        if any(turn.changes for turn in records):
+            notes.append(_IN_THE_STUDIO)
     else:
         who = _listed([c if c == "the nucleus" else f"`{c}`" for c in callers])
         call = "call real models" if len(callers) > 1 else "calls a real model"
@@ -401,6 +431,8 @@ def generate(
     ]
     if not alone:
         notes += [_SKIPPED.format(n=n) for n in skipped]
+    elif before:
+        notes.append(_ALONE.format(n=saved.n))
     if namespace is None:
         notes.append(NO_MODULE)
     elif written is None:
