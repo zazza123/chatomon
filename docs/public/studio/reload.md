@@ -6,7 +6,7 @@ While you tune an atom you also change its code: an instruction, a tool, an orbi
 
 ## What a Reload Does
 
-Clicking the atom or the nucleus in the drawer opens the atom's card, and **Reload from code** is at its foot. While a turn runs the button is disabled.
+Clicking the atom or the nucleus in the drawer opens the atom's card, and **Reload from code** is at its foot. A reload waits for a turn to end: while one runs the cards do not open, and a reload asked meanwhile, from another browser tab for example, is answered that a turn is running.
 
 ```mermaid
 flowchart LR
