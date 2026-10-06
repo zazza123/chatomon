@@ -89,9 +89,45 @@ def nucleus(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     "PydanticAIConnector(FunctionModel(nucleus))",
 )
 
+LANGCHAIN = (
+    """
+from types import SimpleNamespace
+from typing import Any
+
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+
+from chatomon import Atom, OrbitalContext, Verdict, orbital
+from chatomon.connectors.langchain import LangChainConnector
+from chatomon.orbitals import MessageLengthOrbital
+""",
+    """
+
+class Nucleus(BaseChatModel):
+    @property
+    def _llm_type(self) -> str:
+        return "nucleus"
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs: Any) -> ChatResult:
+        asked = next(str(m.content) for m in reversed(messages) if isinstance(m, HumanMessage))
+        told = " ".join(str(m.content) for m in messages if isinstance(m, SystemMessage))
+        if "boom" in asked:
+            raise RuntimeError("model down")
+        rude = "angry" in asked and "politely" not in told
+        reply = AIMessage(content="Damn right." if rude else "Hi.")
+        return ChatResult(generations=[ChatGeneration(message=reply)])
+
+    def bind_tools(self, tools: Any, **kwargs: Any) -> "Nucleus":
+        return self
+""",
+    "LangChainConnector(Nucleus())",
+)
+
 
 PARTS = {
     "pydantic_ai": PYDANTIC_AI,
+    "langchain": LANGCHAIN,
 }
 
 
@@ -781,6 +817,54 @@ def test_every_framework_keeps_the_atoms_tools_from_running_offline(
     atom = session.atom
     kept = tuple(orb for orb in atom.input_orbitals if orb.name != "no_refunds")
     monkeypatch.setattr(atom, "input_orbitals", kept)
-    with pytest.raises(AssertionError):
+    # LangChain's fake model cannot take the atom's tools: the card says so in a note.
+    failure = NotImplementedError if framework.name == "langchain" else AssertionError
+    with pytest.raises(failure):
         run_saved(test, monkeypatch)
     assert sys.modules["shop"].CALLED == []
+
+
+def test_a_langchain_test_offline_needs_neither_the_providers_package_nor_its_key(
+    project, tmp_path
+):
+    text = module_of("langchain")
+    session = project(module=text)
+    say(session, "I want a refund")
+    test = save(session)
+    assert (
+        '        atom.connector, "model", FakeListChatModel(responses=["offline"])\n' in test.code
+    )
+    # Only now a model the atom cannot build here: the saved test replaces it before it builds.
+    named = text.replace("LangChainConnector(Nucleus())", 'LangChainConnector("nowhere:model")')
+    assert named != text
+    (tmp_path / "shop.py").write_text(named, encoding="utf-8")
+    result = run_pytest(tmp_path, test)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_a_langchain_atom_with_a_checkpointer_gives_every_call_a_thread(project, tmp_path):
+    text = module_of(
+        "langchain",
+        connector="LangChainConnector(Nucleus(), checkpointer=InMemorySaver())",
+        before_atom="\nfrom langgraph.checkpoint.memory import InMemorySaver  # noqa: E402\n",
+    )
+    session = project(module=text)
+    say(session, "hello", "I want a refund")
+    test = save(session)
+    assert "from uuid import uuid4\n" in test.code
+    assert test.code.count('        {"configurable": {"thread_id": uuid4().hex}},\n') == 2
+    result = run_pytest(tmp_path, test)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_a_langchain_test_says_what_its_fake_model_cannot_do(project):
+    session = project(module=module_of("langchain"))
+    say(session, "I want a refund")
+    assert save(session).notes[:2] == [
+        "No model is called in this test: it runs offline, with LangChain's "
+        "`FakeListChatModel` in place of the nucleus.",
+        "If your code lets a message through, the test fails; on an atom with tools it fails "
+        "with `NotImplementedError`, because `FakeListChatModel` cannot take them.",
+    ]
+    say(session, "hello")
+    assert all("FakeListChatModel" not in note for note in save(session, alone=True).notes)
