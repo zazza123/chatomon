@@ -109,3 +109,23 @@ def test_the_proposed_path_is_the_first_free_one(tmp_path):
     assert files.proposed(tmp_path, "test_x") == "tests/studio/test_x_2.py"
     write(tmp_path, "tests/studio/test_x_2.py")
     assert files.proposed(tmp_path, "test_x") == "tests/studio/test_x_3.py"
+
+
+def test_what_the_system_refuses_is_reported_not_raised(tmp_path):
+    with pytest.raises(RefusedError, match="could not write"):
+        write(tmp_path, "tests/" + "x" * 300 + ".py")
+    try:
+        (tmp_path / "loop").symlink_to(tmp_path / "loop")
+    except OSError:
+        pytest.skip("symbolic links are not available here")
+    with pytest.raises(RefusedError, match="could not write"):
+        write(tmp_path, "loop/test_x.py")
+
+
+def test_the_home_sign_is_not_a_folder(tmp_path):
+    with pytest.raises(files.InvalidPathError, match="~ is not expanded here"):
+        write(tmp_path, "~/test_x.py")
+    with pytest.raises(files.InvalidPathError, match="~ is not expanded here"):
+        write(tmp_path, "~someone/tests/test_x.py")
+    assert list(tmp_path.iterdir()) == []
+    assert write(tmp_path, "tests/~notes/test_x.py") == "tests/~notes/test_x.py"  # only the start

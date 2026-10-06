@@ -658,3 +658,12 @@ def test_a_test_is_read_and_written_while_a_turn_runs(saving, tmp_path, monkeypa
     monkeypatch.setattr(Session, "busy", property(lambda self: True))
     assert saving.get("/api/turns/1/test").status_code == 200
     assert write(saving, path=SAVED).status_code == 200
+
+
+def test_a_path_the_system_refuses_is_a_message_not_a_failure(saving, tmp_path):
+    turn(saving, LONG)
+    response = write(saving, path="tests/" + "x" * 300 + ".py")
+    assert refused(response) == (409, "Refused")
+    assert response.json()["error"]["message"].startswith("could not write tests/xxx")
+    assert refused(write(saving, path="~/test_x.py")) == (422, "InvalidPath")
+    assert not (tmp_path / "~").exists()

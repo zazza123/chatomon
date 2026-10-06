@@ -48,6 +48,9 @@ def _target(root: Path, path: str) -> Path:
     given = Path(path.strip())
     if given.is_absolute() or given.drive:
         raise InvalidPathError(f"give a path relative to {root}")
+    if given.parts[0].startswith("~"):
+        # A shell would expand it; here it would become a folder named `~` in the project.
+        raise InvalidPathError(f"~ is not expanded here: give a path inside {root}")
     # Resolved, so that `..` and symbolic links cannot lead outside the root.
     target = (root / given).resolve()
     if not target.is_relative_to(root):
@@ -89,7 +92,12 @@ def write(root: Path, path: str, text: str, *, header: str, overwrite: bool) -> 
             system refuses the write.
     """  # noqa: DOC502 - InvalidPathError is raised by _target()
     root = root.resolve()
-    target = _target(root, path)
+    try:
+        target = _target(root, path)
+    except (OSError, RuntimeError) as exc:
+        # A loop of links, a name past the system's limit, a folder that cannot be searched.
+        reason = exc.strerror if isinstance(exc, OSError) and exc.strerror else exc
+        raise RefusedError(f"could not write {path.strip()}: {reason}") from exc
     shown = target.relative_to(root).as_posix()
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
