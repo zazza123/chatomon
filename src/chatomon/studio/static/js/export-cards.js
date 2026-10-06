@@ -8,7 +8,7 @@ const CLOSE = `<button class="btn" type="button" data-dlg="close">Close</button>
 const COPY = `<button class="btn primary" type="button" data-dlg="copy">Copy</button>`;
 
 /** Colour Python or JSON for reading. The text itself comes from the server. */
-export function highlight(code, lang) {
+function highlight(code, lang) {
   const re = lang === "json"
     ? /("(?:[^"\\]|\\.)*")(\s*:)?|\b(true|false|null)\b|(-?\b\d+(?:\.\d+)?\b)/g
     : /(#[^\n]*)|("(?:[^"\\\n]|\\.)*")|\b(from|import|None|True|False)\b|\b(\d+(?:\.\d+)?)\b/g;
