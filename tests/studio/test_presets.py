@@ -5,10 +5,11 @@ from typing import Any
 import pytest
 from pydantic_ai.models.test import TestModel
 
-from chatomon import Atom, Knowledge, Verdict
+from chatomon import Atom, ChatomonConfigError, Knowledge, Verdict
 from chatomon._version import __version__
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.orbitals import JudgeOrbital, MessageLengthOrbital
+from chatomon.studio._chains import RefusedError
 from chatomon.studio._presets import InvalidPresetError
 from chatomon.studio._session import Session
 from tests.fakes import ScriptedOrbital
@@ -16,14 +17,28 @@ from tests.fakes import ScriptedOrbital
 TONE = {"name": "tone", "model": "test:judge", "instructions": "Be kind."}
 
 
-def make_session(*, context: str = "Open 9-18.", extra: list[Any] | None = None) -> Session:
-    """A new session on the same code: new objects, the same configuration."""
+def make_session(
+    *,
+    context: str = "Open 9-18.",
+    extra: list[Any] | None = None,
+    preset: str | None = None,
+    deps: bool = False,
+) -> Session:
+    """A new session on the same code: new objects, the same configuration.
+
+    Args:
+        context: The text of the knowledge the code gives to the judge.
+        extra: Input orbitals the code has after the others.
+        preset: A preset the session starts with.
+        deps: Whether the atom declares `deps_type`, which the runner has a note for.
+    """
     faq = Knowledge(context)
+    model = TestModel(custom_output_text="Hi")
     atom = Atom(
         name="speedypack",
         instructions="Be brief.",
         knowledge=faq,
-        connector=PydanticAIConnector(TestModel(custom_output_text="Hi")),
+        connector=PydanticAIConnector(model, deps_type=int) if deps else PydanticAIConnector(model),
         input_orbitals=[
             MessageLengthOrbital(max_words=60),
             ScriptedOrbital(name="scope"),
@@ -35,7 +50,7 @@ def make_session(*, context: str = "Open 9-18.", extra: list[Any] | None = None)
             )
         ],
     )
-    return Session(atom, source="app:atom")
+    return Session(atom, source="app:atom", preset=preset)
 
 
 def snapshot(session: Session) -> Any:
@@ -314,16 +329,20 @@ def test_text_that_is_not_json_says_where_it_breaks():
         session.import_preset("[" * 100_000)
 
 
-def test_a_chain_the_atom_refuses_is_a_problem():
+def reading_atom() -> Atom:
+    """An atom whose second orbital reads the first: turning the first off is refused."""
     first = ScriptedOrbital(Verdict.allow(annotations={"x": 1}), name="first")
     reader = ScriptedOrbital(name="reader", reads=["first"])
-    atom = Atom(
+    return Atom(
         name="speedypack",
         instructions="Be brief.",
         connector=PydanticAIConnector(TestModel()),
         input_orbitals=[first, reader],
     )
-    session = Session(atom, source="app:atom")
+
+
+def test_a_chain_the_atom_refuses_is_a_problem():
+    session = Session(reading_atom(), source="app:atom")
     preset = session.export_preset()
     preset["input_orbitals"][0]["enabled"] = False
     with pytest.raises(InvalidPresetError) as caught:
@@ -427,3 +446,134 @@ def test_text_the_studio_cannot_read_or_send_back_is_a_problem_not_a_failure():
         session.import_preset(json.dumps(odd))
     assert caught.value.problems == ["this preset has text that is not valid Unicode"]
     assert session.state()["changes"] == []
+
+
+@pytest.mark.parametrize("change", [nothing, tuned, rearranged, everything])
+def test_a_session_started_with_a_preset_is_the_one_that_exported_it(
+    change: Callable[[Session], None],
+):
+    first = make_session()
+    change(first)
+    started = make_session(preset=json.dumps(first.export_preset()))
+    assert snapshot(started) == snapshot(first)
+    assert started.notes == []
+
+
+def test_a_start_with_a_preset_leaves_nothing_to_undo_and_a_reset_brings_it_back():
+    first = make_session()
+    everything(first)
+    started = make_session(preset=json.dumps(first.export_preset()))
+    assert started.state()["undo"] is None
+    with pytest.raises(RefusedError, match="nothing to undo"):
+        started.undo()
+    started.reset_orbitals()
+    assert started.state()["changes"] == []
+    assert started.state()["undo"] == "Reset to code"
+    started.undo()
+    assert snapshot(started) == snapshot(first)
+
+
+async def test_turns_run_with_the_orbitals_of_the_preset_the_session_started_with():
+    first = make_session()
+    first.edit("input", "message_length", {"max_words": 2, "reply": "Too long."})
+    started = make_session(preset=json.dumps(first.export_preset()))
+    queue = started.start_turn("one two three")
+    while await queue.get() is not None:
+        pass
+    (turn,) = started.turns
+    assert turn.report is not None
+    assert (turn.report.final_action, turn.reply) == ("blocked", "Too long.")
+    assert turn.changes == ["message_length.max_words changed", "message_length.reply changed"]
+
+
+def test_the_warnings_of_a_preset_applied_at_start_are_notes_after_the_runners():
+    old = make_session()
+    old.switch("input", "scope", False)
+    started = make_session(
+        context="Open 9-17.",
+        extra=[ScriptedOrbital(name="new_guard")],
+        preset=json.dumps(old.export_preset()),
+        deps=True,
+    )
+    runner_note, *warnings = started.notes
+    assert "without deps" in runner_note
+    assert warnings == [
+        "'new_guard' is in your code but not in the preset: it was added at the end, turned on.",
+        "'faithfulness' differs from the exported preset: your code or chatomon changed since.",
+    ]
+    orbitals = started.state()["orbitals"]["input"]
+    assert [(o["name"], o["enabled"]) for o in orbitals] == [
+        ("message_length", True),
+        ("scope", False),
+        ("new_guard", True),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("preset", "problems"), [case[1:] for case in PROBLEMS], ids=[c[0] for c in PROBLEMS]
+)
+def test_an_invalid_preset_stops_the_session_from_starting(preset, problems):
+    with pytest.raises(InvalidPresetError) as caught:
+        make_session(preset=json.dumps(preset))
+    assert caught.value.problems == problems
+    assert str(caught.value) == "the preset was not applied"
+
+
+def test_a_chain_the_atom_refuses_stops_the_start_as_a_problem_of_the_preset():
+    preset = Session(reading_atom(), source="app:atom").export_preset()
+    preset["input_orbitals"][0]["enabled"] = False
+    with pytest.raises(InvalidPresetError) as caught:
+        Session(reading_atom(), source="app:atom", preset=json.dumps(preset))
+    assert len(caught.value.problems) == 1
+    assert "reads 'first'" in caught.value.problems[0]
+
+
+def test_an_atom_that_does_not_build_keeps_its_own_error_when_a_preset_is_given():
+    reader = ScriptedOrbital(name="reader", reads=["missing"])
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(TestModel()),
+        input_orbitals=[reader],
+    )
+    entry = {
+        "name": "reader",
+        "kind": "ScriptedOrbital",
+        "from": "code",
+        "enabled": True,
+        "fingerprint": reader.fingerprint(),
+    }
+    preset = {**base(), "input_orbitals": [entry], "output_orbitals": []}
+    with pytest.raises(ChatomonConfigError) as caught:
+        Session(atom, source="app:atom", preset=json.dumps(preset))
+    assert not isinstance(caught.value, InvalidPresetError)
+    with pytest.raises(ChatomonConfigError) as plain:
+        Session(atom, source="app:atom")
+    assert str(caught.value) == str(plain.value)
+
+
+def test_starting_with_a_preset_leaves_the_developers_atom_untouched():
+    first = make_session()
+    everything(first)
+    text = json.dumps(first.export_preset())
+    faq = Knowledge("Open 9-18.")
+    limit = MessageLengthOrbital(max_words=60)
+    judge = JudgeOrbital(
+        name="faithfulness", model="test:judge", instructions="Check.", context=faq
+    )
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        knowledge=faq,
+        connector=PydanticAIConnector(TestModel(custom_output_text="Hi")),
+        input_orbitals=[limit, ScriptedOrbital(name="scope")],
+        output_orbitals=[judge],
+    )
+    fingerprints = [orb.fingerprint() for orb in (*atom.input_orbitals, *atom.output_orbitals)]
+    started = Session(atom, source="app:atom", preset=text)
+    assert started.state()["changes"]
+    assert atom.input_orbitals[0] is limit and atom.output_orbitals == (judge,)
+    assert [
+        orb.fingerprint() for orb in (*atom.input_orbitals, *atom.output_orbitals)
+    ] == fingerprints
+    assert limit.max_words == 60
