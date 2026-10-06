@@ -115,6 +115,19 @@ async def test_the_conversation_survives_an_agent_built_again(framework: StudioH
     assert seen(guard, 1) == [("user", "hello"), ("assistant", "one")]
 
 
+async def test_the_conversation_goes_on_with_an_agent_of_another_instance_of_the_connector(
+    framework: StudioHarness,
+):
+    """What a reload from code does: new objects, the same framework."""
+    before = make_atom(framework, "one", input_orbitals=[ScriptedOrbital(name="guard")])
+    first = await framework.runner.run_turn(before.build(), "hello", None)
+    guard = ScriptedOrbital(name="guard")
+    after = make_atom(framework, "two", input_orbitals=[guard])
+    second = await framework.runner.run_turn(after.build(), "again", first.conversation)
+    assert (first.reply, second.reply) == ("one", "two")
+    assert seen(guard, 0) == [("user", "hello"), ("assistant", "one")]
+
+
 def test_a_runner_names_the_connector_and_supplies_a_saved_test(framework: StudioHarness):
     atom = make_atom(framework, "one")
     described = framework.runner.describe(atom.connector, atom.build())

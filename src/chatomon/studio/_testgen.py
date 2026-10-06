@@ -73,6 +73,9 @@ _CHANGES = (
     "checks your code, not the studio: copy the configuration into your code first."
 )
 _CHANGED_SINCE = "The orbitals have changed since: Copy as code writes them as they are now."
+_RELOADED = (
+    "{turns} ran before the code was reloaded: if the code changed what {they}, this test fails."
+)
 _NO_IMPORT = (
     "# The studio was started from Python, so it does not know where your atom lives.",
     "# Import it here, for example: from your_package.app import atom",
@@ -460,6 +463,7 @@ def generate(
     source: str,
     namespace: Mapping[str, object] | None,
     signature: object,
+    reloads: int,
     framework: Framework,
 ) -> SavedTest:
     """Write a turn, with the turns before it unless `alone`, as a pytest file.
@@ -471,6 +475,8 @@ def generate(
         namespace: The variables of the atom's module, or `None` without a module.
         signature: What identifies the session's orbitals now, to compare with
             what each turn recorded.
+        reloads: How many times the code was loaded again so far, to compare
+            with what each turn recorded.
         framework: The lines that depend on the agent framework.
 
     Returns:
@@ -581,6 +587,16 @@ def generate(
     # Compared by signature: the same sentence can stand for two values of one setting.
     if any(turn.changes and turn.signature != signature for turn in records):
         warnings.append(_CHANGED_SINCE)
+    # The test runs the code as it is now: what an earlier load of it did may not repeat.
+    earlier = [str(turn.n) for turn in records if turn.reloads != reloads]
+    if earlier:
+        one = len(earlier) == 1
+        warnings.append(
+            _RELOADED.format(
+                turns=f"Turn{'' if one else 's'} {_listed(earlier)}",
+                they="it checks" if one else "they check",
+            )
+        )
     return SavedTest(
         code="\n".join(lines) + "\n",
         name=name,

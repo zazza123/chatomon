@@ -21,11 +21,12 @@ from chatomon.schemas import Side, TurnReport
 from chatomon.studio import _codegen as codegen
 from chatomon.studio import _files as files
 from chatomon.studio import _kinds as kinds
+from chatomon.studio import _loading as loading
 from chatomon.studio import _presets as presets
 from chatomon.studio import _testgen as testgen
 from chatomon.studio._chains import SIDES, Chains, Entry, RefusedError
 from chatomon.studio._events import Event, EventProcessor
-from chatomon.studio._runners import runner_for
+from chatomon.studio._runners import Runner, runner_for
 
 
 def _always_recording_provider() -> TracerProvider:
@@ -65,6 +66,8 @@ class TurnRecord:
     """The enabled orbitals that call a model, by name, when the turn started."""
     signature: tuple[tuple[str, str, str, bool], ...] = ()
     """Every orbital of the session when the turn started: side, name, fingerprint, on."""
+    reloads: int = 0
+    """How many times the code had been loaded again when the turn started."""
     reply: str | None = None
     report: TurnReport | None = None
     error: dict[str, str] | None = None
@@ -81,6 +84,31 @@ class TurnRecord:
             "cannot_save": testgen.refusal(self),
             "error": self.error,
         }
+
+
+@dataclass(frozen=True)
+class Reloaded:
+    """What a reload from code did that the developer should be told."""
+
+    dropped: list[str]
+    """One sentence for each change of the studio that no longer applies."""
+    restarted: str | None
+    """Why a new conversation was started, or `None` when it goes on."""
+    notes: list[str]
+    """The notes about the reloaded atom that the studio had not given before."""
+
+
+@dataclass(frozen=True)
+class _Loaded:
+    """Everything a reload replaces, prepared before anything is replaced."""
+
+    atom: Atom[Any]
+    namespace: Mapping[str, object]
+    runner: Runner
+    notes: list[str]
+    chains: Chains
+    agent: Any
+    dropped: list[str]
 
 
 class Session:
@@ -119,18 +147,19 @@ class Session:
         self.turns: list[TurnRecord] = []
         self.notes: list[str] = runner.notes(atom.connector)
         self._task: asyncio.Task[None] | None = None
+        self._reload: asyncio.Task[Reloaded] | None = None
+        self.reloads = 0
         self._running: TurnRecord | None = None
         self._report: TurnReport | None = None
         self.chains = Chains.from_atom(atom)
         self._undo: tuple[Chains, str] | None = None
-        self._agent: Any = self._build(self.chains)
+        self._agent: Any = self._build(atom, self.chains)
         if preset is not None:
             self.notes = [*self.notes, *self.import_preset(preset)]
             # The session starts here: there is no earlier state of it to go back to.
             self._undo = None
 
-    def _build(self, chains: Chains) -> Any:
-        a = self.atom
+    def _build(self, a: Atom[Any], chains: Chains) -> Any:
         copy: Atom[Any] = Atom(
             name=a.name,
             instructions=a.instructions,
@@ -153,7 +182,7 @@ class Session:
         With `undo`, the previous chains are kept under that label; any other
         change drops what was kept.
         """
-        agent = self._build(candidate)
+        agent = self._build(self.atom, candidate)
         previous = self.chains
         self.chains, self._agent = candidate, agent
         self._undo = (previous, undo) if undo is not None else None
@@ -302,6 +331,7 @@ class Session:
             source=self.source,
             namespace=self.namespace,
             signature=self.signature(),
+            reloads=self.reloads,
             framework=self._runner.saved_test(self.atom.connector),
         )
 
@@ -390,6 +420,103 @@ class Session:
             )
         return files.write(self.root, path, test.code, header=testgen.HEADER, overwrite=overwrite)
 
+    async def reload(self) -> Reloaded:
+        """Load the atom from the developer's code again and carry the session over to it.
+
+        The modules of the project are imported again in a thread, where no event
+        loop runs, as when the studio started. The atom, its chains and its agent
+        are replaced together once everything is ready, or not at all. The
+        session's orbital changes are laid over the new code; the conversation
+        goes on when the new atom is run by the same runner, and what could be
+        undone is forgotten.
+
+        Returns:
+            What was dropped, whether the conversation started again, and the
+            notes that are new.
+
+        Raises:
+            StudioBusyError: While a turn or another reload runs.
+            RefusedError: If the studio was started from Python.
+            ChatomonConfigError: If the code does not give an atom the studio can
+                run with the session's changes; nothing changes, and the error an
+                import or a factory raised is its cause.
+        """  # noqa: DOC502 - raised by the helpers
+        self._require_idle()
+        if self.namespace is None:
+            raise RefusedError(
+                "the studio was started from Python and does not know where the atom "
+                "lives: restart it to load your changes"
+            )
+        # Owned by the session, like a turn: a page that goes away does not stop it half way.
+        task = asyncio.get_running_loop().create_task(self._reloaded())
+        task.add_done_callback(lambda done: done.cancelled() or done.exception())
+        self._reload = task
+        return await asyncio.shield(task)
+
+    async def _reloaded(self) -> Reloaded:
+        loaded = await asyncio.to_thread(self._loaded)
+        restarted = None
+        if loaded.runner is not self._runner:
+            # Only the runner that returned a conversation can read it.
+            self.conversation, self.turns = None, []
+            restarted = (
+                f"The atom is built with {type(loaded.atom.connector).__name__} now, "
+                "another framework: a new conversation was started."
+            )
+        told = [note for note in loaded.notes if note not in self.notes]
+        self.atom, self.namespace = loaded.atom, loaded.namespace
+        self._runner, self.notes = loaded.runner, loaded.notes
+        self.chains, self._agent = loaded.chains, loaded.agent
+        self._undo = None
+        self.reloads += 1
+        return Reloaded(dropped=loaded.dropped, restarted=restarted, notes=told)
+
+    def _loaded(self) -> _Loaded:
+        """Import the project again and prepare what a reload replaces; the session is not touched.
+
+        Returns:
+            The new atom with its runner, its chains and its agent.
+
+        Raises:
+            ChatomonError: A refusal of chatomon's own, as it was raised.
+            ChatomonConfigError: If the import, the factory or the framework's build
+                fails. In every case the modules are back as they were.
+        """
+        with loading.reimporting(self.root):
+            atom = loading.load(self.source)
+            try:
+                return self._prepared(atom)
+            except ChatomonError:
+                raise
+            except Exception as exc:
+                # What a framework raises when it builds, such as a model whose key is not set.
+                raise ChatomonConfigError(
+                    f"the reloaded atom could not be built: {type(exc).__name__}: {exc}"
+                ) from exc
+
+    def _prepared(self, atom: Atom[Any]) -> _Loaded:
+        runner = runner_for(atom.connector)
+        code = Chains.from_atom(atom)
+        candidate, dropped = presets.carried(self.chains, code)
+        try:
+            agent = self._build(atom, candidate)
+        except ChatomonConfigError as exc:
+            # When the atom does not build on its own either, the error is its own.
+            self._build(atom, code)
+            raise ChatomonConfigError(
+                f"the reloaded atom does not build with the studio's changes: {exc}. "
+                "Change them or reset to code, then reload again"
+            ) from exc
+        return _Loaded(
+            atom=atom,
+            namespace=loading.namespace(self.source),
+            runner=runner,
+            notes=runner.notes(atom.connector),
+            chains=candidate,
+            agent=agent,
+            dropped=dropped,
+        )
+
     def reset_conversation(self) -> None:
         """Start a new conversation.
 
@@ -409,6 +536,8 @@ class Session:
         return self._task is not None and not self._task.done()
 
     def _require_idle(self) -> None:
+        if self._reload is not None and not self._reload.done():
+            raise StudioBusyError("the atom is being reloaded; wait for it to finish")
         if self.busy:
             raise StudioBusyError("a turn is running; wait for it to finish")
 
@@ -443,6 +572,7 @@ class Session:
                 orb.name for side in SIDES for orb in enabled[side] if orb.calls_model
             ),
             signature=self.signature(),
+            reloads=self.reloads,
         )
         self._task = loop.create_task(self._run(record, emit))
         return queue

@@ -1,6 +1,8 @@
 import asyncio
 import json
 import math
+import sys
+import threading
 from typing import Any
 
 import pytest
@@ -13,8 +15,10 @@ from chatomon import Atom, ChatomonConfigError, Verdict
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.orbitals import JudgeOrbital, MessageLengthOrbital
 from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER
+from chatomon.studio import _loading as loading
 from chatomon.studio._chains import RefusedError, UnknownOrbitalError
-from chatomon.studio._session import Session, StudioBusyError, UnknownTurnError
+from chatomon.studio._loading import load, namespace
+from chatomon.studio._session import Reloaded, Session, StudioBusyError, UnknownTurnError
 from tests.contract.harness import ToolCall
 from tests.fakes import FakeConnector, ScriptedOrbital
 from tests.studio import frameworks
@@ -740,3 +744,342 @@ async def test_a_langchain_turn_that_ends_on_a_tool_stays_out_of_the_conversatio
     assert events[-1]["turn"]["report"]["final_action"] == "aborted"
     await drain(session.start_turn("again"))
     assert guard.contexts[1].history == ()
+
+
+# --- Reload from code -----------------------------------------------------------------------
+
+SHOP = """
+    from pydantic_ai.models.test import TestModel
+    from chatomon import Atom
+    from chatomon.connectors.pydantic_ai import PydanticAIConnector
+    from chatomon.orbitals import MessageLengthOrbital
+    from settings import INSTRUCTIONS, WORDS
+
+    limit = MessageLengthOrbital(max_words=WORDS, reply="Too long.")
+    faithfulness = MessageLengthOrbital(name="faithfulness", max_words=500)
+
+    def make():
+        return Atom(
+            name="shop",
+            instructions=INSTRUCTIONS,
+            connector=PydanticAIConnector(TestModel(custom_output_text="Hi")),
+            input_orbitals=[limit],
+            output_orbitals=[faithfulness],
+        )
+
+    atom = make()
+"""
+SETTINGS = 'INSTRUCTIONS = "Be brief."\nWORDS = 60\n'
+
+
+def started(spec: str = "shop:atom") -> Session:
+    """A session as the command starts it: the atom and the namespace of its module."""
+    return Session(load(spec), source=spec, namespace=namespace(spec))
+
+
+@pytest.fixture
+def shop(sources):
+    """A project with a `shop` module that reads its values from `settings.py`."""
+    sources("shop.py", SHOP)
+    sources("settings.py", SETTINGS)
+    return sources
+
+
+async def say(session: Session, message: str) -> Any:
+    await drain(session.start_turn(message))
+    return session.turns[-1]
+
+
+@pytest.mark.parametrize("spec", ["shop:atom", "shop:make"])
+async def test_a_reload_takes_the_atom_the_code_gives_now(shop, spec):
+    session = started(spec)
+    assert (await say(session, "one two three")).reply == "Hi"
+    shop("settings.py", 'INSTRUCTIONS = "Be kind."\nWORDS = 2\n')
+    assert await session.reload() == Reloaded(dropped=[], restarted=None, notes=[])
+    state = session.state()
+    assert state["atom"]["instructions"] == "Be kind."
+    assert state["changes"] == [] and state["undo"] is None
+    assert session.atom.input_orbitals[0] is sys.modules["shop"].limit
+    assert (await say(session, "one two three")).reply == "Too long."
+
+
+async def test_after_a_reload_names_are_read_from_the_module_that_was_loaded_again(shop):
+    session = started()
+    assert "input_orbitals=[limit]," in session.code()["code"]
+    shop("shop.py", SHOP.replace("limit", "cap"))
+    await session.reload()
+    assert session.namespace is not None
+    assert session.namespace["cap"] is sys.modules["shop"].cap
+    assert "input_orbitals=[cap]," in session.code()["code"]
+    await say(session, "hello")
+    assert "from shop import atom\n" in session.saved_test(1)["code"]
+
+
+async def test_the_changes_of_the_studio_are_carried_and_the_dropped_ones_are_listed(shop):
+    session = started()
+    session.edit("input", "message_length", {"max_words": 80})
+    session.switch("output", "faithfulness", False)
+    session.add("input", "TurnLimitOrbital", {"max_turns": 3})
+    shop("shop.py", SHOP.replace("output_orbitals=[faithfulness],", ""))
+    shop("settings.py", 'INSTRUCTIONS = "Be kind."\nWORDS = 50\n')
+    result = await session.reload()
+    assert result.dropped == [
+        "'faithfulness' is no longer in your code: what the studio changed on it was dropped."
+    ]
+    state = session.state()
+    assert [change["text"] for change in state["changes"]] == [
+        "message_length.max_words changed",
+        "turn_limit added",
+    ]
+    assert state["orbitals"]["output"] == []
+    values = {setting["key"]: setting for setting in state["orbitals"]["input"][0]["settings"]}
+    assert (values["max_words"]["value"], values["max_words"]["default"]) == (80, None)
+
+
+async def test_a_reload_that_fails_leaves_the_atom_that_was_running(shop):
+    session = started()
+    session.edit("input", "message_length", {"max_words": 80})
+    await say(session, "hello")
+    before = (session.state(), session._agent, session.namespace, sys.modules["shop"])
+    shop("settings.py", "INSTRUCTIONS = \n")
+    with pytest.raises(ChatomonConfigError, match="could not import 'shop'") as error:
+        await session.reload()
+    assert isinstance(error.value.__cause__, SyntaxError)
+    assert (session.state(), session._agent, session.namespace, sys.modules["shop"]) == before
+    assert (await say(session, "again")).reply == "Hi"
+    shop("settings.py", SETTINGS.replace("brief", "kind"))
+    await session.reload()
+    assert session.state()["atom"]["instructions"] == "Be kind."
+
+
+async def test_an_atom_the_code_gets_wrong_fails_with_its_own_error(shop):
+    session = started()
+    before = sys.modules["shop"]
+    shop("shop.py", SHOP.replace("input_orbitals=[limit]", "input_orbitals=[limit, limit]"))
+    with pytest.raises(ChatomonConfigError, match="appears twice") as error:
+        await session.reload()
+    assert "the studio's changes" not in str(error.value)
+    assert sys.modules["shop"] is before
+    assert session.atom is before.atom
+
+
+async def test_changes_the_new_code_cannot_take_refuse_the_reload(shop):
+    session = started()
+    reader = {
+        "name": "tone",
+        "model": "test:judge",
+        "instructions": "Kind.",
+        "reads": ["faithfulness"],
+    }
+    session.add("output", "JudgeOrbital", reader)
+    before = (session.state(), sys.modules["shop"])
+    shop("shop.py", SHOP.replace("output_orbitals=[faithfulness],", ""))
+    with pytest.raises(ChatomonConfigError) as error:
+        await session.reload()
+    assert str(error.value).startswith(
+        "the reloaded atom does not build with the studio's changes: "
+    )
+    assert str(error.value).endswith(". Change them or reset to code, then reload again")
+    assert "faithfulness" in str(error.value)
+    assert (session.state(), sys.modules["shop"]) == before
+    session.delete("output", "tone")
+    assert (await session.reload()).dropped == []
+    assert session.state()["orbitals"]["output"] == []
+
+
+async def test_a_reload_clears_what_could_be_undone_and_cannot_be_undone(shop):
+    session = started()
+    session.add("input", "TurnLimitOrbital", {"max_turns": 3})
+    session.delete("input", "turn_limit")
+    assert session.state()["undo"] == "turn_limit deleted"
+    await session.reload()
+    assert session.state()["undo"] is None
+    with pytest.raises(RefusedError, match="nothing to undo"):
+        session.undo()
+
+
+async def test_a_reload_is_refused_while_a_turn_runs(shop):
+    session = started()
+    queue = session.start_turn("hello")
+    with pytest.raises(StudioBusyError, match="a turn is running"):
+        await session.reload()
+    await drain(queue)
+    await session.reload()
+
+
+async def test_nothing_else_happens_while_a_reload_runs(shop, monkeypatch):
+    session = started()
+    release = threading.Event()
+    real = loading.load
+
+    def slow(spec: str) -> Atom:
+        release.wait(timeout=5)
+        return real(spec)
+
+    monkeypatch.setattr(loading, "load", slow)
+    reload = asyncio.create_task(session.reload())
+    await asyncio.sleep(0.05)
+    for attempt in (
+        lambda: session.start_turn("hello"),
+        lambda: session.switch("input", "message_length", False),
+        session.reset_conversation,
+    ):
+        with pytest.raises(StudioBusyError, match="the atom is being reloaded"):
+            attempt()
+    with pytest.raises(StudioBusyError, match="the atom is being reloaded"):
+        await session.reload()
+    release.set()
+    assert (await reload).dropped == []
+    session.switch("input", "message_length", False)
+
+
+async def test_a_reload_goes_on_when_the_page_that_asked_for_it_goes_away(shop, monkeypatch):
+    session = started()
+    release = threading.Event()
+    real = loading.load
+
+    def slow(spec: str) -> Atom:
+        release.wait(timeout=5)
+        return real(spec)
+
+    monkeypatch.setattr(loading, "load", slow)
+    shop("settings.py", SETTINGS.replace("brief", "kind"))
+    request = asyncio.create_task(session.reload())
+    await asyncio.sleep(0.05)
+    request.cancel()
+    release.set()
+    for _ in range(100):
+        if session.state()["atom"]["instructions"] == "Be kind.":
+            break
+        await asyncio.sleep(0.02)
+    assert session.state()["atom"]["instructions"] == "Be kind."
+    assert session.atom is sys.modules["shop"].atom
+    session.switch("input", "message_length", False)  # the session is free again
+
+
+async def test_a_studio_started_from_python_cannot_reload():
+    session = Session(make_atom(), source="serve()")
+    with pytest.raises(RefusedError) as error:
+        await session.reload()
+    assert str(error.value) == (
+        "the studio was started from Python and does not know where the atom lives: "
+        "restart it to load your changes"
+    )
+
+
+async def test_a_module_that_runs_a_loop_of_its_own_when_imported_can_be_reloaded(shop):
+    """As a module does to fetch its tools: at start no loop is running, in the server one is."""
+    loop = "import asyncio\n\nasync def fetch():\n    return 60\n\n"
+    shop("settings.py", loop + 'INSTRUCTIONS = "Be brief."\nWORDS = asyncio.run(fetch())\n')
+    session = await asyncio.to_thread(started)
+    shop("settings.py", loop + 'INSTRUCTIONS = "Be kind."\nWORDS = asyncio.run(fetch())\n')
+    await session.reload()
+    assert session.state()["atom"]["instructions"] == "Be kind."
+
+
+async def test_the_notes_the_reloaded_atom_adds_are_told_once(shop):
+    session = started()
+    assert session.notes == []
+    shop(
+        "shop.py",
+        SHOP.replace('custom_output_text="Hi")', 'custom_output_text="Hi"), deps_type=int'),
+    )
+    first = await session.reload()
+    assert len(first.notes) == 1 and "without deps" in first.notes[0]
+    assert session.notes == first.notes
+    second = await session.reload()
+    assert second.notes == [] and session.notes == first.notes
+
+
+async def test_a_reload_leaves_the_developers_new_atom_untouched(shop):
+    session = started()
+    await session.reload()
+    atom = sys.modules["shop"].atom
+    assert session.atom is atom
+    assert (atom.on_turn, atom.tracer_provider, atom.content_policy.mode) == (None, None, "none")
+
+
+class Listening(ScriptedOrbital):
+    """An input orbital that keeps the conversation it was given at every call."""
+
+    def heard(self) -> list[tuple[str, str]]:
+        return [(message.role, message.content) for message in self.contexts[-1].history]
+
+
+def loads(monkeypatch: pytest.MonkeyPatch, *atoms: Atom) -> None:
+    """Make the next reloads give these atoms, as code that changed would."""
+    queue = list(atoms)
+    monkeypatch.setattr(loading, "load", lambda spec: queue.pop(0))
+
+
+async def test_the_conversation_goes_on_after_a_reload(framework: StudioHarness, monkeypatch):
+    first = Listening(Verdict.allow(), Verdict.block("No."), name="guard")
+    before = make_atom(connector=framework.connector("one"), input_orbitals=[first])
+    session = Session(before, source="shop:atom", namespace={})
+    await say(session, "hello")
+    await say(session, "secret")
+    guard = Listening(name="guard")
+    loads(monkeypatch, make_atom(connector=framework.connector("three"), input_orbitals=[guard]))
+    assert (await session.reload()).restarted is None
+    assert [turn.n for turn in session.turns] == [1, 2]
+    assert (await say(session, "and now?")).reply == "three"
+    assert guard.heard() == [
+        ("user", "hello"),
+        ("assistant", "one"),
+        ("user", DEFAULT_BLOCKED_PLACEHOLDER),
+        ("assistant", "No."),
+    ]
+    assert [turn.reloads for turn in session.turns] == [0, 0, 1]
+
+
+class Keyless(PydanticAIConnector):
+    """A connector whose framework refuses to build, as with a model whose key is not set."""
+
+    def build(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("the API key is not set")
+
+
+async def test_an_error_of_the_framework_while_building_is_a_failed_reload(monkeypatch):
+    session = Session(make_atom(), source="shop:atom", namespace={})
+    before = (session.state(), session._agent)
+    loads(monkeypatch, make_atom(connector=Keyless(TestModel())))
+    with pytest.raises(ChatomonConfigError) as error:
+        await session.reload()
+    assert str(error.value) == (
+        "the reloaded atom could not be built: RuntimeError: the API key is not set"
+    )
+    assert isinstance(error.value.__cause__, RuntimeError)
+    assert (session.state(), session._agent) == before
+    assert (await say(session, "hello")).reply == "Hi"
+
+
+async def test_code_on_another_framework_starts_a_new_conversation(monkeypatch):
+    here = frameworks.harness("pydantic_ai", monkeypatch)
+    there = frameworks.harness("langchain", monkeypatch)
+    session = Session(make_atom(connector=here.connector("one")), source="shop:atom", namespace={})
+    session.add("input", "TurnLimitOrbital", {"max_turns": 5})
+    await say(session, "hello")
+    guard = Listening(name="guard")
+    loads(monkeypatch, make_atom(connector=there.connector("two"), input_orbitals=[guard]))
+    result = await session.reload()
+    assert result.restarted == (
+        "The atom is built with LangChainConnector now, another framework: "
+        "a new conversation was started."
+    )
+    assert session.turns == [] and session.conversation is None
+    assert [change["text"] for change in session.state()["changes"]] == ["turn_limit added"]
+    assert session.state()["atom"]["connector"] == "LangChainConnector"
+    turn = await say(session, "and now?")
+    assert (turn.n, turn.reply, guard.heard()) == (1, "two", [])
+
+
+async def test_the_two_connectors_of_one_framework_share_the_conversation(monkeypatch):
+    here = frameworks.harness("maf", monkeypatch)
+    there = frameworks.harness("maf_foundry", monkeypatch)
+    session = Session(make_atom(connector=here.connector("one")), source="shop:atom", namespace={})
+    await say(session, "hello")
+    guard = Listening(name="guard")
+    loads(monkeypatch, make_atom(connector=there.connector("two"), input_orbitals=[guard]))
+    assert (await session.reload()).restarted is None
+    assert (await say(session, "and now?")).reply == "two"
+    assert guard.heard() == [("user", "hello"), ("assistant", "one")]
