@@ -114,3 +114,35 @@ def test_the_namespace_of_the_loaded_module(project):
     assert found["atom"] is atom
     assert found["limit"] == 3
     assert namespace("not_imported_anywhere:atom") == {}
+
+
+NEEDS_ARGUMENTS = (
+    "app:judge needs arguments (messages, info): the studio calls it with none. "
+    "Point at an Atom, or at a function with no arguments that returns one"
+)
+
+
+def test_a_function_that_needs_arguments_is_explained_and_not_called(project):
+    project(
+        HEADER
+        + "def judge(messages, info, *, strict=False):\n"
+        + "    raise RuntimeError('this must not run')\n"
+    )
+    with pytest.raises(ChatomonConfigError) as caught:
+        load("app:judge")
+    assert str(caught.value) == NEEDS_ARGUMENTS
+    assert caught.value.__cause__ is None  # nothing was called: there is no traceback to show
+
+
+def test_a_function_whose_arguments_all_have_defaults_is_still_called(project):
+    project(HEADER + "def build(name='t', *extra, **options):\n    return make()\n")
+    assert load("app:build").name == "t"
+
+
+def test_a_class_that_needs_arguments_is_explained_too():
+    class Builder:
+        def __init__(self, model: str) -> None:
+            self.model = model
+
+    with pytest.raises(ChatomonConfigError, match=r"app:Builder needs arguments \(model\)"):
+        resolve(Builder, label="app:Builder")

@@ -265,3 +265,11 @@ def test_serve_has_no_module_to_look_names_up_in(monkeypatch):
     )
     server.serve(make_atom(), open_browser=False)
     assert "namespace" not in started
+
+
+def test_a_function_that_needs_arguments_is_explained_without_a_traceback(project, capsys):
+    project(ATOM_MODULE + "    def judge(messages, info):\n        return atom\n")
+    assert main(["studio", "cliapp:judge"]) == 1
+    err = capsys.readouterr().err
+    assert "Traceback" not in err
+    assert "chatomon studio: cliapp:judge needs arguments (messages, info)" in err

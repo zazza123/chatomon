@@ -38,7 +38,7 @@ The command imports the module from the current directory, prints a link and ope
 
 The default port is 8016 for oxygen-16, the most common oxygen atom: the "o" of chatomon is the letter the atom replaces in the wordmark.
 
-When a function builds the atom, for example because it reads configuration or creates clients first, point at the function instead: `chatomon studio speedypack.app:make_atom`. The studio calls it with no arguments.
+When a function builds the atom, for example because it reads configuration or creates clients first, point at the function instead: `chatomon studio speedypack.app:make_atom`. The studio calls it with no arguments; a function that needs some is refused with a message that names them.
 
 From Python, `serve` in `chatomon.studio` does the same and blocks until interrupted:
 
