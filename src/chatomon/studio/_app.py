@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import shlex
 from collections.abc import AsyncIterator
 from importlib.resources import files
 from typing import Any
@@ -20,16 +21,22 @@ from starlette.staticfiles import StaticFiles
 from chatomon.errors import ChatomonError
 from chatomon.studio._chains import InvalidRequestError, UnknownOrbitalError
 from chatomon.studio._events import Event
+from chatomon.studio._files import InvalidPathError, OwnFileExistsError
 from chatomon.studio._kinds import InvalidSettingError
 from chatomon.studio._presets import InvalidPresetError
 from chatomon.studio._security import LOOPBACK, Guard
-from chatomon.studio._session import Session, StudioBusyError
+from chatomon.studio._session import Session, StudioBusyError, UnknownTurnError
 
 _STATIC = files("chatomon.studio") / "static"
 _NO_STORE = {"Cache-Control": "no-store"}
 
 
 _PATCH_HELP = 'send {"side": "input", "name": "..."} and one of "enabled", "settings" or "position"'
+
+_TEST_HELP = (
+    'send {"path": "tests/studio/test_turn.py", "turn": "<the id the test came with>"}; '
+    '"alone" and "overwrite" are true or false'
+)
 
 
 def _error(status: int, kind: str, message: str, **extra: Any) -> JSONResponse:
@@ -54,6 +61,12 @@ def _refusal(exc: ChatomonError) -> JSONResponse:
         return _error(422, "InvalidSetting", str(exc), **extra)
     if isinstance(exc, InvalidPresetError):
         return _error(422, "InvalidPreset", str(exc), problems=exc.problems)
+    if isinstance(exc, UnknownTurnError):
+        return _error(404, "UnknownTurn", str(exc))
+    if isinstance(exc, InvalidPathError):
+        return _error(422, "InvalidPath", str(exc))
+    if isinstance(exc, OwnFileExistsError):
+        return _error(409, "Exists", str(exc))
     # A refusal by the orbital or the session, or by the chain when the atom is built.
     return _error(409, "Refused", str(exc))
 
@@ -180,6 +193,36 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
     async def get_code(request: Request) -> Response:
         return JSONResponse(session.code(), headers=_NO_STORE)
 
+    async def get_test(request: Request) -> Response:
+        alone = request.query_params.get("alone") == "1"
+        try:
+            test = session.saved_test(request.path_params["n"], alone=alone)
+        except ChatomonError as exc:
+            return _refusal(exc)
+        return JSONResponse(test, headers=_NO_STORE)
+
+    async def post_test(request: Request) -> Response:
+        body = await _body(request) or {}
+        path, alone = body.get("path"), body.get("alone", False)
+        overwrite, shown = body.get("overwrite", False), body.get("turn")
+        if (
+            not isinstance(path, str)
+            or not isinstance(shown, str)
+            or not isinstance(alone, bool)
+            or not isinstance(overwrite, bool)
+        ):
+            return _error(422, "InvalidBody", _TEST_HELP)
+        try:
+            # The body names the turn and the path; what is written is computed here.
+            written = session.write_test(
+                request.path_params["n"], path, turn=shown, alone=alone, overwrite=overwrite
+            )
+        except ChatomonError as exc:
+            return _refusal(exc)
+        # Quoted for a shell: a path may hold spaces.
+        command = f"python -m pytest {shlex.quote(written)}"
+        return JSONResponse({"path": written, "command": command})
+
     async def get_preset(request: Request) -> Response:
         text = json.dumps(session.export_preset(), indent=2, ensure_ascii=False) + "\n"
         headers = dict(_NO_STORE)
@@ -211,6 +254,8 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
         Route("/api/state", get_state, methods=["GET"]),
         Route("/api/turns", post_turn, methods=["POST"]),
         Route("/api/code", get_code, methods=["GET"]),
+        Route("/api/turns/{n:int}/test", get_test, methods=["GET"]),
+        Route("/api/turns/{n:int}/test", post_test, methods=["POST"]),
         Route("/api/preset", get_preset, methods=["GET"]),
         Route("/api/preset", post_preset, methods=["POST"]),
         Route("/api/orbitals", patch_orbital, methods=["PATCH"]),

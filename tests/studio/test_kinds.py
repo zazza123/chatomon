@@ -88,6 +88,8 @@ def test_settings_come_from_the_constructor():
     }
     assert kinds.describe(JudgeOrbital).objects == ("connector",)
     assert kinds.describe(FunctionOrbital).objects == ("func",)
+    # A function's own argument; the studio still shows functions read-only.
+    assert shapes(FunctionOrbital)["calls_model"] == ("bool", False, False)
 
 
 def test_defaults_options_and_summaries_are_read_not_copied():

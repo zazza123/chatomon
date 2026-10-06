@@ -33,6 +33,8 @@ export const deleteOrbital = (side, name) => send("DELETE", "/api/orbitals", { s
 export const resetOrbitals = (target = {}) => send("POST", "/api/orbitals/reset", target);
 export const undoOrbitals = () => send("POST", "/api/orbitals/undo", {});
 export const getCode = () => send("GET", "/api/code");
+export const getTest = (n, alone) => send("GET", `/api/turns/${n}/test${alone ? "?alone=1" : ""}`);
+export const writeTest = (n, turn, path, alone, overwrite) => send("POST", `/api/turns/${n}/test`, { turn, path, alone, overwrite });
 export const getPresetText = async () => (await call("GET", "/api/preset")).text();
 export const importPreset = (text) => send("POST", "/api/preset", { text });
 

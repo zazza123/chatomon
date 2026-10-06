@@ -114,6 +114,8 @@ async def test_guidance_on_output_allow_is_ignored_with_a_warning(caplog):
 class FlakyProducer(Orbital):
     """Produces annotations on the first call, fails afterwards."""
 
+    calls_model = False
+
     def __init__(self) -> None:
         super().__init__(name="claims", on_error="allow")
         self.calls = 0

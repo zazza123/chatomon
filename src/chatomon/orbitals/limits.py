@@ -68,6 +68,9 @@ class MessageLengthOrbital(Orbital):
         ```
     """
 
+    calls_model = False
+    """It counts words and characters."""
+
     def __init__(
         self,
         *,
@@ -186,6 +189,9 @@ class TurnLimitOrbital(Orbital):
 
     sides: ClassVar[frozenset[Side]] = frozenset({"input"})
     """Input side only: the count is taken on the user message."""
+
+    calls_model = False
+    """It counts the user messages of the history."""
 
     def __init__(
         self,

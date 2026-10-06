@@ -12,7 +12,7 @@ from chatomon.engine import Engine, TurnCallback
 from chatomon.errors import ChatomonConfigError
 from chatomon.knowledge import Knowledge
 from chatomon.observability import ContentPolicy, get_tracer
-from chatomon.orbitals.base import Orbital
+from chatomon.orbitals.base import Orbital, undeclared
 from chatomon.schemas import (
     DEFAULT_BLOCKED_PLACEHOLDER,
     DEFAULT_REFUSAL,
@@ -134,8 +134,9 @@ class Atom(Generic[AgentT]):
     def validate(self) -> None:
         """Check that the orbital chains are consistent.
 
-        A name identifies one orbital instance: the same instance may appear once
-        in each chain, two different instances may not share a name. Every name in
+        Every orbital says whether it calls a model. A name identifies one orbital
+        instance: the same instance may appear once in each chain, two different
+        instances may not share a name. Every name in
         `reads` must be an orbital placed earlier in the same chain or, for the
         output chain, an input orbital. Every orbital must support the side of the
         chain it is in.
@@ -145,6 +146,9 @@ class Atom(Generic[AgentT]):
         """
         by_name: dict[str, Orbital] = {}
         for orb in (*self.input_orbitals, *self.output_orbitals):
+            # A class that never calls Orbital.__init__ was not checked when it was created.
+            if not isinstance(getattr(orb, "calls_model", None), bool):
+                raise ChatomonConfigError(undeclared(type(orb)))
             if by_name.setdefault(orb.name, orb) is not orb:
                 raise ChatomonConfigError(
                     f"two different orbitals are named {orb.name!r}; give each a unique name="

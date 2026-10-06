@@ -86,6 +86,27 @@ def names(namespace: Mapping[str, object] | None) -> dict[int, str]:
     return found
 
 
+def _ascii(value: str) -> str:
+    """Write text that holds a lone surrogate with escapes only.
+
+    `json.dumps` writes a character past the basic plane as a pair of surrogates,
+    which Python reads back as two characters.
+
+    Returns:
+        An ASCII literal that reads back to the same text.
+    """
+    parts: list[str] = []
+    for char in value:
+        code = ord(char)
+        if code > 0xFFFF:
+            parts.append(f"\\U{code:08x}")
+        elif 0xD800 <= code <= 0xDFFF:
+            parts.append(f"\\u{code:04x}")
+        else:
+            parts.append(json.dumps(char)[1:-1])
+    return '"' + "".join(parts) + '"'
+
+
 def literal(value: Any) -> str:
     """Write a plain value as a Python literal that reads back to the same value.
 
@@ -96,7 +117,7 @@ def literal(value: Any) -> str:
         try:
             value.encode("utf-8")
         except UnicodeEncodeError:
-            return json.dumps(value)
+            return _ascii(value)
         written = json.dumps(value, ensure_ascii=False)
         for char, escape in _BREAKS.items():
             written = written.replace(char, escape)
@@ -108,8 +129,8 @@ def literal(value: Any) -> str:
     return repr(value)
 
 
-def _text(value: str) -> str:
-    """Write text; with line breaks, one literal per line, to go inside parentheses.
+def text_literal(value: str) -> str:
+    """Write text as code; with line breaks, one literal per line, to go inside parentheses.
 
     Returns:
         One literal, or several separated by line breaks.
@@ -181,7 +202,7 @@ class _Writer:
             return name, None, set()
         if isinstance(value, Knowledge):
             if value.title is None:
-                return _text(value.text), None, set()
+                return text_literal(value.text), None, set()
             text = f"Knowledge({literal(value.text)}, title={literal(value.title)})"
             return text, None, {("chatomon", "Knowledge")}
         if isinstance(value, str | int | float):
@@ -213,7 +234,7 @@ class _Writer:
                 if isinstance(raw, Knowledge):
                     text, comment, more = self._object(orb.name, key, raw)
                 elif isinstance(raw, str):
-                    text, comment, more = _text(raw), None, set()
+                    text, comment, more = text_literal(raw), None, set()
                 else:
                     text, comment, more = literal(kinds.plain(raw)), None, set()
             args.append((key, text, comment))

@@ -18,6 +18,8 @@ from chatomon.schemas import ErrorPolicy, OrbitalContext, Side, Verdict
 class ScriptedOrbital(Orbital):
     """Returns (or raises) the scripted steps in order; the last step repeats."""
 
+    calls_model = False
+
     def __init__(
         self,
         *steps: Verdict | Exception,
@@ -46,6 +48,8 @@ class InputOnlyOrbital(ScriptedOrbital):
 
 class SlowOrbital(Orbital):
     """Never answers in time."""
+
+    calls_model = False
 
     async def check(self, ctx: OrbitalContext) -> Verdict:
         await asyncio.sleep(10)

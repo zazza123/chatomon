@@ -147,6 +147,9 @@ class JudgeOrbital(Orbital):
         ```
     """
 
+    calls_model = True
+    """Every check is a call to the judge's model."""
+
     def __init__(
         self,
         *,

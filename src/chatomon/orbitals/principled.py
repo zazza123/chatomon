@@ -202,6 +202,9 @@ class ScopeGuardOrbital(Orbital):
 
     sides: ClassVar[frozenset[Side]] = frozenset({"input"})
 
+    calls_model = True
+    """Every check is a call to the service."""
+
     def __init__(
         self,
         *,
@@ -344,6 +347,9 @@ class ClaimExtractorOrbital(Orbital):
         ]
         ```
     """
+
+    calls_model = True
+    """Every check is a call to the service."""
 
     def __init__(
         self,

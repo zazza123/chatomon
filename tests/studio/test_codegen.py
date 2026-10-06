@@ -417,3 +417,8 @@ def test_characters_that_editors_take_for_line_breaks_are_escaped(code_point):
     written = codegen.literal(text)
     assert chr(code_point) not in written
     assert ast.literal_eval(written) == text
+
+
+def test_a_lone_surrogate_next_to_a_character_past_the_basic_plane_reads_back():
+    value = chr(0xD83D) + chr(0x1F4E6) + chr(0xE9) + chr(0xDC00) + '"' + chr(92) + chr(10)
+    assert ast.literal_eval(codegen.literal(value)) == value

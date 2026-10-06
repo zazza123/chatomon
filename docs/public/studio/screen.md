@@ -39,10 +39,13 @@ A message with a dashed red outline was blocked: it is kept out of the conversat
 
 The lens of a turn opens its report: every orbital with its action, reason, duration, guidance, annotations and fingerprint, then the attempts of the nucleus and the reply that was sent. It is the turn's `TurnReport`, described in [Observability and Audit](../observability.md). A turn keeps the names and fingerprints its orbitals had when it ran, so earlier turns still tell you which settings produced them.
 
+The report also says how many changes the session had against your code when the turn ran. **Save as test** turns the turn into a pytest file: see [Saving a Turn as a Test](testing.md).
+
 ## Related Documentation
 
 - [Studio](index.md) — installing, starting, content and security
 - [Tuning Orbitals](tuning.md) — changing the orbitals from the drawer and the cards
+- [Saving a Turn as a Test](testing.md) — a turn from its report to a pytest file
 - [Concepts](../concepts.md) — what happens to a message during a turn, and the final actions
 - [Observability and Audit](../observability.md) — the turn report
 

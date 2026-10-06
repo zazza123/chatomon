@@ -4,13 +4,14 @@
 
 ![](../assets/brand/mascot/animated/turn-light.svg#only-light){ .cm-page-mascot }
 ![](../assets/brand/mascot/animated/turn-dark.svg#only-dark){ .cm-page-mascot }
-The studio is a local web page for trying an atom before it goes anywhere. You chat with it, watch each orbital decide while the turn runs, tune the orbitals until they behave, and take the result back to your code. It is a development tool: the atom stays in your code, the studio never edits your files, and it is not meant to be deployed or to serve users.
+The studio is a local web page for trying an atom before it goes anywhere. You chat with it, watch each orbital decide while the turn runs, tune the orbitals until they behave, and take the result back to your code. It is a development tool: the atom stays in your code, the studio never changes your code, and it is not meant to be deployed or to serve users.
 
 ## Key Features
 
 - **Live turns** — the atom on stage shows every orbital deciding, and each turn keeps its report.
 - **Tuning** — switch orbitals on and off, change their settings, reorder them and add chatomon's own orbitals. Changes live in the studio session.
 - **Back to code** — the tuned orbitals as Python to paste into your atom, or as a preset file to load again later.
+- **Tests** — a turn, or the conversation up to it, saved as a pytest file that runs against the atom from your code.
 
 ## Table of Contents
 
@@ -19,6 +20,7 @@ The studio is a local web page for trying an atom before it goes anywhere. You c
 | [Reading the Screen](screen.md) | The atom drawer, the atom on stage, turns and their reports |
 | [Tuning Orbitals](tuning.md) | Editing settings, changing the order, adding and deleting orbitals, changes against the code |
 | [Back to Code](export.md) | Copy as code, presets and the preset format |
+| [Saving a Turn as a Test](testing.md) | What a saved test checks, offline and integration tests, where the file goes |
 
 ## Installing and Starting
 
@@ -80,6 +82,7 @@ The studio shows conversation text and calls models with your credentials, so it
 - **Changes live in the session.** Stopping the studio discards them: copy the code or export a preset first.
 - **Restart to reload.** After changing the code, stop the command and start it again.
 - **No dependencies.** Turns run without PydanticAI `deps`: an atom whose tools or instructions need them fails when it uses them, and the command says so when it starts.
+- **A saved test does not repeat what the output chain decided.** It runs the real nucleus, which writes something else every time: for a turn in which an output orbital stopped a reply, the test checks only how the turn ended.
 - **Rejected replies are not shown.** When an output orbital makes the nucleus write a reply again, the report shows the orbital's guidance, not the text it rejected.
 
 ## Key Components

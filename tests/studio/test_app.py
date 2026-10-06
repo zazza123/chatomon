@@ -2,6 +2,8 @@ import json
 import logging
 
 import pytest
+from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from starlette.testclient import TestClient
 
@@ -472,3 +474,232 @@ def test_a_reset_with_a_body_that_is_not_an_object_resets_nothing(tunable):
     for body in (b"[1]", b"nonsense", b'"all"'):
         assert raw(tunable, "POST", "/api/orbitals/reset", body).status_code == 422
     assert len(tunable.get("/api/state").json()["changes"]) == 1
+
+
+LONG = "one two three four"
+SAVED = "tests/studio/test_one_two_three_four.py"
+KEYS = {"code", "path", "root", "writable", "integration", "earlier", "notes", "warnings", "turn"}
+
+
+def serving(atom: Atom, **kwargs):
+    session = Session(atom, source="app:atom", **kwargs)
+    return TestClient(create_app(session, token=TOKEN, host="127.0.0.1", port=8016), base_url=BASE)
+
+
+@pytest.fixture
+def saving(tmp_path, monkeypatch):
+    """A studio started from a module, in a directory of its own."""
+    monkeypatch.chdir(tmp_path)
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(TestModel(custom_output_text="Hi")),
+        input_orbitals=[MessageLengthOrbital(max_words=3, reply="Too long.")],
+    )
+    with serving(atom, namespace={"atom": atom}) as client:
+        client.get(f"/?token={TOKEN}")
+        yield client
+
+
+def turn(client, message: str) -> None:
+    assert client.post("/api/turns", json={"message": message}, headers=ORIGIN).status_code == 200
+
+
+def write(client, n: int = 1, **body):
+    """Ask to write turn `n`, naming the turn the card was made from unless the test does."""
+    if "turn" not in body:
+        shown = client.get(f"/api/turns/{n}/test")
+        body["turn"] = shown.json()["turn"] if shown.status_code == 200 else "none"
+    return client.post(f"/api/turns/{n}/test", json=body, headers=ORIGIN)
+
+
+def refused(response) -> tuple[int, str]:
+    return response.status_code, response.json()["error"]["type"]
+
+
+def test_the_test_of_a_turn(saving, tmp_path):
+    turn(saving, LONG)
+    response = saving.get("/api/turns/1/test")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    body = response.json()
+    assert set(body) == KEYS
+    assert body["code"].startswith('"""Saved from chatomon studio: app:atom, turn 1."""\n')
+    assert (body["path"], body["root"]) == (SAVED, str(tmp_path.resolve()))
+    assert (body["writable"], body["integration"], body["earlier"]) == (True, False, 0)
+    assert list(tmp_path.iterdir()) == []  # reading the test writes nothing
+
+
+def test_the_turn_alone_is_asked_for_in_the_query(saving):
+    turn(saving, "hello")
+    turn(saving, LONG)
+    whole = saving.get("/api/turns/2/test").json()
+    alone = saving.get("/api/turns/2/test?alone=1").json()
+    assert "hello" in whole["code"] and "hello" not in alone["code"]
+    assert whole["earlier"] == alone["earlier"] == 1
+
+
+def test_a_turn_that_does_not_exist(saving):
+    assert refused(saving.get("/api/turns/1/test")) == (404, "UnknownTurn")
+    assert refused(write(saving, 7, path=SAVED)) == (404, "UnknownTurn")
+    assert refused(saving.get("/api/turns/first/test")) == (404, "NotFound")
+
+
+def test_writing_the_test(saving, tmp_path):
+    turn(saving, LONG)
+    code = saving.get("/api/turns/1/test").json()["code"]
+    response = write(saving, path=SAVED)
+    written = {"path": SAVED, "command": f"python -m pytest {SAVED}"}
+    assert (response.status_code, response.json()) == (200, written)
+    assert (tmp_path / SAVED).read_text(encoding="utf-8") == code
+    again = saving.get("/api/turns/1/test").json()
+    assert again["path"] == "tests/studio/test_one_two_three_four_2.py"
+
+
+def test_the_browser_cannot_choose_what_is_written(saving, tmp_path):
+    turn(saving, LONG)
+    assert write(saving, path=SAVED, code="import os", text="import os").status_code == 200
+    written = (tmp_path / SAVED).read_text(encoding="utf-8")
+    assert written == saving.get("/api/turns/1/test").json()["code"]
+    assert "import os" not in written
+
+
+def test_a_file_of_the_studio_is_replaced_only_when_asked(saving, tmp_path):
+    turn(saving, LONG)
+    write(saving, path=SAVED)
+    edited = '"""Saved from chatomon studio: edited by hand."""\n'
+    (tmp_path / SAVED).write_text(edited, encoding="utf-8")
+    response = write(saving, path=SAVED)
+    assert refused(response) == (409, "Exists")
+    assert response.json()["error"]["message"] == (
+        f"{SAVED} exists and was saved by the studio: overwrite it?"
+    )
+    assert (tmp_path / SAVED).read_text(encoding="utf-8") == edited
+    assert write(saving, path=SAVED, overwrite=True).status_code == 200
+    assert "edited by hand" not in (tmp_path / SAVED).read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("overwrite", [False, True])
+def test_a_file_the_studio_did_not_write_is_never_replaced(saving, tmp_path, overwrite):
+    turn(saving, LONG)
+    (tmp_path / "app.py").write_text("atom = 1\n", encoding="utf-8")
+    response = write(saving, path="app.py", overwrite=overwrite)
+    assert refused(response) == (409, "Refused")
+    assert response.json()["error"]["message"] == (
+        "app.py was not written by the studio: choose another path"
+    )
+    assert (tmp_path / "app.py").read_text(encoding="utf-8") == "atom = 1\n"
+
+
+@pytest.mark.parametrize(
+    "path", ["", "../outside.py", "tests/../../outside.py", "tests/notes.txt", "tests"]
+)
+def test_a_path_the_studio_does_not_write_to(saving, tmp_path, path):
+    turn(saving, LONG)
+    assert refused(write(saving, path=path)) == (422, "InvalidPath")
+    assert list(tmp_path.iterdir()) == []
+    assert not (tmp_path.parent / "outside.py").exists()
+
+
+def test_an_absolute_path_is_refused(saving, tmp_path):
+    turn(saving, LONG)
+    assert refused(write(saving, path=str(tmp_path / "test_x.py"))) == (422, "InvalidPath")
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"path": 3},
+        {"path": SAVED, "alone": "yes"},
+        {"path": SAVED, "overwrite": 1},
+        {"path": SAVED, "turn": None},
+    ],
+)
+def test_a_malformed_request_to_write(saving, tmp_path, body):
+    turn(saving, LONG)
+    assert refused(write(saving, **body)) == (422, "InvalidBody")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_writing_needs_the_studios_origin(saving, tmp_path):
+    turn(saving, LONG)
+    foreign = {"origin": "http://evil.example"}
+    assert (
+        saving.post("/api/turns/1/test", json={"path": SAVED}, headers=foreign).status_code == 403
+    )
+    assert saving.post("/api/turns/1/test", json={"path": SAVED}).status_code == 403
+    assert list(tmp_path.iterdir()) == []
+    # The same request from the studio's own page is the one that writes: it was the Origin.
+    assert write(saving, path=SAVED).status_code == 200
+
+
+def test_a_failed_turn_has_no_test(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError("model down")
+
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(FunctionModel(respond)),
+    )
+    with serving(atom, namespace={"atom": atom}) as client:
+        client.get(f"/?token={TOKEN}")
+        turn(client, "hello")
+        for response in (client.get("/api/turns/1/test"), write(client, path=SAVED)):
+            assert refused(response) == (409, "Refused")
+            assert response.json()["error"]["message"] == (
+                "A turn that failed cannot be saved as a test."
+            )
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_started_from_python_the_test_is_shown_and_not_written(client, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    turn(client, "hello")  # the `client` fixture has no namespace, as with serve()
+    body = client.get("/api/turns/1/test").json()
+    assert (body["writable"], body["path"], body["root"]) == (False, None, None)
+    assert refused(write(client, path=SAVED)) == (409, "Refused")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_test_is_read_and_written_while_a_turn_runs(saving, tmp_path, monkeypatch):
+    turn(saving, LONG)
+    monkeypatch.setattr(Session, "busy", property(lambda self: True))
+    assert saving.get("/api/turns/1/test").status_code == 200
+    assert write(saving, path=SAVED).status_code == 200
+
+
+def test_a_path_the_system_refuses_is_a_message_not_a_failure(saving, tmp_path):
+    turn(saving, LONG)
+    response = write(saving, path="tests/" + "x" * 300 + ".py")
+    assert refused(response) == (409, "Refused")
+    assert response.json()["error"]["message"].startswith("could not write tests/xxx")
+    assert refused(write(saving, path="~/test_x.py")) == (422, "InvalidPath")
+    assert not (tmp_path / "~").exists()
+
+
+def test_a_card_that_is_out_of_date_writes_nothing(saving, tmp_path):
+    turn(saving, LONG)
+    shown = saving.get("/api/turns/1/test").json()
+    assert saving.post("/api/conversation/reset", headers=ORIGIN).status_code == 200
+    turn(saving, "hello")  # the conversation was started again elsewhere: another turn 1
+    response = write(saving, path=SAVED, turn=shown["turn"])
+    assert refused(response) == (409, "Refused")
+    assert response.json()["error"]["message"] == (
+        "turn 1 is not the turn this test was made from: the conversation changed. "
+        "Open the turn again"
+    )
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_the_command_to_run_a_test_quotes_what_a_shell_would_split(saving):
+    turn(saving, LONG)
+    written = write(saving, path="my tests/test_x.py").json()
+    assert written == {
+        "path": "my tests/test_x.py",
+        "command": "python -m pytest 'my tests/test_x.py'",
+    }

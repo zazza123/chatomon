@@ -1,0 +1,120 @@
+# Saving a Turn as a Test
+
+## Overview
+
+A turn you tried in the studio can become a regression test. **Save as test**, in the report of a turn, writes a pytest file that sends the same messages to the atom from your code and checks that each turn ends the way it did in the studio. The test runs the real atom: the nucleus and the orbitals call their own models, so most saved tests need the credentials your application needs.
+
+## What a Test Checks
+
+A saved test builds the atom from your code, collects its turn reports and sends one message per turn, carrying the conversation from one turn to the next. This one holds two turns: the first was answered, the second was stopped by an orbital called `no_refunds`.
+
+```{.python test="skip"}
+"""Saved from chatomon studio: speedypack.app:atom, turns 1-2."""
+
+import pytest
+
+from chatomon import TurnReport
+from speedypack.app import atom
+
+
+@pytest.mark.integration  # the nucleus and scope call real models
+def test_i_want_a_refund(monkeypatch: pytest.MonkeyPatch) -> None:
+    reports: list[TurnReport] = []
+    monkeypatch.setattr(atom, "on_turn", reports.append)
+    agent = atom.build()
+
+    # Turn 1: answered
+    result = agent.run_sync("Where is my parcel?")
+    report = reports[-1]
+    assert report.final_action == "answered"
+    assert [(r.name, r.action) for r in report.input if r.action != "allow"] == []
+    assert [
+        (r.name, r.action) for a in report.output for r in a if r.action != "allow"
+    ] == []
+
+    # Turn 2: blocked
+    result = agent.run_sync("I want a refund", message_history=result.all_messages())
+    report = reports[-1]
+    assert report.final_action == "blocked"
+    assert [(r.name, r.action) for r in report.input if r.action != "allow"] == [
+        ("no_refunds", "block"),
+    ]
+    assert result.output == "We don't handle refunds in chat."
+```
+
+`monkeypatch` puts the atom back as it was when the test ends, and your own `on_turn` is not called while it runs. The atom keeps its `capture_content`: the checks need names and actions only.
+
+| The test checks | When |
+|-----------------|------|
+| How the turn ended: the `final_action` of its report | Always |
+| The input orbitals that stopped the turn, with what they did | Always. An orbital that let the message through is not listed, so adding an orbital to your code does not break the tests you saved |
+| That no output orbital stopped a reply | When none did in the studio |
+| The text of the reply | When the input chain produced it and no model can have written it: no orbital that calls a model ran in the turn, or the reply is the atom's refusal |
+
+A test never checks what the nucleus writes, and it cannot repeat what an output orbital decided on a reply: a real nucleus writes something different every time. For a turn in which an output orbital stopped a reply, the test checks only how the turn ended, and the card says so. For a turn in which none did, the test expects none to. With an output judge that is close to its limit on that reply, such a test can pass one run and fail the next: the judge needs tuning, not the test.
+
+A turn that failed cannot be saved.
+
+## The Conversation or the Turn Alone
+
+A turn may depend on the ones before it: a turn limit counts them, and a judge reads the history. The studio cannot tell, so a test holds the whole conversation up to the saved turn, and every turn in it is checked. When the earlier turns have nothing to do with the one you are saving, clear **Replay the turns before it** and the test holds that turn alone. Turns that failed are left out: they left nothing in the conversation. A turn saved alone that did depend on what came before it gives a test that fails, and the card reminds you of it.
+
+Each replayed turn is a real call, so a long conversation makes a slow test. **New conversation** before the turn you care about keeps tests short.
+
+## Offline and Integration
+
+A test runs offline only when no model is needed: in every turn the input chain produced the reply, and no orbital that ran calls a model. Such a test puts the framework's test model in place of the nucleus before it builds the atom. The nucleus then needs no credentials, the test model calls none of the atom's tools, and a change in your code that lets the message through fails the test instead of calling a model. The module of your atom must still import without credentials for the test to run with none.
+
+Every other test is marked `integration`, with a comment that names what calls real models. Register the marker in your pytest configuration, and leave these tests out where there are no credentials:
+
+```toml
+[tool.pytest.ini_options]
+markers = ["integration: calls real models"]
+```
+
+| Command | Runs |
+|---------|------|
+| `python -m pytest tests/studio` | Every saved test |
+| `python -m pytest tests/studio -m "not integration"` | Only the tests that run offline |
+
+Run them with `python -m pytest`, from the directory you start the studio in: it puts that directory on the import path, where the module of your atom is.
+
+The studio knows whether an orbital calls a model from the orbital itself: see [Saying Whether It Calls a Model](../orbitals/custom.md#saying-whether-it-calls-a-model). A function written with `@orbital` is taken as calling no model unless it says otherwise, and the card names the functions it relied on.
+
+## Changes That Are Not in Your Code
+
+A saved test builds the atom from your code. When a turn ran with changes you made in the studio, the test describes a turn your code cannot produce yet, and it fails until those changes are in the code. The card warns about it, lists the changes each turn ran with, and opens [Copy as code](export.md#copy-as-code) so you can paste the orbitals first. Saved before the code changes and passing after, the test shows that the change did what you tried. The same holds for a test that runs offline: it is offline for the turn as it ran in the studio, and until the changes are in your code, the orbitals of your code run, which may call a model.
+
+## Where the File Goes
+
+The card proposes `tests/studio/test_<words of the message>.py`, one file per test. The path can be changed, within these limits:
+
+- the file stays inside the directory the studio was started from;
+- its name ends in `.py`, and the path does not start with `~`, which is not expanded;
+- an existing file is replaced only when the studio wrote it, and only after you confirm. Any other file is refused. The studio knows its files by their first line, so a saved test you edited by hand is replaced too, and your edits are lost.
+
+The page chooses the turn and the path. What is written is always the test the studio generated, and the card then shows the command that runs it.
+
+## Limits
+
+- **Decisions of the output chain are not repeated.** A test cannot make the nucleus write the reply that an output orbital stopped.
+- **Started with `serve()`.** The studio does not know which module the atom lives in. The card shows the test with its import left to complete, and copies it; it does not write the file. The same holds for a module whose name is not a Python name, such as `my-shop`, which no import can name.
+- **PydanticAI atoms only**, like the rest of the studio.
+
+## Key Components
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| `Orbital.calls_model` | `src/chatomon/orbitals/base.py` | Whether an orbital calls a model, which decides if a test can run offline |
+| `TurnReport` | `src/chatomon/schemas.py` | The record of a turn that a saved test reads |
+
+## Related Documentation
+
+- [Reading the Screen](screen.md) — the report of a turn, where a test is saved from
+- [Back to Code](export.md) — Copy as code, for changes that are not in the code yet
+- [Writing Your Own Orbital](../orbitals/custom.md) — `calls_model` for classes and functions
+- [Observability and Audit](../observability.md) — the turn report and its final actions
+
+---
+**Last Updated:** October 2026
+**Status:** Implemented

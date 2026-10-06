@@ -6,7 +6,8 @@ import asyncio
 import json
 import os
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from opentelemetry.sdk.trace import TracerProvider
@@ -18,8 +19,10 @@ from chatomon.atom import Atom
 from chatomon.errors import ChatomonConfigError, ChatomonError
 from chatomon.schemas import Side, TurnReport
 from chatomon.studio import _codegen as codegen
+from chatomon.studio import _files as files
 from chatomon.studio import _kinds as kinds
 from chatomon.studio import _presets as presets
+from chatomon.studio import _testgen as testgen
 from chatomon.studio._chains import SIDES, Chains, Entry, RefusedError
 from chatomon.studio._events import Event, EventProcessor
 from chatomon.studio._runners import check_supported
@@ -45,6 +48,10 @@ class StudioBusyError(ChatomonError):
     """A turn is running, so the session cannot start another one or change its orbitals."""
 
 
+class UnknownTurnError(ChatomonError):
+    """The conversation has no turn with that number."""
+
+
 @dataclass
 class TurnRecord:
     """A finished turn, as the page shows it."""
@@ -52,6 +59,12 @@ class TurnRecord:
     n: int
     message: str
     chain: dict[str, list[str]]
+    changes: list[str] = field(default_factory=list)
+    """How the session differed from the code when the turn started."""
+    models: frozenset[str] = frozenset()
+    """The enabled orbitals that call a model, by name, when the turn started."""
+    signature: tuple[tuple[str, str, str, bool], ...] = ()
+    """Every orbital of the session when the turn started: side, name, fingerprint, on."""
     reply: str | None = None
     report: TurnReport | None = None
     error: dict[str, str] | None = None
@@ -64,6 +77,8 @@ class TurnRecord:
             "reply": self.reply,
             "report": self.report.model_dump(mode="json") if self.report is not None else None,
             "chain": self.chain,
+            "changes": self.changes,
+            "cannot_save": testgen.refusal(self),
             "error": self.error,
         }
 
@@ -84,6 +99,7 @@ class Session:
         self.atom = atom
         self.source = source
         self.namespace = namespace
+        self.root = Path.cwd().resolve()
         self._runner = runner
         self.processor = EventProcessor()
         self.provider = _always_recording_provider()
@@ -247,6 +263,118 @@ class Session:
             raise presets.InvalidPresetError([str(exc)]) from exc
         return warnings
 
+    def signature(self) -> tuple[tuple[str, str, str, bool], ...]:
+        """Return what identifies the session's orbitals now.
+
+        Two sessions with the same signature build the same chains: the sentences
+        of `changes` cannot tell a setting changed once from one changed again.
+
+        Returns:
+            Side, name, fingerprint and whether it is on, for every orbital in order.
+        """
+        return tuple(
+            (side, entry.orbital.name, entry.orbital.fingerprint(), entry.enabled)
+            for side in SIDES
+            for entry in self.chains.work[side]
+        )
+
+    def _saved(self, n: int, alone: bool) -> testgen.SavedTest:
+        if not 1 <= n <= len(self.turns):
+            raise UnknownTurnError(f"there is no turn {n} in this conversation")
+        return testgen.generate(
+            self.turns[:n],
+            alone=alone,
+            source=self.source,
+            namespace=self.namespace,
+            signature=self.signature(),
+            framework=self._runner.saved_test(),
+        )
+
+    def saved_test(self, n: int, *, alone: bool = False) -> dict[str, Any]:
+        """Return turn `n` as a test: the code, where it would go and what to know.
+
+        Args:
+            n: The turn's number in this conversation.
+            alone: Whether to leave out the turns before it.
+
+        Returns:
+            The code, the proposed path and the root (both `None` when the studio
+            cannot write), and the notes and warnings.
+
+        Raises:
+            UnknownTurnError: If the conversation has no such turn.
+            RefusedError: If the turn failed.
+        """  # noqa: DOC502 - raised by the helpers
+        test = self._saved(n, alone)
+        writable = self.namespace is not None and test.importable
+        return {
+            "code": test.code,
+            "path": files.proposed(self.root, test.name) if writable else None,
+            "root": str(self.root) if writable else None,
+            "writable": writable,
+            "integration": test.integration,
+            "earlier": test.earlier,
+            "notes": test.notes,
+            "warnings": test.warnings,
+            # What the page sends back to write: the turn's number alone can name another
+            # turn once the conversation is started again.
+            "turn": self._turn_id(n),
+        }
+
+    def _turn_id(self, n: int) -> str | None:
+        report = self.turns[n - 1].report
+        return report.turn_id if report is not None else None
+
+    def write_test(
+        self,
+        n: int,
+        path: str,
+        *,
+        turn: str | None = None,
+        alone: bool = False,
+        overwrite: bool = False,
+    ) -> str:
+        """Write turn `n` as a test under the directory the studio was started from.
+
+        The content is generated here: the caller chooses the turn and the path,
+        never what is written.
+
+        Args:
+            n: The turn's number in this conversation.
+            path: Where to write, relative to that directory.
+            turn: The id of the turn the test was shown for; when given, it must
+                still be turn `n`.
+            alone: Whether to leave out the turns before it.
+            overwrite: Whether to replace a test the studio wrote earlier.
+
+        Returns:
+            The written path, relative to that directory.
+
+        Raises:
+            UnknownTurnError: If the conversation has no such turn.
+            InvalidPathError: If the path is not one the studio writes to.
+            OwnFileExistsError: If the file is the studio's and `overwrite` is false.
+            RefusedError: If the turn failed or is no longer the one shown, the studio
+                was started from Python, or the file exists and the studio did not
+                write it.
+        """  # noqa: DOC502 - raised by the helpers
+        test = self._saved(n, alone)
+        if turn is not None and turn != self._turn_id(n):
+            raise RefusedError(
+                f"turn {n} is not the turn this test was made from: the conversation "
+                "changed. Open the turn again"
+            )
+        if self.namespace is None:
+            raise RefusedError(
+                "the studio was started from Python and does not know where the atom "
+                "lives: copy the test instead"
+            )
+        if not test.importable:
+            raise RefusedError(
+                "the import of this test has to be completed by hand: copy the test instead"
+            )
+        return files.write(self.root, path, test.code, header=testgen.HEADER, overwrite=overwrite)
+
     def reset_conversation(self) -> None:
         """Start a new conversation.
 
@@ -290,10 +418,16 @@ class Session:
         def emit(event: Event | None) -> None:
             loop.call_soon_threadsafe(queue.put_nowait, event)
 
+        enabled = {side: self.chains.enabled(side) for side in SIDES}
         record = TurnRecord(
             n=len(self.turns) + 1,
             message=message,
-            chain={side: [orb.name for orb in self.chains.enabled(side)] for side in SIDES},
+            chain={side: [orb.name for orb in enabled[side]] for side in SIDES},
+            changes=[change.text for change in self.chains.changes()],
+            models=frozenset(
+                orb.name for side in SIDES for orb in enabled[side] if orb.calls_model
+            ),
+            signature=self.signature(),
         )
         self._task = loop.create_task(self._run(record, emit))
         return queue

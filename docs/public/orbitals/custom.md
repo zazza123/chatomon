@@ -13,13 +13,39 @@ There are two ways, both in `src/chatomon/orbitals/base.py`:
 | Way | When to use it |
 |-----|----------------|
 | The `orbital` decorator on a function | Simple checks. Sync functions run in a worker thread so they never block the event loop; async functions run directly. |
-| A subclass of `Orbital` implementing `check()` | Orbitals with configuration or clients, like the built-in ones. |
+| A subclass of `Orbital` that implements `check()` and sets `calls_model` | Orbitals with configuration or clients, like the built-in ones. |
 
 A check receives an `OrbitalContext` (`src/chatomon/schemas.py`): the text under check, which side it is on, the conversation history (with blocked messages already replaced), the annotations of the orbitals that ran before it, the attempt number on the output side, and the turn and conversation ids. It returns a `Verdict`.
 
 ## Settings
 
 Every orbital has four settings: a `name` (unique within the atom; by default the one [`Orbital.default_name()`][chatomon.orbitals.base.Orbital.default_name] derives from the class name, or the function's name with `@orbital`), `reads` (see [Chaining Orbitals](index.md#chaining-orbitals)), a `timeout` in seconds (30 by default) and `on_error` (`"block"` by default). `Orbital.fingerprint()` hashes the configuration returned by `config()`; the hash is recorded in every audit report, so you can tell which version of a check was active.
+
+## Saying Whether It Calls a Model
+
+Every orbital class sets `calls_model`: `True` when its check calls a model or any other remote service, `False` when it works on the text alone. There is no default. An orbital whose class does not set it is refused when it is created, with a message that names the line to add; a subclass keeps the value of its parent. A function is taken as calling no model: pass `calls_model=True` to the decorator for one that does.
+
+chatomon does not read the value while a turn runs. The studio reads it when it [saves a turn as a test](../studio/testing.md): a test in which no model is called runs offline, and every other one is marked for the runs that have credentials.
+
+```python
+from chatomon import Orbital, Verdict, orbital
+from chatomon.schemas import OrbitalContext
+
+
+class ModerationOrbital(Orbital):
+    calls_model = True  # every check is a call to a moderation service
+
+    async def check(self, ctx: OrbitalContext) -> Verdict:
+        return Verdict.allow()
+
+
+@orbital(calls_model=True)
+async def moderation(ctx: OrbitalContext) -> Verdict:
+    return Verdict.allow()
+
+
+assert ModerationOrbital().calls_model and moderation.calls_model
+```
 
 ## Example: Two Chained Orbitals
 
@@ -63,5 +89,5 @@ asyncio.run(main())
 - [API Reference: `chatomon.schemas`](../reference/schemas.md) — `OrbitalContext` and `Verdict`
 
 ---
-**Last Updated:** September 2026
+**Last Updated:** October 2026
 **Status:** Implemented

@@ -9,6 +9,7 @@ from typing import Any
 from pydantic_ai.messages import ModelMessage
 
 from chatomon.connectors.base import Connector
+from chatomon.studio._testgen import Framework
 
 
 @dataclass(frozen=True)
@@ -68,3 +69,21 @@ def notes(connector: Connector[Any]) -> list[str]:
             "so tools and instructions that use them fail"
         ]
     return []
+
+
+def saved_test() -> Framework:
+    """Return what a saved test needs from PydanticAI.
+
+    Returns:
+        The test model and the line that puts it in place of the nucleus, the call
+        that runs a turn, the argument that carries the conversation and the reply.
+    """
+    return Framework(
+        test_model=("pydantic_ai.models.test", "TestModel"),
+        test_model_label="PydanticAI's `TestModel`",
+        # No tool is called: by default the test model calls every tool the atom has.
+        offline='monkeypatch.setattr(atom.connector, "model", TestModel(call_tools=[]))',
+        run="agent.run_sync",
+        resume="message_history=result.all_messages()",
+        reply="result.output",
+    )

@@ -13,7 +13,7 @@ from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.orbitals import JudgeOrbital, MessageLengthOrbital
 from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER
 from chatomon.studio._chains import RefusedError, UnknownOrbitalError
-from chatomon.studio._session import Session, StudioBusyError
+from chatomon.studio._session import Session, StudioBusyError, UnknownTurnError
 from tests.fakes import FakeConnector, ScriptedOrbital
 
 
@@ -469,3 +469,140 @@ def test_the_session_writes_its_code_and_names_objects_from_the_namespace():
     assert "MessageLengthOrbital(max_words=80)" in code["code"]
     assert "output_orbitals=[facts]," in code["code"]
     assert (code["placeholders"], code["notes"]) == ([], [])
+
+
+class RemoteOrbital(ScriptedOrbital):
+    """A scripted orbital that says it calls a model."""
+
+    calls_model = True
+
+
+async def test_a_turn_records_how_the_session_differed_from_the_code():
+    atom = make_atom(
+        input_orbitals=[MessageLengthOrbital(max_words=60), ScriptedOrbital(name="guard")]
+    )
+    session = Session(atom, source="app:atom")
+    await drain(session.start_turn("hello"))
+    session.edit("input", "message_length", {"max_words": 80})
+    session.switch("input", "guard", False)
+    events = await drain(session.start_turn("hello again"))
+    session.reset_orbitals()  # what the turn recorded does not follow the session
+    first, second = session.turns
+    assert first.changes == []
+    assert second.changes == ["message_length.max_words changed", "guard turned off"]
+    assert events[-1]["turn"]["changes"] == second.changes
+    assert [turn["changes"] for turn in session.state()["turns"]] == [[], second.changes]
+
+
+async def test_a_turn_records_which_of_its_orbitals_call_a_model():
+    atom = make_atom(
+        input_orbitals=[ScriptedOrbital(name="local"), RemoteOrbital(name="remote")],
+        output_orbitals=[RemoteOrbital(name="judge")],
+    )
+    session = Session(atom, source="app:atom")
+    await drain(session.start_turn("hello"))
+    session.switch("input", "remote", False)
+    await drain(session.start_turn("hello again"))
+    assert session.turns[0].models == frozenset({"remote", "judge"})
+    assert session.turns[1].models == frozenset({"judge"})
+
+
+async def test_a_turn_says_whether_it_can_be_saved_as_a_test():
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError("model down")
+
+    failing = Session(
+        make_atom(connector=PydanticAIConnector(FunctionModel(respond))), source="app:atom"
+    )
+    failed = (await drain(failing.start_turn("hello")))[-1]["turn"]
+    assert failed["cannot_save"] == "A turn that failed cannot be saved as a test."
+
+    answered = (await drain(Session(make_atom(), source="app:atom").start_turn("hello")))[-1]
+    assert answered["turn"]["cannot_save"] is None
+
+
+def test_the_session_knows_the_directory_it_was_started_from(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert Session(make_atom(), source="app:atom").root == tmp_path.resolve()
+
+
+LONG = "one two three four"
+SAVED = "tests/studio/test_one_two_three_four.py"
+
+
+def saving_session() -> Session:
+    """A session started from a module, in the current directory."""
+    atom = make_atom(input_orbitals=[MessageLengthOrbital(max_words=3, reply="Too long.")])
+    return Session(atom, source="app:atom", namespace={"atom": atom})
+
+
+async def test_the_session_shows_a_saved_test_and_writes_it(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    session = saving_session()
+    await drain(session.start_turn(LONG))
+    test = session.saved_test(1)
+    assert set(test) == {
+        "code",
+        "path",
+        "root",
+        "writable",
+        "integration",
+        "earlier",
+        "notes",
+        "warnings",
+        "turn",
+    }
+    assert test["code"].startswith('"""Saved from chatomon studio: app:atom, turn 1."""\n')
+    assert (test["path"], test["root"]) == (SAVED, str(tmp_path.resolve()))
+    assert (test["writable"], test["integration"], test["earlier"]) == (True, False, 0)
+    assert list(tmp_path.iterdir()) == []  # showing a test writes nothing
+
+    assert session.write_test(1, SAVED) == SAVED
+    assert (tmp_path / SAVED).read_text(encoding="utf-8") == test["code"]
+    assert session.saved_test(1)["path"] == "tests/studio/test_one_two_three_four_2.py"
+
+
+async def test_the_turn_alone_or_with_the_turns_before_it(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    session = saving_session()
+    await drain(session.start_turn("hello"))
+    await drain(session.start_turn(LONG))
+    whole, alone = session.saved_test(2), session.saved_test(2, alone=True)
+    assert "hello" in whole["code"] and "hello" not in alone["code"]
+    assert (whole["integration"], alone["integration"]) == (True, False)
+    session.write_test(2, "a.py")
+    session.write_test(2, "b.py", alone=True)
+    assert (tmp_path / "a.py").read_text(encoding="utf-8") == whole["code"]
+    assert (tmp_path / "b.py").read_text(encoding="utf-8") == alone["code"]
+
+
+async def test_started_from_python_the_test_is_shown_and_not_written(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    session = Session(make_atom(), source="serve()")
+    await drain(session.start_turn("hello"))
+    test = session.saved_test(1)
+    assert (test["writable"], test["path"], test["root"]) == (False, None, None)
+    with pytest.raises(RefusedError, match="the studio was started from Python"):
+        session.write_test(1, SAVED)
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("n", [0, 1, -1, 99])
+def test_a_turn_that_does_not_exist_is_reported(n):
+    session = Session(make_atom(), source="app:atom")
+    with pytest.raises(UnknownTurnError, match=f"there is no turn {n} in this conversation"):
+        session.saved_test(n)
+    with pytest.raises(UnknownTurnError):
+        session.write_test(n, SAVED)
+
+
+def test_an_orbital_that_never_said_whether_it_calls_a_model_stops_the_studio_at_the_start():
+    class Bare(ScriptedOrbital):
+        def __init__(self) -> None:  # never calls Orbital.__init__
+            self.name, self.reads, self.timeout, self.on_error = "bare", (), 30.0, "block"
+
+    del_calls_model = type("Undeclared", (Bare,), {})
+    orb = del_calls_model()
+    orb.calls_model = "sometimes"  # type: ignore[assignment]
+    with pytest.raises(ChatomonConfigError, match="Undeclared must say whether it calls a model"):
+        Session(make_atom(input_orbitals=[orb]), source="app:atom")

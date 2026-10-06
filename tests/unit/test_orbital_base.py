@@ -1,12 +1,19 @@
 import pytest
 
 from chatomon import ChatomonConfigError, Orbital, Verdict, orbital
-from chatomon.orbitals import FunctionOrbital, JudgeOrbital, MessageLengthOrbital
+from chatomon.orbitals import (
+    FunctionOrbital,
+    JudgeOrbital,
+    MessageLengthOrbital,
+    TurnLimitOrbital,
+)
 from chatomon.schemas import OrbitalContext
 from tests.fakes import ScriptedOrbital
 
 
 class ScopeGuardOrbital(Orbital):
+    calls_model = False
+
     async def check(self, ctx: OrbitalContext) -> Verdict:
         return Verdict.allow()
 
@@ -106,3 +113,84 @@ def test_a_class_can_choose_its_default_name():
             return "custom"
 
     assert Renamed().name == "custom"
+
+
+def test_a_class_must_say_whether_it_calls_a_model():
+    class Undeclared(Orbital):
+        async def check(self, ctx: OrbitalContext) -> Verdict:
+            return Verdict.allow()
+
+    with pytest.raises(
+        ChatomonConfigError,
+        match=r"Undeclared must say whether it calls a model: "
+        r"add calls_model = True or calls_model = False to the class",
+    ):
+        Undeclared()
+
+
+def test_calls_model_is_true_or_false_and_nothing_else():
+    class Vague(Orbital):
+        calls_model = "sometimes"  # type: ignore[assignment]
+
+        async def check(self, ctx: OrbitalContext) -> Verdict:
+            return Verdict.allow()
+
+    with pytest.raises(ChatomonConfigError, match="Vague must say whether it calls a model"):
+        Vague()
+
+
+@pytest.mark.parametrize(
+    ("cls", "expected"),
+    [
+        (MessageLengthOrbital, False),
+        (TurnLimitOrbital, False),
+        (FunctionOrbital, False),
+        (JudgeOrbital, True),
+    ],
+)
+def test_the_librarys_orbitals_say_whether_they_call_a_model(cls, expected):
+    assert cls.calls_model is expected
+
+
+def test_a_subclass_keeps_what_its_parent_declared():
+    class Mine(MessageLengthOrbital):
+        pass
+
+    assert Mine(max_words=3).calls_model is False
+
+
+def test_a_function_calls_no_model_unless_it_says_so():
+    @orbital
+    def plain(ctx: OrbitalContext) -> Verdict:
+        return Verdict.allow()
+
+    @orbital(calls_model=True)
+    def remote(ctx: OrbitalContext) -> Verdict:
+        return Verdict.allow()
+
+    assert plain.calls_model is False
+    assert remote.calls_model is True
+    inline = FunctionOrbital(lambda ctx: Verdict.allow(), name="inline", calls_model=True)
+    assert inline.calls_model is True
+    assert FunctionOrbital.calls_model is False  # one function does not change the class
+
+
+def test_calls_model_is_not_part_of_the_configuration():
+    def check(ctx: OrbitalContext) -> Verdict:
+        return Verdict.allow()
+
+    quiet, remote = FunctionOrbital(check), FunctionOrbital(check, calls_model=True)
+    assert "calls_model" not in remote.config()
+    assert quiet.fingerprint() == remote.fingerprint()
+
+
+@pytest.mark.parametrize("value", ["no", 1, None])
+def test_a_function_says_true_or_false_and_nothing_else(value):
+    with pytest.raises(ChatomonConfigError, match="calls_model must be True or False, got"):
+        FunctionOrbital(lambda ctx: Verdict.allow(), name="inline", calls_model=value)
+
+    def check(ctx: OrbitalContext) -> Verdict:
+        return Verdict.allow()
+
+    with pytest.raises(ChatomonConfigError, match="calls_model must be True or False, got"):
+        orbital(calls_model=value)(check)

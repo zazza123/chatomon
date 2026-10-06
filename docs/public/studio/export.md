@@ -2,7 +2,7 @@
 
 ## Overview
 
-A studio session ends when the command stops. There are two ways to keep what you tuned: **Copy as code** writes the orbitals as Python to paste into your atom, and a **preset** saves the session's changes in a file that the studio can apply again. Your code stays the source of truth in both: the studio never writes to your files, and a preset is a layer over the atom from your code, never an atom of its own.
+A studio session ends when the command stops. There are two ways to keep what you tuned: **Copy as code** writes the orbitals as Python to paste into your atom, and a **preset** saves the session's changes in a file that the studio can apply again. Your code stays the source of truth in both: the studio never changes your code, and a preset is a layer over the atom from your code, never an atom of its own.
 
 ## Copy as Code
 
@@ -119,6 +119,7 @@ A preset that can be applied but does not reproduce the exported session is appl
 ## Related Documentation
 
 - [Tuning Orbitals](tuning.md) — the changes these two features carry
+- [Saving a Turn as a Test](testing.md) — a test for a turn you tried, which passes once the copied orbitals are in your code
 - [Studio](index.md) — starting the studio with the command or with `serve()`
 - [Observability and Audit](../observability.md) — fingerprints in turn reports
 

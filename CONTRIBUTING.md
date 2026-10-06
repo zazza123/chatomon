@@ -316,7 +316,8 @@ others — is the most likely large contribution, so its path is written down:
    - a harness in `tests/contract/` passes the whole contract suite, using the
      framework's fake models and no network;
    - a studio runner in `src/chatomon/studio/_runners/` passes the event
-     scenarios of `tests/studio/test_events.py`;
+     scenarios of `tests/studio/test_events.py` and supplies its framework's
+     part of a saved test, proved in `tests/studio/test_testgen.py`;
    - `docs/public/connectors/` has a page for it, listed in the `nav` of
      `zensical.toml`, and `docs/public/reference/` has a page for its public
      module or package.
@@ -335,6 +336,8 @@ down too:
    - its constructor takes keyword arguments, validates them and raises
      `ChatomonConfigError` with a message that says what to fix; `config()`
      returns every setting; `sides` is narrowed when it supports one side only;
+     `calls_model` says whether `check` calls a model or another remote
+     service, and has no default;
    - it keeps to the studio's convention, so the studio edits it with no studio
      code: a parameter annotated with a plain type is a setting, any other
      parameter is an object, and each is kept in a public attribute of the same
