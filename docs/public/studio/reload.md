@@ -21,6 +21,8 @@ flowchart LR
 
 A reload replaces everything or nothing. Only when the new atom is built does it take the place of the one that was running; until then, and whenever a step fails, the session is the one you had. The card then shows the atom as your code has it now, under a line that says what the reload did.
 
+If you close the card or open another one while the code loads, the result does not take the screen: it is said in the message at the bottom of the page, and shown the next time you open the atom's card.
+
 When the command points at a function that builds the atom, the function is called again.
 
 ## Which Code Is Loaded Again
@@ -28,6 +30,11 @@ When the command points at a function that builds the atom, the function is call
 The studio imports again the modules whose file is under the directory the command was started from, so a change is seen in any of them, also in a module that the atom's module imports.
 
 It leaves alone what is installed, including a virtual environment inside that directory, and chatomon itself. After a change to an installed package, or to code outside the directory, restart the studio.
+
+Two layouts are worth knowing:
+
+- **A folder that is a link.** A folder of your project that links to another place is your project: its modules are loaded again.
+- **A package shared with other code.** When a package of yours also holds modules from outside the directory, as a namespace package split over several folders does, the package itself stays as it is and its modules in your project are loaded again.
 
 ## What the Studio Keeps
 
@@ -71,7 +78,7 @@ When the reloaded atom is built with a connector of another framework, the conve
 
 ## When a Reload Fails
 
-If a module does not import, the function that builds the atom raises, or the atom cannot be built, the card shows the error in one sentence and says that the atom from before is still running. Its orbitals, its changes and its conversation are untouched, and your modules are the ones that were imported before.
+If a module does not import, the function that builds the atom raises, or the atom cannot be built, the card shows the error in one sentence and says that the atom from before is still running. Its orbitals, its changes and its conversation are untouched, and your modules are the ones that were imported before. Code that calls `sys.exit()` while it is loaded is a failed reload too: it ends the command at start, and at a reload the studio keeps running.
 
 The terminal has the traceback, as when the command starts. It is not sent to the page: a traceback shows lines of your source.
 
@@ -80,7 +87,8 @@ Fix the code and reload again.
 ## Limits
 
 - **Your modules run again.** The code at the top level of a module runs at every reload. What it creates, such as clients, checkpointers and connections, is created again, and what it registers elsewhere is registered twice. The studio does not close what the earlier import created. When a module holds something that cannot exist twice, such as a lock or a file open for writing, restart instead.
-- **Only your project is loaded again.** Installed packages and code outside the directory the command was started from need a restart.
+- **Your code is loaded in another thread.** At start your modules are imported in the main thread, and at a reload in a thread of their own. An object that can only be used from the thread that made it, such as a `sqlite3` connection opened without `check_same_thread=False`, works after the start and fails in the turns after a reload: restart instead.
+- **Only your project is loaded again.** Installed packages and code outside the directory the command was started from need a restart. When the atom's own module is outside that directory, the reload is refused and says so.
 - **No reload with `serve()`.** Started from Python, the studio does not know which module the atom comes from, and the card has no button: restart your script.
 - **A reload cannot be undone.** The code on disk is the code that runs.
 - **Nothing is reloaded by itself.** The studio does not watch your files: it reloads when you ask.
