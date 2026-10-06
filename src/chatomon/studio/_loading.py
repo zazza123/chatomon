@@ -56,6 +56,9 @@ def project_modules(root: Path) -> dict[str, ModuleType]:
         file = getattr(module, "__file__", None)
         places = [file] if file else list(getattr(module, "__path__", ()))
         for place in places:
+            # A library can give a module it builds a bare file name: it is not on disk here.
+            if not isinstance(place, str) or not os.path.isabs(place):
+                continue
             path = Path(place).resolve()
             if (
                 root in path.parents

@@ -305,3 +305,17 @@ def test_an_error_of_the_block_itself_also_puts_the_modules_back(sources, tmp_pa
         raise RuntimeError("later in the reload")
     assert sys.modules["app"] is before
     assert sys.modules["helpers"].NAME == "one"
+
+
+def test_a_module_whose_file_is_not_a_full_path_is_never_taken_for_the_project(
+    sources, tmp_path, monkeypatch
+):
+    """A library can build a module at run time and give it a bare file name."""
+    sources("_ops.py", "VALUE = 1\n")
+    built = types.ModuleType("library._ops")
+    built.__file__ = "_ops.py"  # relative: it would be read from the current directory
+    monkeypatch.setitem(sys.modules, "library._ops", built)
+    assert "library._ops" not in project_modules(tmp_path)
+    with reimporting(tmp_path):
+        pass
+    assert sys.modules["library._ops"] is built
