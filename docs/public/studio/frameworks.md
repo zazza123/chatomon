@@ -27,7 +27,9 @@ Turns run without `deps`. An atom that declares `deps_type` still opens, and the
 
 The studio keeps the conversation itself. At every turn it gives the agent the messages so far together with the new one, reads the conversation back from the result, and runs the turn on a thread of its own.
 
-This matters when the atom has a checkpointer. A checkpointer keeps the state of a thread, including the user message of a turn that failed, and the nucleus would see that message again in the next turn. With a thread for each turn a failed turn leaves nothing behind, as in every other framework, and a saved test replays exactly what the studio ran. The price is that the studio writes one thread to your checkpointer for every turn you try, which the note at start says. With a database as the checkpointer, point the atom at one you can clear.
+This matters when the atom has a checkpointer. A checkpointer keeps the state of a thread, including the user message of a turn that failed, and the nucleus would see that message again in the next turn. With a thread for each turn a failed turn leaves nothing behind, as in every other framework, and a saved test replays the conversation the studio ran. The price is that the studio writes one thread to your checkpointer for every turn you try, which the note at start says. With a database as the checkpointer, point the atom at one you can clear.
+
+The thread is also the conversation id of a LangChain atom, so the id that orbitals and the turn report see is new at every turn. In the other frameworks it is one for the whole conversation.
 
 An atom that declares a `context_schema` opens too. Turns run without a context, so tools and middleware that read it fail, and the note at start says so.
 
@@ -35,7 +37,11 @@ An atom that declares a `context_schema` opens too. Turns run without a context,
 
 The conversation is a session of the agent. The studio creates it at the first turn and keeps it until **New conversation**, through every change to the orbitals. The session is where a blocked message stays replaced by its placeholder.
 
+The framework writes to the session while a turn runs, so the studio runs each turn on a copy and keeps the copy only when the turn ends well. A turn that fails leaves the conversation as it was.
+
 The connector keeps the history in memory unless you gave it a history provider of your own. When you did, the studio's conversations are written to that provider, and the note at start names it.
+
+The studio sends a message as your code does, so what holds for these connectors holds here: the framework does not store a message that repeats one already in the history word for word, be it yours, the placeholder of a blocked message or a fixed reply of an orbital. The report of the next turn shows the history the atom was given. [Limits on Length and Turns](../orbitals/limits.md) says what this does to a turn limit.
 
 ## A Foundry Agent
 
@@ -67,7 +73,8 @@ Saved as `app.py`, it opens with `chatomon studio app:atom`. The atom card shows
 
 ## Limits
 
-- **A turn that waits for an answer is shown as failed.** The studio cannot answer a LangGraph interrupt, nor approve a tool call in Microsoft Agent Framework. After an interrupt the conversation goes on as it was. After a request for an approval the request stays in the session: start a new conversation.
+- **A turn that waits for an answer is shown as failed.** The studio cannot answer a LangGraph interrupt, nor approve a tool call in Microsoft Agent Framework. The conversation goes on as it was before that turn. With a history provider of your own, what the framework wrote to it before stopping stays there.
+- **A turn that ends with no reply is left out.** When the nucleus writes nothing, or a LangGraph run ends on the result of a tool, the turn is shown as aborted and does not enter the conversation.
 - **The agent the studio replaces is not closed.** Every change to the orbitals builds the agent again. A Foundry atom built from an endpoint and a credential leaves a client open for each change, until the studio stops.
 
 ## Key Components

@@ -61,16 +61,18 @@ The example above is the test of a PydanticAI atom. What a test checks is the sa
 
 | | PydanticAI | LangChain | Microsoft Agent Framework |
 |---|---|---|---|
-| A turn | `agent.run_sync("…")` | `agent.invoke({"messages": [HumanMessage("…")]})` | `await agent.run("…", session=session)` |
+| A turn | `agent.run_sync("…")` | `await agent.ainvoke({"messages": [HumanMessage("…")]})` | `await agent.run("…", session=session)` |
 | The conversation | `message_history=result.all_messages()` | The messages of the turn before go in front of the new one | A session, created once the atom is built |
 | The reply | `result.output` | `result["messages"][-1].content` | `result.text` |
-| Offline, in place of the nucleus | `TestModel` | `FakeListChatModel` | `OfflineNucleus`, a client the test defines |
+| Offline, in place of the nucleus | `TestModel` | `OfflineNucleus`, a chat model the test defines | `OfflineNucleus`, a client the test defines |
 
-**LangChain.** With a checkpointer every call also takes a thread of its own, as every turn does in the studio. Offline, LangChain's fake model cannot take tools: on an atom with tools, a message your code lets through fails the test with `NotImplementedError` instead of on an assertion. Either way the test fails and no tool runs.
+**Asynchronous tests.** The studio runs a LangChain agent asynchronously, and Microsoft Agent Framework has no other way, so the tests of these two frameworks are `async def` with `@pytest.mark.asyncio(loop_scope="session")` and need `pytest-asyncio` 0.24 or later. A LangChain test runs the agent as the studio did, which is what lets tools and middleware that are asynchronous only work in the test too. The loop is the session's because a client your module creates when it is imported keeps its connections on one loop: with a loop for each test, the second test that reaches a model would fail.
 
-**Microsoft Agent Framework**, an agent hosted in Foundry included. The framework is asynchronous, so the test is `async def` with `@pytest.mark.asyncio(loop_scope="session")` and needs `pytest-asyncio` 0.24 or later. The loop is the session's because a client your module creates when it is imported keeps its connections on one loop: with a loop for each test, the second test that reaches a model would fail. Offline, the test defines a small client and puts it on the agent it built, in place of the nucleus, so a Foundry atom never reaches its hosted agent. That client is written on the framework's own client classes: save the test again if they change.
+**LangChain.** With a checkpointer every call also takes a thread of its own, as every turn does in the studio. Offline, the test defines a chat model that takes the atom's tools and calls none, so a message your code lets through fails the test on what it expects. That stand-in replaces the model of the connector: a middleware of yours that chooses the model itself can still reach a real one, and the card says so whenever the atom has middleware.
 
-Offline means no network, not no configuration: the module of your atom is still imported, with whatever it reads when it is.
+**Microsoft Agent Framework**, an agent hosted in Foundry included. Offline, the test defines a small client and puts it on the agent it built, in place of the nucleus, so a Foundry atom never reaches its hosted agent. That client is written on the framework's own client classes: save the test again if they change.
+
+Offline means the nucleus is not called. The module of your atom is still imported, with whatever it reads when it is, and in Microsoft Agent Framework the context providers of the atom still run on a turn the input chain stops: one that calls a service calls it.
 
 ## The Conversation or the Turn Alone
 
@@ -80,7 +82,7 @@ Each replayed turn is a real call, so a long conversation makes a slow test. **N
 
 ## Offline and Integration
 
-A test runs offline only when no model is needed: in every turn the input chain produced the reply, and no orbital that ran calls a model. Such a test puts a stand-in in place of the nucleus: the framework's test model, or a small client of its own where the framework has none. The nucleus then needs no credentials, the stand-in calls none of the atom's tools, and a change in your code that lets the message through fails the test instead of calling a model. The module of your atom must still import without credentials for the test to run with none.
+A test runs offline only when no model is needed: in every turn the input chain produced the reply, and no orbital that ran calls a model. Such a test puts a stand-in in place of the nucleus: PydanticAI's test model, or for the other frameworks a small one the test defines. The nucleus then needs no credentials, the stand-in calls none of the atom's tools, and a change in your code that lets the message through fails the test instead of calling a model. The module of your atom must still import without credentials for the test to run with none.
 
 Every other test is marked `integration`, with a comment that names what calls real models. Register the marker in your pytest configuration, and leave these tests out where there are no credentials:
 
