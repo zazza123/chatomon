@@ -51,7 +51,7 @@ def test_i_want_a_refund(monkeypatch: pytest.MonkeyPatch) -> None:
 | That no output orbital stopped a reply | When none did in the studio |
 | The text of the reply | When the input chain produced it and no model wrote it: the reply of an orbital that calls no model, or the atom's refusal |
 
-A test never checks what the nucleus writes. It never checks what an output orbital decided on a reply either: a real nucleus writes something different every time, so a turn in which an output orbital stopped a reply cannot be repeated. For such a turn the test checks only how it ended, and the card says so.
+A test never checks what the nucleus writes, and it cannot repeat what an output orbital decided on a reply: a real nucleus writes something different every time. For a turn in which an output orbital stopped a reply, the test checks only how the turn ended, and the card says so. For a turn in which none did, the test expects none to. With an output judge that is close to its limit on that reply, such a test can pass one run and fail the next: the judge needs tuning, not the test.
 
 A turn that failed cannot be saved.
 
@@ -63,7 +63,7 @@ Each replayed turn is a real call, so a long conversation makes a slow test. **N
 
 ## Offline and Integration
 
-A test runs offline only when no model is needed: in every turn the input chain produced the reply, and no orbital that ran calls a model. Such a test puts the framework's test model in place of the nucleus before it builds the atom, so it needs no credentials, and a change in your code that lets the message through fails the test instead of calling a model.
+A test runs offline only when no model is needed: in every turn the input chain produced the reply, and no orbital that ran calls a model. Such a test puts the framework's test model in place of the nucleus before it builds the atom. The nucleus then needs no credentials, the test model calls none of the atom's tools, and a change in your code that lets the message through fails the test instead of calling a model. The module of your atom must still import without credentials for the test to run with none.
 
 Every other test is marked `integration`, with a comment that names what calls real models. Register the marker in your pytest configuration, and leave these tests out where there are no credentials:
 
@@ -90,15 +90,15 @@ A saved test builds the atom from your code. When a turn ran with changes you ma
 The card proposes `tests/studio/test_<words of the message>.py`, one file per test. The path can be changed, within these limits:
 
 - the file stays inside the directory the studio was started from;
-- its name ends in `.py`;
-- an existing file is replaced only when the studio wrote it, and only after you confirm. Any other file is refused.
+- its name ends in `.py`, and the path does not start with `~`, which is not expanded;
+- an existing file is replaced only when the studio wrote it, and only after you confirm. Any other file is refused. The studio knows its files by their first line, so a saved test you edited by hand is replaced too, and your edits are lost.
 
 The page chooses the turn and the path. What is written is always the test the studio generated.
 
 ## Limits
 
 - **Decisions of the output chain are not repeated.** A test cannot make the nucleus write the reply that an output orbital stopped.
-- **Started with `serve()`.** The studio does not know which module the atom lives in. The card shows the test with its import left to complete, and copies it; it does not write the file.
+- **Started with `serve()`.** The studio does not know which module the atom lives in. The card shows the test with its import left to complete, and copies it; it does not write the file. The same holds for a module whose name is not a Python name, such as `my-shop`, which no import can name.
 - **PydanticAI atoms only**, like the rest of the studio.
 
 ## Key Components
