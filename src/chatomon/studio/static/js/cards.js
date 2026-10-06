@@ -47,26 +47,41 @@ export const kv = (rows) => `<dl class="kv">${rows.map(([k, v]) => `<dt>${esc(k)
 const RELOAD = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>`;
 
 /** What a reload did, in the words of the server: what was dropped and why a conversation started again. */
-function reloaded(outcome, source) {
-  const dropped = outcome.dropped.length
-    ? `<p>No longer applied:</p><ul>${outcome.dropped.map((sentence) => `<li>${rich(sentence)}</li>`).join("")}</ul>`
+function reloaded(done) {
+  const dropped = done.dropped.length
+    ? `<p>No longer applied:</p><ul>${done.dropped.map((sentence) => `<li>${rich(sentence)}</li>`).join("")}</ul>`
     : "";
-  const restarted = outcome.restarted ? `<p>${rich(outcome.restarted)}</p>` : "";
+  const restarted = done.restarted ? `<p>${rich(done.restarted)}</p>` : "";
   const more = dropped + restarted;
   // With nothing to report the line is plain; otherwise it has the look of a note that warns.
-  return `<div class="note${more ? " warn" : ""}" id="atom-outcome" role="status">${more ? "<p>" : ""}Reloaded from <code>${esc(source)}</code>.${more ? "</p>" : ""}${more}</div>`;
+  return `<div class="note${more ? " warn" : ""}" id="atom-outcome" role="status">${more ? "<p>" : ""}Reloaded from <code>${esc(done.state.atom.source)}</code>.${more ? "</p>" : ""}${more}</div>`;
 }
 
-/** The atom card. `outcome` is what a reload asked from this card did: it is shown above the atom. */
-export function showAtom(ctx, outcome = null) {
+/** Why a reload was not done. Only a refusal knows that the atom from before is still running. */
+function failed(error) {
+  const sentence = error.message.replace(/\.$/, "");
+  const rest = error.status === 409 ? " The atom from before is still running; the terminal has the details." : "";
+  return `<div class="note err" id="atom-outcome" role="alert">Reload failed: ${rich(sentence)}.${rest}</div>`;
+}
+
+// What a reload did while its card was not on screen: shown once, the next time the card opens.
+let unseen = "";
+
+/** A turn started or ended: the button of the atom card follows, and says why it cannot be used. */
+export function syncReload(busy) {
+  const button = $('[data-dlg="reload"]', dlg);
+  if (!button || button.dataset.reloading) return;
+  button.disabled = busy;
+  button.title = busy ? "Wait for the turn to finish" : "";
+}
+
+/** The atom card. `outcome` is the box that says what a reload asked from this card did. */
+export function showAtom(ctx, outcome = "") {
   const state = ctx.state();
   const a = state.atom;
   const can = state.studio.reload;
-  const result = !outcome
-    ? ""
-    : outcome.failed
-      ? `<div class="note err" id="atom-outcome" role="alert">Reload failed: ${rich(outcome.failed)}. The atom from before is still running; the terminal has the details.</div>`
-      : reloaded(outcome, a.source);
+  const result = outcome || unseen;
+  unseen = "";
   openDialog({
     title: esc(a.name),
     sub: `<code>${esc(a.source)}</code>`,
@@ -79,24 +94,47 @@ export function showAtom(ctx, outcome = null) {
       ["blocked_placeholder", a.blocked_placeholder],
       ["capture_content", `"${a.capture_content}" in your code · "full" in the studio`],
     ]) + `<p class="hint">The atom comes from your code. Change it there and ${can ? "press Reload: the studio keeps your orbital changes and the conversation." : "restart the studio."}</p>`,
-    actions: `${can ? `<button class="btn" type="button" data-dlg="reload"${ctx.busy() ? " disabled" : ""}>${RELOAD}<span>Reload from code</span></button>` : ""}<span class="spacer"></span><button class="btn primary" type="button" data-dlg="close">Done</button>`,
+    actions: `${can ? `<button class="btn" type="button" data-dlg="reload">${RELOAD}<span>Reload from code</span></button>` : ""}<span class="spacer"></span><button class="btn primary" type="button" data-dlg="close">Done</button>`,
   });
   const button = $('[data-dlg="reload"]', dlg);
+  syncReload(ctx.busy());
   // The card was drawn again with the result: the focus goes back to the button that was used.
   if (outcome && button) button.focus();
+  // The card can be closed, or another one opened, while the code loads.
+  const shown = () => dlg.open && button.isConnected;
+  const ready = () => {
+    delete button.dataset.reloading;
+    $("span", button).textContent = "Reload from code";
+    syncReload(ctx.busy());
+    if (shown() && !button.disabled) button.focus();
+  };
   $("#dlg-actions").onclick = async (e) => {
     if (!button || !e.target.closest('[data-dlg="reload"]') || button.disabled) return;
     button.disabled = true;
+    button.dataset.reloading = "1";
     $("span", button).textContent = "Reloading…";
+    // What the box said was about the reload before this one.
+    $("#atom-outcome", dlg)?.remove();
+    let done;
     try {
-      const done = await reloadAtom();
-      ctx.refresh(done.state);
-      showAtom(ctx, { dropped: done.dropped, restarted: done.restarted });
+      done = await reloadAtom();
     } catch (error) {
-      // A turn started meanwhile: nothing failed, the card stays as it is.
-      if (error.type === "Busy") { ctx.toast(error.message); showAtom(ctx); return; }
-      showAtom(ctx, { failed: error.message });
+      // No answer at all: nothing is known of the atom, and the page has its own words for it.
+      if (error.status === undefined) { ready(); ctx.lost(); return; }
+      // A turn or another reload runs: nothing failed, the card stays as it is.
+      if (error.type === "Busy") { ready(); ctx.toast(error.message); return; }
+      if (shown()) { showAtom(ctx, failed(error)); return; }
+      unseen = failed(error);
+      ctx.toast(`Reload failed: ${error.message}`);
+      return;
     }
+    ctx.refresh(done.state);
+    if (shown()) { showAtom(ctx, reloaded(done)); return; }
+    // The result does not take the screen from what is open now: it is said, and kept for the card.
+    const more = done.dropped.length || done.restarted;
+    unseen = more ? reloaded(done) : "";
+    const dropped = done.dropped.length ? ` ${plural(done.dropped.length, "change")} no longer applied: the atom card says which.` : "";
+    ctx.toast(`Reloaded from code.${dropped}${done.restarted ? ` ${done.restarted}` : ""}`);
   };
 }
 
