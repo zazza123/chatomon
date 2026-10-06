@@ -12,6 +12,7 @@ The studio is a local web page for trying an atom before it goes anywhere. You c
 - **Tuning** — switch orbitals on and off, change their settings, reorder them and add chatomon's own orbitals. Changes live in the studio session.
 - **Back to code** — the tuned orbitals as Python to paste into your atom, or as a preset file to load again later.
 - **Tests** — a turn, or the conversation up to it, saved as a pytest file that runs against the atom from your code.
+- **Every framework** — an atom built with any of chatomon's connectors opens the same way.
 
 ## Table of Contents
 
@@ -21,10 +22,11 @@ The studio is a local web page for trying an atom before it goes anywhere. You c
 | [Tuning Orbitals](tuning.md) | Editing settings, changing the order, adding and deleting orbitals, changes against the code |
 | [Back to Code](export.md) | Copy as code, presets and the preset format |
 | [Saving a Turn as a Test](testing.md) | What a saved test checks, offline and integration tests, where the file goes |
+| [Frameworks in the Studio](frameworks.md) | What changes with each connector: the conversation, the atom card, the notes at start |
 
 ## Installing and Starting
 
-Install the `studio` extra together with the extra of the atom's framework: `pip install 'chatomon[studio,pydantic-ai]'`. Then give the command the atom's location as `module:attribute`:
+Install the `studio` extra together with the extra of the atom's framework: `pip install 'chatomon[studio,pydantic-ai]'`, with `langchain`, `maf` or `maf-foundry` in place of `pydantic-ai` for the other frameworks. Then give the command the atom's location as `module:attribute`:
 
 ```bash
 chatomon studio speedypack.app:atom
@@ -76,12 +78,11 @@ The studio shows conversation text and calls models with your credentials, so it
 
 ## Limits of This Version
 
-- **PydanticAI atoms only.** An atom built with another connector is refused with a message that says so.
 - **No streaming.** Replies arrive whole, because output orbitals check a reply before it is sent.
 - **Your own orbitals are read-only.** The studio edits the settings of chatomon's own orbitals. `@orbital` functions and orbital classes you wrote can be turned off and moved; their settings are changed in your code.
 - **Changes live in the session.** Stopping the studio discards them: copy the code or export a preset first.
 - **Restart to reload.** After changing the code, stop the command and start it again.
-- **No dependencies.** Turns run without PydanticAI `deps`: an atom whose tools or instructions need them fails when it uses them, and the command says so when it starts.
+- **What a turn can rely on depends on the framework.** Dependencies, runtime contexts, checkpointers, history providers and turns that wait for an answer are covered in [Frameworks in the Studio](frameworks.md); the command says what applies to your atom when it starts.
 - **A saved test does not repeat what the output chain decided.** It runs the real nucleus, which writes something else every time: for a turn in which an output orbital stopped a reply, the test checks only how the turn ended.
 - **Rejected replies are not shown.** When an output orbital makes the nucleus write a reply again, the report shows the orbital's guidance, not the text it rejected.
 

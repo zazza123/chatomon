@@ -55,6 +55,23 @@ A test never checks what the nucleus writes, and it cannot repeat what an output
 
 A turn that failed cannot be saved.
 
+## The Test for Each Framework
+
+The example above is the test of a PydanticAI atom. What a test checks is the same for every framework; the lines that run a turn follow the framework of the atom.
+
+| | PydanticAI | LangChain | Microsoft Agent Framework |
+|---|---|---|---|
+| A turn | `agent.run_sync("…")` | `agent.invoke({"messages": [HumanMessage("…")]})` | `await agent.run("…", session=session)` |
+| The conversation | `message_history=result.all_messages()` | The messages of the turn before go in front of the new one | A session, created once the atom is built |
+| The reply | `result.output` | `result["messages"][-1].content` | `result.text` |
+| Offline, in place of the nucleus | `TestModel` | `FakeListChatModel` | `OfflineNucleus`, a client the test defines |
+
+**LangChain.** With a checkpointer every call also takes a thread of its own, as every turn does in the studio. Offline, LangChain's fake model cannot take tools: on an atom with tools, a message your code lets through fails the test with `NotImplementedError` instead of on an assertion. Either way the test fails and no tool runs.
+
+**Microsoft Agent Framework**, an agent hosted in Foundry included. The framework is asynchronous, so the test is `async def` with `@pytest.mark.asyncio(loop_scope="session")` and needs `pytest-asyncio` 0.24 or later. The loop is the session's because a client your module creates when it is imported keeps its connections on one loop: with a loop for each test, the second test that reaches a model would fail. Offline, the test defines a small client and puts it on the agent it built, in place of the nucleus, so a Foundry atom never reaches its hosted agent. That client is written on the framework's own client classes: save the test again if they change.
+
+Offline means no network, not no configuration: the module of your atom is still imported, with whatever it reads when it is.
+
 ## The Conversation or the Turn Alone
 
 A turn may depend on the ones before it: a turn limit counts them, and a judge reads the history. The studio cannot tell, so a test holds the whole conversation up to the saved turn, and every turn in it is checked. When the earlier turns have nothing to do with the one you are saving, clear **Replay the turns before it** and the test holds that turn alone. Turns that failed are left out: they left nothing in the conversation. A turn saved alone that did depend on what came before it gives a test that fails, and the card reminds you of it.
@@ -63,7 +80,7 @@ Each replayed turn is a real call, so a long conversation makes a slow test. **N
 
 ## Offline and Integration
 
-A test runs offline only when no model is needed: in every turn the input chain produced the reply, and no orbital that ran calls a model. Such a test puts the framework's test model in place of the nucleus before it builds the atom. The nucleus then needs no credentials, the test model calls none of the atom's tools, and a change in your code that lets the message through fails the test instead of calling a model. The module of your atom must still import without credentials for the test to run with none.
+A test runs offline only when no model is needed: in every turn the input chain produced the reply, and no orbital that ran calls a model. Such a test puts a stand-in in place of the nucleus: the framework's test model, or a small client of its own where the framework has none. The nucleus then needs no credentials, the stand-in calls none of the atom's tools, and a change in your code that lets the message through fails the test instead of calling a model. The module of your atom must still import without credentials for the test to run with none.
 
 Every other test is marked `integration`, with a comment that names what calls real models. Register the marker in your pytest configuration, and leave these tests out where there are no credentials:
 
@@ -99,7 +116,6 @@ The page chooses the turn and the path. What is written is always the test the s
 
 - **Decisions of the output chain are not repeated.** A test cannot make the nucleus write the reply that an output orbital stopped.
 - **Started with `serve()`.** The studio does not know which module the atom lives in. The card shows the test with its import left to complete, and copies it; it does not write the file. The same holds for a module whose name is not a Python name, such as `my-shop`, which no import can name.
-- **PydanticAI atoms only**, like the rest of the studio.
 
 ## Key Components
 
@@ -112,6 +128,7 @@ The page chooses the turn and the path. What is written is always the test the s
 
 - [Reading the Screen](screen.md) — the report of a turn, where a test is saved from
 - [Back to Code](export.md) — Copy as code, for changes that are not in the code yet
+- [Frameworks in the Studio](frameworks.md) — how the studio runs the atoms of each framework
 - [Writing Your Own Orbital](../orbitals/custom.md) — `calls_model` for classes and functions
 - [Observability and Audit](../observability.md) — the turn report and its final actions
 

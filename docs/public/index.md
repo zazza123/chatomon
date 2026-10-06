@@ -174,7 +174,7 @@ An atom with one input orbital that turns refund requests into a guided refusal.
 
     ---
 
-    A local page to chat with an atom and watch its orbitals decide: reading the screen, tuning orbitals, and taking the result back as code or as a preset.
+    A local page to chat with an atom of any supported framework and watch its orbitals decide: reading the screen, tuning orbitals, taking the result back as code, as a preset or as a test, and what changes with each framework.
 
     [:lucide-arrow-right: Studio](studio/index.md)
 

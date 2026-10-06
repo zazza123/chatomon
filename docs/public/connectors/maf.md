@@ -172,8 +172,9 @@ With `store=False`, output checks happen before replies enter local history. Rep
 - [Connectors](index.md) — shared connector behavior
 - [JudgeOrbital](../orbitals/judge.md) — model-based checks and model resolution
 - [Observability and audit](../observability.md) — reports and content capture
+- [Frameworks in the Studio](../studio/frameworks.md) — trying an atom, a Foundry agent included, in the local studio
 - [MAF API reference](../reference/connectors_maf.md) — parameters, return values, and exceptions
 
 ---
-**Last Updated:** September 2026
+**Last Updated:** October 2026
 **Status:** Implemented
