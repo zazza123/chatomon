@@ -13,6 +13,7 @@ import json
 import keyword
 import math
 import re
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
@@ -36,8 +37,11 @@ NO_NAME = (
     "What is marked `...` has no name in the atom's module: it is created inline or "
     "inside a function. Keep it as it is in your code."
 )
-# Characters that are valid inside a Python literal but that editors show as line breaks.
-_BREAKS = {chr(code): f"\\u{code:04x}" for code in (0x85, 0x2028, 0x2029)}
+# Characters that are valid inside a Python literal but that an editor does not show as
+# they are: separators it takes for line breaks, controls, and format characters, such as
+# those that change the direction of the text around them. Written raw, they could make a
+# line of generated code look like something it is not.
+_UNSEEN = frozenset({"Cc", "Cf", "Zl", "Zp"})
 
 Import = tuple[str, str]
 
@@ -116,6 +120,11 @@ def _ascii(value: str) -> str:
     return '"' + "".join(parts) + '"'
 
 
+def _escaped(char: str) -> str:
+    code = ord(char)
+    return f"\\U{code:08x}" if code > 0xFFFF else f"\\u{code:04x}"
+
+
 def literal(value: Any) -> str:
     """Write a plain value as a Python literal that reads back to the same value.
 
@@ -128,9 +137,9 @@ def literal(value: Any) -> str:
         except UnicodeEncodeError:
             return _ascii(value)
         written = json.dumps(value, ensure_ascii=False)
-        for char, escape in _BREAKS.items():
-            written = written.replace(char, escape)
-        return written
+        return "".join(
+            _escaped(char) if unicodedata.category(char) in _UNSEEN else char for char in written
+        )
     if isinstance(value, float) and not math.isfinite(value):
         return f'float("{value}")'
     if isinstance(value, list | tuple):
