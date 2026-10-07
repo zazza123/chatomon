@@ -9,6 +9,9 @@ let view = { side: null, name: null };
 // The block being applied, so that a test started by the same click waits for it.
 let settling = Promise.resolve(true);
 let pressedBlock = null;
+// The card whose test is on its way: its outcome goes to the row that is there when it arrives.
+let testing = null;
+const cardKey = () => ($("#card-switch", dlg) ? `${view.side}/${view.name}` : "form");
 
 const find = (state, side, name) => state.orbitals[side].find((o) => o.name === name);
 const fieldId = (key) => `f-${key}`;
@@ -76,17 +79,31 @@ const drawn = (s, value, names, changed = false) => (s.type === "block" ? block(
 const PROBE = `<div class="card-row"><span class="label">Connection</span><span class="probe" id="probe-out" role="status">Not tested yet</span><button class="btn sm" type="button" data-dlg="probe">Test connection</button></div>
   <p class="hint">Sends one sample message, as a turn would. Nothing is added or saved.</p>`;
 
-/** Run a test and show how it went, in the words of the server. */
-async function probe(request) {
-  const out = $("#probe-out", dlg);
+/** Show, in the row that is in the card now, that a test is on its way. */
+function waiting() {
   const button = $('[data-dlg="probe"]', dlg);
+  if (!button) return;
   button.disabled = true;
   button.textContent = "Testing…";
-  out.className = "probe";
-  out.textContent = "Sending one sample message…";
+  $("#probe-out", dlg).className = "probe";
+  $("#probe-out", dlg).textContent = "Sending one sample message…";
+}
+
+/** Run a test and show how it went, in the words of the server. */
+async function probe(request) {
+  const key = cardKey();
+  const form = $("#probe-out", dlg);
+  testing = key;
+  waiting();
+  // A card can be drawn again while the test runs, as when its switch is pressed: the outcome
+  // goes to the row of the same orbital that is there now. A form left meanwhile gets nothing.
+  const row = () => (key === "form" ? (form.isConnected ? form : null) : dlg.open && cardKey() === key ? $("#probe-out", dlg) : null);
+  let out;
   try {
     const result = await request();
-    if (!out.isConnected) return;
+    testing = null;
+    out = row();
+    if (!out) return;
     if (result.outcome === "answered") {
       out.innerHTML = `<span class="pill act-${esc(result.action)}">${esc(result.action)}</span>${result.reason ? `<span>${esc(result.reason)}</span>` : ""}<span class="mono">${fmtMs(result.duration_ms)}</span>`;
     } else {
@@ -94,13 +111,16 @@ async function probe(request) {
       out.textContent = result.message;
     }
   } catch (error) {
-    if (!out.isConnected) return;
+    testing = null;
+    out = row();
+    if (!out) return;
     // A refusal before the check, such as a variable that is not set, is shown where the outcome is.
     if (![404, 409, 422].includes(error.status)) { closeDialog(); await ctx.refused(error); return; }
     out.className = "probe err";
     out.innerHTML = rich(error.message);
   } finally {
-    if (button.isConnected) { button.disabled = false; button.textContent = "Test connection"; }
+    const button = row() && $('[data-dlg="probe"]', dlg);
+    if (button) { button.disabled = false; button.textContent = "Test connection"; }
   }
 }
 
@@ -118,7 +138,23 @@ dlg.addEventListener("focusout", (e) => {
 /** A block starts to differ from what the server has: say so until it is applied. */
 function touch(fs) {
   fs.classList.add("dirty");
+  fs._unsent = true;
   $(":scope > .block-body > .block-state", fs).hidden = false;
+}
+
+/**
+ * Apply the blocks whose edits were never sent. Leaving a block applies it, but a press that
+ * takes the focus nowhere leaves it waiting: what needs the card as the server has it asks here.
+ * Resolves to whether no block is left edited, which a refused one is.
+ */
+async function applied() {
+  await settling;
+  for (const fs of $$("fieldset.block.dirty", dlg)) {
+    if (!fs._unsent) continue;
+    settling = commitBlock(fs);
+    await settling;
+  }
+  return !$("fieldset.block.dirty", dlg);
 }
 
 function draw(state) {
@@ -144,11 +180,16 @@ function draw(state) {
     extra: `<span class="sw-label">${o.enabled ? "On" : "Off"}</span><label class="switch big"><input type="checkbox" role="switch" id="card-switch"${o.enabled ? " checked" : ""} aria-label="${esc(o.name)}"><span></span></label>`,
     body: `${body}${o.calls_model ? PROBE : ""}${position}<div class="fp" id="card-fp" title="${esc(o.fingerprint)}">fingerprint ${esc(shortFp(o.fingerprint))} · changes with every setting and is recorded in each turn report</div>`,
     actions: `${left}<span class="spacer"></span>${added ? "" : `<button class="btn" type="button" data-dlg="reset-one"${o.modified ? "" : " disabled"}>Reset to code</button>`}<button class="btn primary" type="button" data-dlg="close">Done</button>`,
-    onClose: () => ctx.closed(view.side, view.name),
+    onClose: () => {
+      // Closing the card leaves its blocks: one never sent is applied, and a refusal goes to the toast.
+      for (const fs of $$("fieldset.block.dirty", dlg)) if (fs._unsent) commitBlock(fs);
+      ctx.closed(view.side, view.name);
+    },
   });
   $$("textarea", dlg).forEach(grow);
   hydrate(dlg);
   settling = Promise.resolve(true);
+  if (testing === cardKey()) waiting();
   $("#card-switch").onchange = (e) => act(() => patchOrbital(view.side, view.name, { enabled: e.target.checked }), "#card-switch");
   $("#dlg-body").oninput = (e) => {
     if (e.target.tagName === "TEXTAREA") grow(e.target);
@@ -186,7 +227,7 @@ function draw(state) {
     if (e.target.closest('[data-dlg="probe"]')) {
       // A block edited and not applied is applied first; a refused one leaves nothing to test.
       const { side, name } = view;
-      if (await settling && !$("fieldset.block.dirty", dlg)) await probe(() => probeOrbital(side, { name }));
+      if (await applied()) await probe(() => probeOrbital(side, { name }));
       return;
     }
     const b = e.target.closest('[data-dlg="up"], [data-dlg="down"]');
@@ -198,21 +239,45 @@ function draw(state) {
     act(() => patchOrbital(view.side, view.name, { position: j }), `[data-dlg="${stays === up ? "up" : "down"}"]`);
   };
   $("#dlg-actions").onclick = async (e) => {
-    if (e.target.closest('[data-dlg="delete"]')) { closeDialog(); ctx.remove(view.side, view.name); }
+    if (e.target.closest('[data-dlg="delete"]')) {
+      // There is nothing to apply to an orbital that goes.
+      for (const fs of $$("fieldset.block.dirty", dlg)) fs._unsent = false;
+      closeDialog();
+      ctx.remove(view.side, view.name);
+    }
     if (e.target.closest('[data-dlg="reset-one"]')) {
-      await act(() => resetOrbitals({ side: view.side, name: view.name }), '[data-dlg="close"]');
+      await act(() => resetOrbitals({ side: view.side, name: view.name }), '[data-dlg="close"]', { keeping: false });
       ctx.offerUndo();
     }
   };
 }
 
-/** A change that redraws the whole card: the switch, a move, a reset. */
-async function act(request, focus) {
+/**
+ * A change that redraws the whole card: the switch, a move, a reset. The blocks are settled
+ * first, and one the orbital refused comes back as it was typed, with its refusal: only a
+ * reset, which is there to discard, leaves it behind.
+ */
+async function act(request, focus, { keeping = true } = {}) {
+  if (keeping) await applied();
+  const refused = keeping ? $$("fieldset.block.dirty", dlg).map((fs) => ({ key: fs.dataset.block, typed: readBlock(fs), refusal: fs._refusal })) : [];
   try {
     draw(await ctx.apply(request));
   } catch (error) {
     await ctx.refused(error);
     draw(ctx.state());
+  }
+  for (const { key, typed, refusal } of refused) {
+    const old = $(`fieldset.block[data-block="${CSS.escape(key)}"]`, dlg);
+    if (!old) continue;
+    const { _setting: setting, _value: held } = old;
+    old.outerHTML = block(setting, typed, old.dataset.pid, old.classList.contains("changed"));
+    hydrate(dlg);
+    const fs = $(`fieldset.block[data-block="${CSS.escape(key)}"]`, dlg);
+    // What the server holds is still what it held: choosing its form again shows that.
+    keep(fs, held);
+    touch(fs);
+    fs._unsent = false;
+    mark(fs, refusal);
   }
   if (focus) $(focus, dlg)?.focus();
 }
@@ -265,6 +330,7 @@ async function commitBlock(fs) {
   const key = fs.dataset.block;
   const { side, name } = view;
   mark(fs, null);
+  fs._unsent = false;
   let state;
   try {
     state = await ctx.apply(() => patchOrbital(side, name, { settings: { [key]: readBlock(fs) } }));

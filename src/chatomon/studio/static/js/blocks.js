@@ -151,12 +151,14 @@ export function read(fs) {
   return { type: mode, fields: readFields(fs, false) };
 }
 
-/** Show a refusal under a block, or clear it. */
+/** Show a refusal under a block, or clear it. The block remembers it: `fs._refusal`. */
 export function mark(fs, message) {
   const box = $(":scope > .block-body > .field-err", fs);
   box.hidden = !message;
   box.innerHTML = message ? rich(message) : "";
-  fs.toggleAttribute("aria-invalid", Boolean(message));
+  fs._refusal = message || null;
+  if (message) fs.setAttribute("aria-invalid", "true");
+  else fs.removeAttribute("aria-invalid");
 }
 
 /**

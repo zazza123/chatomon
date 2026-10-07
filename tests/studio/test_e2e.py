@@ -1528,6 +1528,83 @@ def test_a_block_of_a_card_is_applied_when_it_is_left_and_before_a_test(page: Pa
     expect(refusal).to_be_hidden()
 
 
+def leave_to_nowhere(page: Page, block) -> None:
+    """Press on a block's legend and lose the focus, as a browser that gives it to nothing does."""
+    block.locator("legend").dispatch_event("pointerdown")
+    page.evaluate("document.activeElement.blur()")
+
+
+def test_a_block_left_for_nowhere_is_applied_before_a_test_and_when_the_card_closes(
+    page: Page, connected
+):
+    studio, service = connected
+    add_scope_guard(page, studio, service)
+    guard = block_of(page, "guard")
+    state = guard.locator(":scope > .block-body > .block-state")
+    guard.get_by_label("api_url").fill(closed_url())
+    leave_to_nowhere(page, guard)
+    expect(state).to_be_visible()
+    card(page).get_by_role("button", name="Test connection").click()
+    expect(shown(page)).to_have_text("The connection was refused.")
+    expect(state).to_be_hidden()
+
+    guard.get_by_label("api_url").fill(service.url)
+    leave_to_nowhere(page, guard)
+    expect(state).to_be_visible()
+    card(page).get_by_role("button", name="Done").click()
+    expect(page.locator("dialog[open]")).to_have_count(0)
+    open_card(page, "scope_guard")
+    expect(block_of(page, "guard").get_by_label("api_url")).to_have_value(service.url)
+    card(page).get_by_role("button", name="Test connection").click()
+    expect(shown(page).locator(".pill")).to_have_text("allow")
+
+
+def test_a_refused_block_keeps_its_refusal_when_the_card_is_drawn_again(page: Page, connected):
+    studio, service = connected
+    add_scope_guard(page, studio, service)
+    guard = block_of(page, "guard")
+    refusal = guard.locator(":scope > .block-body > .field-err")
+    guard.get_by_label("api_url").fill("")
+    guard.get_by_label("api_key_env").fill("ANOTHER_KEY")
+    guard.get_by_label("api_key_env").press("Enter")
+    expect(refusal).to_have_text("api_url needs a value")
+    expect(guard).to_have_attribute("aria-invalid", "true")
+
+    # The switch draws the card again: what was typed and its refusal are still there.
+    card(page).locator("#card-switch").click()
+    expect(card(page).locator(".sw-label")).to_have_text("Off")
+    guard = block_of(page, "guard")
+    expect(guard.locator(":scope > .block-body > .field-err")).to_have_text(
+        "api_url needs a value"
+    )
+    expect(guard).to_have_attribute("aria-invalid", "true")
+    expect(guard.get_by_label("api_url")).to_have_value("")
+    expect(guard.get_by_label("api_key_env")).to_have_value("ANOTHER_KEY")
+    expect(guard.locator(":scope > .block-body > .block-state")).to_be_visible()
+    # Put right, it is applied, and nothing says it was refused.
+    guard.get_by_label("api_url").fill(service.url)
+    guard.get_by_label("api_key_env").fill("SCOPE_KEY")
+    guard.get_by_label("api_key_env").press("Enter")
+    expect(guard.locator(":scope > .block-body > .block-state")).to_be_hidden()
+    expect(guard).not_to_have_attribute("aria-invalid", "true")
+
+
+def test_the_outcome_of_a_test_reaches_a_card_drawn_again_meanwhile(page: Page, connected):
+    studio, service = connected
+    add_scope_guard(page, studio, service)
+    service.delay = 1.0
+    test = card(page).get_by_role("button", name=re.compile("Test"))
+    test.click()
+    expect(test).to_have_text("Testing…")
+    card(page).locator("#card-switch").click()
+    expect(card(page).locator(".sw-label")).to_have_text("Off")
+    expect(test).to_have_text("Testing…")
+    expect(test).to_be_disabled()
+    expect(shown(page).locator(".pill")).to_have_text("allow")
+    expect(test).to_have_text("Test connection")
+    expect(test).to_be_enabled()
+
+
 def test_choosing_again_the_form_a_block_has_shows_what_is_applied(page: Page, connected):
     studio, service = connected
     add_scope_guard(page, studio, service)
