@@ -213,8 +213,9 @@ class Framework:
     offline: StandIn
     """What stands in for the nucleus when no model is needed."""
     scripted: StandIn
-    """What stands in for the nucleus to repeat its replies; it reads them with
-    `next(nucleus_replies())`, and fails the test when they are over."""
+    """What stands in for the nucleus to repeat its replies. It makes one
+    `nucleus_replies()` for the whole test and takes a reply from it with `next`
+    every time the model is called; the test fails when they are over."""
     imports: tuple[str, ...] = ()
     """The import lines every test needs."""
     setup: tuple[str, ...] = ()

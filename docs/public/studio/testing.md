@@ -130,7 +130,7 @@ For every reply of the nucleus, in order, the test checks what chatomon decided 
 | The whole test | One turn with a stopped reply is enough: the stand-in then speaks in every turn of the test, and every turn the nucleus wrote in is checked reply by reply |
 | Tools | The stand-in calls none of the atom's tools. Orbitals read messages and replies, never tool calls, so they decide on what they decided on in the studio |
 | More replies than were written | When your code now rejects a reply that was accepted in the studio, the nucleus is asked for one more than it has: the test fails and says so |
-| A turn asked again | When your code sent the nucleus back to write after chatomon had decided, as an output validator or a middleware can, the test expects it to do so again, and the card says in which turn |
+| A turn asked again | When your code sent the nucleus back to write after chatomon had decided, as a LangChain middleware that jumps back to the model does, the test expects it to do so again, and the card says in which turn |
 
 **The file holds text of the conversation.** The replies of the nucleus are written at the top of the file, as text, and they can quote what the nucleus read: your knowledge, or what a tool returned. The card says so before anything else. Read them before you commit the file, and edit them there if you need to: the test only needs each reply to still be one your orbitals decide on in the same way.
 
@@ -150,7 +150,7 @@ The example above is the test of a PydanticAI atom. What a test checks is the sa
 
 **Asynchronous tests.** The studio runs a LangChain agent asynchronously, and Microsoft Agent Framework has no other way, so the tests of these two frameworks are `async def` with `@pytest.mark.asyncio(loop_scope="session")` and need `pytest-asyncio` 0.24 or later. A LangChain test runs the agent as the studio did, which is what lets tools and middleware that are asynchronous only work in the test too. The loop is the session's because a client your module creates when it is imported keeps its connections on one loop: with a loop for each test, the second test that reaches a model would fail.
 
-**LangChain.** With a checkpointer every call also takes a thread of its own, as every turn does in the studio. Offline, the test defines a chat model that takes the atom's tools and calls none, so a message your code lets through fails the test on what it expects. That stand-in replaces the model of the connector: a middleware of yours that chooses the model itself can still reach a real one, and the card says so whenever the atom has middleware. The same holds for the chat model that repeats the replies.
+**LangChain.** With a checkpointer every call also takes a thread of its own, as every turn does in the studio. Offline, the test defines a chat model that takes the atom's tools and calls none, so a message your code lets through fails the test on what it expects. That stand-in replaces the model of the connector: a middleware of yours that chooses the model itself can still reach a real one, and the card says so whenever the atom has middleware. The same holds for the chat model that repeats the replies. That one is also what a middleware gets when it calls the model itself, to select tools or to summarise the conversation: it has only the replies of the turn to give, so the saved test of such an atom fails although nothing changed. The card says so whenever the atom has middleware.
 
 **Microsoft Agent Framework**, an agent hosted in Foundry included. Offline, the test defines a small client and puts it on the agent it built, in place of the nucleus, so a Foundry atom never reaches its hosted agent. A test that repeats the replies does the same with a client that gives them one at a time. Both clients are written on the framework's own client classes: save the test again if they change.
 
@@ -160,7 +160,7 @@ Offline means the nucleus is not called. The module of your atom is still import
 
 A turn may depend on the ones before it: a turn limit counts them, and a judge reads the history. The studio cannot tell, so a test holds the whole conversation up to the saved turn, and every turn in it is checked. When the earlier turns have nothing to do with the one you are saving, clear **Replay the turns before it** and the test holds that turn alone. Turns that failed are left out: they left nothing in the conversation. A turn saved alone that did depend on what came before it gives a test that fails, and the card reminds you of it.
 
-Each replayed turn is a real call, so a long conversation makes a slow test. **New conversation** before the turn you care about keeps tests short.
+With the real nucleus each replayed turn is a real call, so a long conversation makes a slow test. **New conversation** before the turn you care about keeps tests short.
 
 ## Offline and Integration
 
@@ -207,6 +207,7 @@ The page chooses the turn and the path. What is written is always the test the s
 ## Limits
 
 - **Tools are not run when the nucleus repeats its replies.** The stand-in writes the replies and calls none of the atom's tools, so such a test says nothing about them.
+- **A LangChain middleware that calls the model cannot work with the stand-in.** A test that repeats the replies fails for an atom with one: test that atom with turns in which no output orbital stops a reply.
 - **Started with `serve()`.** The studio does not know which module the atom lives in. The card shows the test with its import left to complete, and copies it; it does not write the file. The same holds for a module whose name is not a Python name, such as `my-shop`, which no import can name.
 
 ## Key Components
