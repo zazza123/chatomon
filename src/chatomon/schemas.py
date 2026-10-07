@@ -41,7 +41,8 @@ ErrorPolicy = Literal["block", "allow"]
 """What the engine does when an orbital fails or times out."""
 
 CaptureContent = Literal["none", "hash", "full"]
-"""How much message content chatomon records in logs, traces and reports."""
+"""How much message content chatomon records in turn reports; logs and traces carry
+labels only."""
 
 FinalAction = Literal[
     "answered", "orbital_response", "blocked", "guided_refusal", "fallback_refusal", "aborted"
@@ -351,8 +352,8 @@ class OutputAttempt(BaseModel):
 
     nucleus_reply: str | None = None
     """The reply the nucleus wrote, according to `capture_content`. It is what the
-    nucleus wrote whatever the decision: a text that replaced it is the turn's
-    `final_reply`."""
+    nucleus wrote whatever the decision: a text that took its place is in the result
+    of the orbital that gave it and, when it ended the turn, in `final_reply`."""
 
     results: tuple[OrbitalResult, ...]
     """Results of the output chain on this reply, in order."""

@@ -92,11 +92,11 @@ A turn has one attempt for every reply the nucleus wrote and the output chain ch
 | `decision` | What chatomon did with the reply |
 |------------|----------------------------------|
 | `accept` | Took it as the reply of the turn |
-| `replace` | Sent another text instead: the reply of an orbital, or the atom's refusal |
+| `replace` | Put another text in its place: the reply of an orbital, or the atom's refusal |
 | `regenerate` | Asked the nucleus to write it again with the orbital's guidance; another attempt follows |
 | none | Nothing: the turn was aborted while the output chain was running |
 
-An accepted attempt is the last one unless the framework asks the model again afterwards, for example when its own validation of the output fails.
+An attempt that was accepted or replaced is the last one unless the framework asks the model again afterwards, for example when its own validation of the output fails. That attempt stays in the report with its decision, and `final_reply` is the reply the last attempt ended with.
 
 The ready-made orbitals use fixed `reason` labels that contain no user text, so they are safe to record without content capture and an application can act on them — for example [the limit orbitals](orbitals/limits.md#decisions-and-audit) (`message_too_long`, `turn_limit`, ...), such as closing a chat when `turn_limit` appears. Your own orbitals choose their labels: keep user text out of them.
 

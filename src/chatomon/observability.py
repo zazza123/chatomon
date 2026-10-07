@@ -85,7 +85,9 @@ def sha256_text(text: str) -> str:
 
 
 class ContentPolicy:
-    """Decides how much message content is recorded in logs, traces and reports.
+    """Decides how much message content the turn reports record.
+
+    Log records and spans carry labels only, whatever the mode.
 
     Args:
         mode: `"none"` records nothing, `"hash"` records SHA-256 digests,
