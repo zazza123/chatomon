@@ -8,9 +8,8 @@ import pytest
 from chatomon import TurnReport, Verdict
 from chatomon.engine import Engine, TurnState
 from chatomon.observability import REDACTION_FAILED, ContentPolicy, sha256_text
-from chatomon.orbitals.base import Orbital
-from chatomon.schemas import DEFAULT_REFUSAL, OrbitalContext
-from tests.fakes import ScriptedOrbital, make_engine
+from chatomon.schemas import DEFAULT_REFUSAL
+from tests.fakes import HangingOrbital, ScriptedOrbital, make_engine
 
 QUESTION = "Where is my parcel?"
 AGAIN = Verdict.block(guidance="Fix the opening hours.")
@@ -28,21 +27,6 @@ def replies(report: TurnReport) -> list[str | None]:
 
 def decisions(report: TurnReport) -> list[str | None]:
     return [attempt.decision for attempt in report.output]
-
-
-class HangingOrbital(Orbital):
-    """Starts and never answers, so the test can cancel the turn while it runs."""
-
-    calls_model = False
-
-    def __init__(self) -> None:
-        super().__init__(name="hanging")
-        self.started = asyncio.Event()
-
-    async def check(self, ctx: OrbitalContext) -> Verdict:
-        self.started.set()
-        await asyncio.Event().wait()
-        return Verdict.allow()
 
 
 async def test_every_attempt_is_in_the_report_with_its_reply_and_decision():
@@ -262,6 +246,27 @@ async def test_a_turn_interrupted_while_the_chain_runs_records_the_attempt_witho
     with pytest.raises(asyncio.CancelledError):
         await running
     report = await engine.abort_turn(turn, asyncio.CancelledError())
+    assert len(report.output) == 1
+    attempt = report.output[0]
+    assert attempt.nucleus_reply == "draft"
+    assert [r.name for r in attempt.results] == ["first"]
+    assert attempt.decision is None
+
+
+async def test_a_turn_closed_before_the_cancelled_chain_unwinds_records_the_attempt():
+    # PydanticAI runs the model step in a task of its own: when the run is cancelled the
+    # connector closes the turn before that task has got its cancellation.
+    hanging = HangingOrbital()
+    engine = make_engine(
+        outputs=[ScriptedOrbital(name="first"), hanging], content=ContentPolicy("full")
+    )
+    turn = await start(engine)
+    running = asyncio.ensure_future(engine.run_output(turn, reply="draft"))
+    await hanging.started.wait()
+    running.cancel()
+    report = await engine.abort_turn(turn, asyncio.CancelledError())
+    with pytest.raises(asyncio.CancelledError):
+        await running
     assert len(report.output) == 1
     attempt = report.output[0]
     assert attempt.nucleus_reply == "draft"

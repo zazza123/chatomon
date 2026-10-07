@@ -52,6 +52,25 @@ TurnCallback = Callable[[TurnReport], Awaitable[None] | None]
 
 
 @dataclass
+class _Attempt:
+    """One reply of the nucleus and what the output chain made of it so far.
+
+    It is in the turn's state from the moment the reply arrives, so a turn closed
+    while an orbital runs still reports it; the report freezes it as an
+    [OutputAttempt][chatomon.schemas.OutputAttempt].
+    """
+
+    nucleus_reply: str | None
+    """What may be recorded of the reply: the content policy is already applied."""
+
+    results: list[OrbitalResult] = field(default_factory=list)
+    """Audit records of the output orbitals that ran on the reply."""
+
+    decision: OutputDecisionKind | None = None
+    """What the engine decided, once the chain ran."""
+
+
+@dataclass
 class TurnState:
     """Mutable state of one turn; the connector keeps it between its hooks."""
 
@@ -79,8 +98,9 @@ class TurnState:
     input_results: list[OrbitalResult] = field(default_factory=list)
     """Audit records of the input chain."""
 
-    output_attempts: list[OutputAttempt] = field(default_factory=list)
-    """Audit records of the output chain, one per reply it checked."""
+    output_attempts: list[_Attempt] = field(default_factory=list)
+    """The attempts of the output chain, one per reply it checked; the last one has
+    no decision while the chain runs."""
 
     input_decision: InputDecision | None = None
     """The decision of the input chain, once it ran."""
@@ -322,30 +342,12 @@ class Engine:
         if turn.final_action is not None:
             raise RuntimeError("this turn already has its final reply")
         turn.attempt += 1
-        turn.annotations = dict(turn.input_annotations)
-        results: list[OrbitalResult] = []
-        kind: OutputDecisionKind | None = None
-        try:
-            decision = await self._check_reply(turn, reply, history, results)
-            kind = decision.kind
-        finally:
-            # Also when the turn is cancelled while an orbital runs: the attempt is
-            # recorded with the results it has and no decision.
-            turn.output_attempts.append(
-                OutputAttempt(
-                    nucleus_reply=self._content.text(reply),
-                    results=tuple(results),
-                    decision=kind,
-                )
-            )
-        self._log_decision(turn, "output", decision.kind)
-        return decision
-
-    async def _check_reply(
-        self, turn: TurnState, reply: str, history: Sequence[Message], results: list[OrbitalResult]
-    ) -> OutputDecision:
         attempt = turn.attempt
-        guided = turn.input_decision is not None and turn.input_decision.kind == "guided_refusal"
+        turn.annotations = dict(turn.input_annotations)
+        # In the state before the chain runs, with the content policy applied: a turn
+        # closed while an orbital runs reports the attempt with the results it has.
+        record = _Attempt(nucleus_reply=self._content.text(reply))
+        turn.output_attempts.append(record)
         decision: OutputDecision | None = None
         with self._tracer.start_as_current_span(
             "chatomon.output",
@@ -359,7 +361,7 @@ class Engine:
                     message=reply,
                     history=history,
                     attempt=attempt,
-                    results=results,
+                    results=record.results,
                 )
                 if verdict.action == "allow":
                     continue
@@ -368,8 +370,12 @@ class Engine:
             if decision is None:
                 decision = OutputDecision(kind="accept")
                 turn.final_reply = reply
-                turn.final_action = "guided_refusal" if guided else "answered"
+                turn.final_action = (
+                    "guided_refusal" if turn.input_decision.kind == "guided_refusal" else "answered"
+                )
             span.set_attribute("chatomon.decision.kind", decision.kind)
+        record.decision = decision.kind
+        self._log_decision(turn, "output", decision.kind)
         return decision
 
     def reopen_output(self, turn: TurnState) -> None:
@@ -467,7 +473,14 @@ class Engine:
             final_action=final_action,
             escalated=turn.escalated,
             input=tuple(turn.input_results),
-            output=tuple(turn.output_attempts),
+            output=tuple(
+                OutputAttempt(
+                    nucleus_reply=attempt.nucleus_reply,
+                    results=tuple(attempt.results),
+                    decision=attempt.decision,
+                )
+                for attempt in turn.output_attempts
+            ),
             user_message=content.text(turn.user_message),
             final_reply=content.text(turn.final_reply),
             error_type=type(error).__name__ if error is not None else None,
