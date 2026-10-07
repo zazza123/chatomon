@@ -130,15 +130,21 @@ async def test_full_capture_passes_every_reply_through_the_redactor():
     assert "Rome" not in report.model_dump_json()
 
 
-async def test_a_redactor_that_fails_leaves_the_marker():
+async def test_a_redactor_that_fails_on_a_rejected_reply_leaves_the_marker_and_the_turn_goes_on():
     def broken(text: str) -> str:
         raise ValueError(text)
 
-    engine = make_engine(content=ContentPolicy("full", redactor=broken))
+    judge = ScriptedOrbital(AGAIN, Verdict.allow(), name="judge")
+    engine = make_engine(outputs=[judge], content=ContentPolicy("full", redactor=broken))
     turn = await start(engine)
-    await engine.run_output(turn, reply="It is in Rome.")
+    first = await engine.run_output(turn, reply="Open 24/7.")
+    assert first.kind == "regenerate"
+    second = await engine.run_output(turn, reply="Open 9-18.")
+    assert second.kind == "accept"
     report = await engine.finish_turn(turn)
-    assert replies(report) == [REDACTION_FAILED]
+    assert report.final_action == "answered"
+    assert replies(report) == [REDACTION_FAILED, REDACTION_FAILED]
+    assert decisions(report) == ["regenerate", "accept"]
 
 
 @pytest.mark.parametrize(("mode", "recorded"), [("full", ""), ("hash", sha256_text(""))])
@@ -213,6 +219,22 @@ async def test_a_reopened_turn_keeps_the_attempt_that_was_accepted():
     assert replies(report) == ["first", "second"]
     assert decisions(report) == ["accept", "accept"]
     assert report.final_reply == "second"
+
+
+async def test_a_reopened_turn_keeps_the_attempt_that_was_replaced():
+    out = ScriptedOrbital(Verdict.respond("Call us."), Verdict.allow(), name="out")
+    engine = make_engine(outputs=[out], content=ContentPolicy("full"))
+    turn = await start(engine)
+    await engine.run_output(turn, reply="draft")
+    engine.reopen_output(turn)
+    await engine.run_output(turn, reply="second")
+    report = await engine.finish_turn(turn)
+    assert replies(report) == ["draft", "second"]
+    assert decisions(report) == ["replace", "accept"]
+    # The text that took the first reply's place did not end the turn: it is in the
+    # orbital's result, and the final reply is the one accepted afterwards.
+    assert report.output[0].results[0].reply == "Call us."
+    assert (report.final_action, report.final_reply) == ("answered", "second")
 
 
 async def test_a_turn_aborted_after_an_attempt_keeps_the_attempt():

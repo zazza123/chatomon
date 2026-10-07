@@ -168,6 +168,23 @@ async def test_langchain_jump_back_to_the_model_is_checked_again():
     ]
 
 
+async def test_langchain_reply_with_no_text_is_an_attempt_with_an_empty_reply():
+    reports: list[TurnReport] = []
+    out = ScriptedOrbital(name="out")
+    agent = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=LangChainConnector(ScriptedChatModel(script=[AIMessage(content="")])),
+        output_orbitals=[out],
+        on_turn=reports.append,
+        capture_content="full",
+    ).build()
+    await agent.ainvoke({"messages": [HumanMessage(content="hello")]})
+    assert [ctx.message for ctx in out.contexts] == [""]
+    # Recorded as an empty text, not as a reply that was not captured.
+    assert [(a.nucleus_reply, a.decision) for a in reports[0].output] == [("", "accept")]
+
+
 async def test_pydantic_ai_output_validator_retry_is_checked_again():
     reports: list[TurnReport] = []
     out = ScriptedOrbital(name="out")
