@@ -1527,9 +1527,9 @@ def test_a_long_reply_is_broken_at_its_spaces_within_88_columns(project, monkeyp
     say(session, "I am angry")
     test = save(session)
     assert replies_of(test.code) == [reply, "Hi."]
-    long = [line for line in test.code.split("\n") if len(line) > 88]
-    # Only a word with no space to break at passes the width, on a line of its own.
-    assert long == [f'        "{address} "']
+    # A word with no space to break at is broken where the line ends.
+    assert [line for line in test.code.split("\n") if len(line) > 88] == []
+    assert f'        "{address[:78]}"\n' in test.code
     assert '    "Hi.",\n' in test.code  # a reply that fits stays on one line
     run_saved(test, monkeypatch)
 
@@ -1544,6 +1544,10 @@ SHAPES = [
     "ends with a word past the width " + "w" * 90,
     "w" * 90 + " starts with one, and goes on for long enough to need a second line",
     "a line that ends with a word past the width " + "w" * 90 + "\nand a second line",
+    # A language written without spaces, and a word of quotes, which double when written.
+    chr(0x65E5) * 120,
+    '"' * 120,
+    "w" * 82,
 ]
 
 
@@ -1555,6 +1559,7 @@ def test_a_reply_of_any_shape_reads_back_as_it_was_written(reply):
     assert scope["VALUE"] == [reply]
     # A piece is never empty: the file is read by a person before it is committed.
     assert '        ""' not in lines
+    assert max(len(line) for line in lines) <= 88
 
 
 def test_a_reply_that_fits_a_line_is_written_on_one():

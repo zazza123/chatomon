@@ -533,8 +533,8 @@ def _reply(text: str) -> list[str]:
 
     A reply of one line that fits the width is one literal. A model writes long
     lines: each is broken at its spaces into literals that fit the width, and a
-    line break of the reply ends a literal. A word longer than the width stays
-    whole.
+    line break of the reply ends a literal. A word that does not fit a line, as
+    in a language written without spaces, is broken where the line ends.
 
     Returns:
         The lines of the item, with the indentation of the list.
@@ -543,19 +543,26 @@ def _reply(text: str) -> list[str]:
     if "\n" not in text[:-1] and len(one) <= codegen.WIDTH:
         return [one]
     room = codegen.WIDTH - 8  # the indentation of a literal inside its parentheses
-    parts: list[str] = []
+    pieces: list[str] = []
     for line in re.findall(r"[^\n]*\n|[^\n]+", text):
         piece = ""
         # Words with the spaces that follow them: no match is empty, so no piece is.
         for word in re.findall(r"[^ ]+ *| +", line):
-            if piece and len(codegen.literal(piece + word)) > room:
-                parts.append(codegen.literal(piece))
+            if len(codegen.literal(piece + word)) <= room:
+                piece += word
+                continue
+            if piece:
+                pieces.append(piece)
                 piece = ""
-            piece += word
-        parts.append(codegen.literal(piece))
-    if len(parts) < 2:
-        return [one]
-    return ["    (", *(f"        {part}" for part in parts), "    ),"]
+            # The width is that of the literal: a quote or a character written as an
+            # escape takes more room in the file than in the reply.
+            for char in word:
+                if piece and len(codegen.literal(piece + char)) > room:
+                    pieces.append(piece)
+                    piece = ""
+                piece += char
+        pieces.append(piece)
+    return ["    (", *(f"        {codegen.literal(piece)}" for piece in pieces), "    ),"]
 
 
 def _script(turns: Sequence[_Turn]) -> list[str]:
