@@ -69,9 +69,10 @@ The add form and the card of every orbital that calls a model have **Test connec
 |---------|---------------|
 | The action, the reason and the time, such as `allow · Chit Chat · 412 ms` | The service answered |
 | `The connection was refused.` or `The address was not found.` | Nothing answers at that address |
-| `The service answered 401.` and the like | The service refused the request: check the key for 401 and 403, the address for 404 |
+| `The service answered 401.` and the like | The service refused the request, with a status of 400 or more: check the key for 401 and 403, the address for 404 |
 | `No answer within 30 s.` | The service did not answer within the orbital's `timeout`, as when it is still starting |
-| `The check failed with …` | Anything else, named by the kind of error |
+| `The client stopped waiting before the orbital's timeout of 30 s.` | The client has a shorter timeout of its own, and it ran out first |
+| `The check failed with …` | Anything else, named by the kind of error: an answer the client could not read, for example |
 
 A test is refused before it starts when the orbital cannot be built, because a value is missing or the variable it names is not set, and for an orbital that reads the annotations of other orbitals, which can only be tried in a turn.
 

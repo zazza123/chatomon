@@ -23,7 +23,7 @@ from chatomon._version import __version__
 from chatomon.atom import Atom
 from chatomon.errors import ChatomonConfigError, ChatomonError
 from chatomon.orbitals.base import Orbital
-from chatomon.schemas import OrbitalContext, Side, TurnReport
+from chatomon.schemas import OrbitalContext, Side, TurnReport, Verdict
 from chatomon.studio import _codegen as codegen
 from chatomon.studio import _files as files
 from chatomon.studio import _kinds as kinds
@@ -138,26 +138,52 @@ class Probe:
         return data
 
 
-def _failure(exc: BaseException, timeout: float) -> tuple[str, str, int | None]:
+def _links(exc: BaseException) -> list[BaseException]:
+    """Return an exception and what caused it, a few links down.
+
+    A framework wraps the error of its HTTP client, which wraps the socket's: the
+    refused connection is three or four links below what the check raises.
+    """
+    found: list[BaseException] = []
+    queue: list[Any] = [exc]
+    while queue and len(found) < 12:
+        link = queue.pop(0)
+        if not isinstance(link, BaseException) or any(link is seen for seen in found):
+            continue
+        found.append(link)
+        queue += [link.__cause__, link.__context__, getattr(link, "os_error", None)]
+    return found
+
+
+def _failure(exc: BaseException, timeout: float, waited: float) -> tuple[str, str, int | None]:
     """Say how a check failed, from the kind of exception and never from its text.
 
     A client's error can quote the request it made, and so a key: the sentence is
     the studio's own. Exceptions are told apart by Python's base classes and by
     the attributes HTTP clients share, so no client is imported here.
 
+    Args:
+        exc: What the check raised.
+        timeout: The orbital's timeout, in seconds.
+        waited: How long the check ran, in seconds.
+
     Returns:
         The outcome, its sentence and the HTTP status when there is one.
     """
     if isinstance(exc, TimeoutError):
+        if waited < timeout * 0.9:
+            # The client has a timeout of its own, shorter than the orbital's.
+            early = f"The client stopped waiting before the orbital's timeout of {timeout:g} s."
+            return "timeout", early, None
         wait = f"No answer within {timeout:g} s. A service that is starting can take longer."
         return "timeout", wait, None
     if isinstance(exc, ChatomonError):
         return "failed", f"The check failed with {type(exc).__name__}: {exc}.", None
     for held in (getattr(exc, "status", None), getattr(exc, "status_code", None)):
-        if isinstance(held, int) and not isinstance(held, bool) and 100 <= held <= 599:
+        # A status below 400 on an error is an answer the client could not use, not a refusal.
+        if isinstance(held, int) and not isinstance(held, bool) and 400 <= held <= 599:
             return "http", f"The service answered {held}.{_HINTS.get(held, '')}", held
-    links = (exc, exc.__cause__, exc.__context__, getattr(exc, "os_error", None))
-    errors = [link for link in links if isinstance(link, OSError)]
+    errors = [link for link in _links(exc) if isinstance(link, OSError)]
     if any(isinstance(error, ConnectionRefusedError) for error in errors):
         return "unreachable", "The connection was refused.", None
     if any(isinstance(error, socket.gaierror) for error in errors):
@@ -448,10 +474,14 @@ class Session:
             ctx = OrbitalContext(side=self.chains.find_side(side), message=SAMPLE, turn_id="probe")
             verdict = await asyncio.wait_for(orb.check(ctx), timeout=orb.timeout)
         except Exception as exc:
-            outcome, message, status = _failure(exc, orb.timeout)
+            waited = time.perf_counter() - started
+            outcome, message, status = _failure(exc, orb.timeout, waited)
             return Probe(outcome, message, _elapsed(started), status=status)
         finally:
             self._probing = False
+        if not isinstance(verdict, Verdict):
+            # In a turn the engine raises a TypeError for a check that returns anything else.
+            return Probe("failed", "The check failed with TypeError.", _elapsed(started))
         return Probe(
             "answered",
             "The orbital answered.",

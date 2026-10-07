@@ -20,8 +20,9 @@ from chatomon import Atom, ChatomonConfigError, Verdict, orbital
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.errors import MissingExtraError
 from chatomon.orbitals import JudgeOrbital, MessageLengthOrbital
+from chatomon.orbitals.base import Orbital
 from chatomon.orbitals.principled import ScopeGuardOrbital
-from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER
+from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER, OrbitalContext
 from chatomon.studio import _kinds as kinds
 from chatomon.studio import _loading as loading
 from chatomon.studio._chains import InvalidRequestError, RefusedError, UnknownOrbitalError
@@ -1508,6 +1509,21 @@ def caused(error: Exception, cause: Exception) -> Exception:
             "unreachable",
             "The connection was refused.",
         ),
+        (
+            # A framework wraps the error of its HTTP client, which wraps the socket's.
+            caused(
+                RuntimeError(f"model api {KEY}"),
+                caused(
+                    RuntimeError("connection error"),
+                    caused(RuntimeError("connect"), ConnectionRefusedError(61, "refused")),
+                ),
+            ),
+            "unreachable",
+            "The connection was refused.",
+        ),
+        # An answer the client could not read is not a refusal by the service.
+        (HttpFailure(f"not json {KEY}", 200), "failed", "The check failed with HttpFailure."),
+        (HttpFailure("moved", 302), "failed", "The check failed with HttpFailure."),
         (OSError(f"network is down {KEY}"), "unreachable", "Could not connect."),
         (
             ChatomonConfigError("judge 'tone' has no connector"),
@@ -1515,13 +1531,40 @@ def caused(error: Exception, cause: Exception) -> Exception:
             "The check failed with ChatomonConfigError: judge 'tone' has no connector.",
         ),
     ],
-    ids=["other", "status", "dns", "cause", "os", "chatomon"],
+    ids=["other", "status", "dns", "cause", "deep", "unread", "moved", "os", "chatomon"],
 )
 async def test_how_a_check_failed_is_said_from_the_kind_of_error(error, outcome, message):
     session = Session(make_atom(input_orbitals=[raising(error)]), source="app:atom")
     probe = await session.probe("input", name="remote")
     assert (probe.outcome, probe.message) == (outcome, message)
     assert KEY not in json.dumps(probe.to_json())
+
+
+async def test_a_client_that_stops_waiting_first_is_not_given_the_orbitals_timeout():
+    session = Session(
+        make_atom(input_orbitals=[raising(TimeoutError(f"gave up {KEY}"), timeout=30)]),
+        source="app:atom",
+    )
+    probe = await session.probe("input", name="remote")
+    assert (probe.outcome, probe.message) == (
+        "timeout",
+        "The client stopped waiting before the orbital's timeout of 30 s.",
+    )
+
+
+class Careless(Orbital):
+    """An orbital whose check does not return a verdict."""
+
+    calls_model = True
+
+    async def check(self, ctx: OrbitalContext) -> Any:
+        return "allow"
+
+
+async def test_a_check_that_returns_no_verdict_is_a_failed_test():
+    session = Session(make_atom(input_orbitals=[Careless(name="careless")]), source="app:atom")
+    probe = await session.probe("input", name="careless")
+    assert (probe.outcome, probe.message) == ("failed", "The check failed with TypeError.")
 
 
 async def test_a_judge_is_tested_through_the_atoms_connector():
