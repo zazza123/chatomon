@@ -94,6 +94,77 @@ def inline():
     )
 """
 
+SERVICES = """
+from orbitals.scope_guard_v2 import AsyncScopeGuardV2
+from orbitals.types import AIServiceDescriptionV2, PredefinedResponse
+from pydantic_ai.models.test import TestModel
+
+from chatomon import Atom
+from chatomon.connectors.pydantic_ai import PydanticAIConnector
+from chatomon.orbitals.principled import ScopeGuardOrbital
+
+connector = PydanticAIConnector(TestModel(custom_output_text="Hi"))
+client = AsyncScopeGuardV2(backend="api", api_url="http://scope-guard.test", api_key="k")
+SERVICE = AIServiceDescriptionV2(
+    identity_role="Parcel tracking assistant",
+    context="SpeedyPack, an Italian courier",
+    constraints="Never discuss refunds",
+    predefined_responses=[
+        PredefinedResponse(trigger="The user asks for the phone number", response="800 123 456"),
+        "Greet the user back.",
+    ],
+)
+
+atom = Atom(
+    name="speedypack",
+    instructions="Be brief.",
+    connector=connector,
+    input_orbitals=[ScopeGuardOrbital(name="scope", guard=client, description=SERVICE)],
+)
+"""
+
+KEY = "key-0123456789-not-for-the-code"
+HOSTED = {
+    "name": "hosted",
+    "guard": {
+        "type": "ApiBackend",
+        "fields": {"api_url": "https://scope.example", "api_key_env": "SCOPE_KEY"},
+    },
+    "description": {
+        "type": "AIServiceDescriptionV2",
+        "fields": {
+            "identity_role": "Courier",
+            "context": "Italy",
+            "constraints": ["Never discuss refunds", "Never give legal advice"],
+            "predefined_responses": [
+                {
+                    "type": "PredefinedResponse",
+                    "fields": {
+                        "trigger": "The user asks for the phone number of customer care",
+                        "response": "800 123 456",
+                    },
+                },
+                "Greet the user back.",
+            ],
+        },
+    },
+}
+CLAIMS = {
+    "name": "claims",
+    "extractor": {"type": "ApiBackend", "fields": {"api_url": "https://claims.example"}},
+    "description": {
+        "type": "AIServiceDescription",
+        "fields": {
+            "identity_role": "Courier",
+            "context": "Italy",
+            "principles": [
+                {"type": "Principle", "fields": {"title": "Honest", "description": "No guesses"}}
+            ],
+        },
+    },
+    "intents_only": True,
+}
+
 TONE = {
     "name": "tone",
     "model": "test:judge",
@@ -422,3 +493,162 @@ def test_characters_that_editors_take_for_line_breaks_are_escaped(code_point):
 def test_a_lone_surrogate_next_to_a_character_past_the_basic_plane_reads_back():
     value = chr(0xD83D) + chr(0x1F4E6) + chr(0xE9) + chr(0xDC00) + '"' + chr(92) + chr(10)
     assert ast.literal_eval(codegen.literal(value)) == value
+
+
+def test_an_atom_built_with_blocks_has_the_sessions_fingerprints(project, monkeypatch):
+    monkeypatch.setenv("SCOPE_KEY", KEY)
+    session, names = project(module=SERVICES)
+    session.add("input", "ScopeGuardOrbital", HOSTED)
+    session.add(
+        "input",
+        "ScopeGuardOrbital",
+        {"guard": HOSTED["guard"], "description": "A courier.\nIn Italy."},
+    )
+    session.add("output", "ClaimExtractorOrbital", CLAIMS)
+    shown = session.state()["orbitals"]["input"][0]["settings"][0]["value"]
+    shown["fields"]["context"] = "SpeedyPack, a courier in Italy and France"
+    session.edit("input", "scope", {"description": shown})
+    code = codegen.generate(session.chains, names)
+    assert code.placeholders == []
+    assert KEY not in code.code and '"SCOPE_KEY"' in code.code
+    built = lists(code, names)
+    rebuilt = Atom(
+        name=session.atom.name,
+        instructions=session.atom.instructions,
+        connector=session.atom.connector,
+        input_orbitals=built["input_orbitals"],
+        output_orbitals=built["output_orbitals"],
+    )
+    rebuilt.validate()
+    assert fingerprints(rebuilt.input_orbitals) == fingerprints(session.chains.enabled("input"))
+    assert fingerprints(rebuilt.output_orbitals) == fingerprints(session.chains.enabled("output"))
+    assert [orbital.name for orbital in rebuilt.input_orbitals] == [
+        "scope",
+        "hosted",
+        "scope_guard",
+    ]
+    # The text the code gives where a list could be is still that text.
+    assert rebuilt.input_orbitals[0].description.constraints == "Never discuss refunds"  # type: ignore[attr-defined]
+
+
+def test_the_code_of_an_orbital_with_blocks(project, monkeypatch):
+    monkeypatch.setenv("SCOPE_KEY", KEY)
+    session, names = project(module=SERVICES)
+    session.add("input", "ScopeGuardOrbital", HOSTED)
+    session.add("output", "ClaimExtractorOrbital", CLAIMS)
+    assert codegen.generate(session.chains, names).code == textwrap.dedent("""\
+        # Imports
+        from chatomon.orbitals.principled import (
+            ApiBackend,
+            ClaimExtractorOrbital,
+            ScopeGuardOrbital,
+        )
+        from orbitals.types import (
+            AIServiceDescription,
+            AIServiceDescriptionV2,
+            PredefinedResponse,
+            Principle,
+        )
+
+        # Inside Atom(...)
+        input_orbitals=[
+            ScopeGuardOrbital(name="scope", guard=client, description=SERVICE),
+            ScopeGuardOrbital(
+                name="hosted",
+                guard=ApiBackend(api_url="https://scope.example", api_key_env="SCOPE_KEY"),
+                description=AIServiceDescriptionV2(
+                    identity_role="Courier",
+                    context="Italy",
+                    constraints=["Never discuss refunds", "Never give legal advice"],
+                    predefined_responses=[
+                        PredefinedResponse(
+                            trigger="The user asks for the phone number of customer care",
+                            response="800 123 456",
+                        ),
+                        "Greet the user back.",
+                    ],
+                ),
+            ),
+        ],
+        output_orbitals=[
+            ClaimExtractorOrbital(
+                name="claims",
+                extractor=ApiBackend(api_url="https://claims.example"),
+                description=AIServiceDescription(
+                    identity_role="Courier",
+                    context="Italy",
+                    principles=[
+                        Principle(
+                            title="Honest",
+                            description="No guesses",
+                            supporting_materials=None,
+                        ),
+                    ],
+                ),
+                intents_only=True,
+            ),
+        ],""")
+
+
+def test_a_block_from_code_is_written_by_its_name_until_it_is_changed(project):
+    session, names = project(module=SERVICES)
+    shown = session.state()["orbitals"]["input"][0]["settings"][0]["value"]
+    untouched = dict(shown, fields=dict(shown["fields"]))
+    shown["fields"]["context"] = "SpeedyPack"
+    session.edit("input", "scope", {"description": shown})
+    changed = codegen.generate(session.chains, names)
+    assert changed.orbitals == textwrap.dedent("""\
+        input_orbitals=[
+            ScopeGuardOrbital(
+                name="scope",
+                guard=client,
+                description=AIServiceDescriptionV2(
+                    identity_role="Parcel tracking assistant",
+                    context="SpeedyPack",
+                    constraints="Never discuss refunds",
+                    predefined_responses=[
+                        PredefinedResponse(
+                            trigger="The user asks for the phone number",
+                            response="800 123 456",
+                        ),
+                        "Greet the user back.",
+                    ],
+                ),
+            ),
+        ],""")
+    assert changed.imports == textwrap.dedent("""\
+        from chatomon.orbitals.principled import ScopeGuardOrbital
+        from orbitals.types import AIServiceDescriptionV2, PredefinedResponse""")
+    session.edit("input", "scope", {"description": untouched})
+    back = codegen.generate(session.chains, names)
+    assert back.orbitals == (
+        'input_orbitals=[ScopeGuardOrbital(name="scope", guard=client, description=SERVICE)],'
+    )
+    session.edit("input", "scope", {"description": "A courier.\nIn Italy."})
+    as_text = codegen.generate(session.chains, names)
+    assert 'description="A courier.\\nIn Italy."' in as_text.orbitals
+
+
+def test_a_client_without_a_name_is_marked_and_listed(project):
+    session, names = project(module=SERVICES)
+    session.edit("input", "scope", {"history_window": 2})
+    inline = codegen.generate(session.chains, {k: v for k, v in names.items() if k != "client"})
+    assert "        guard=...,  # your AsyncAPIScopeGuardV2\n" in inline.orbitals
+    assert inline.placeholders == ["scope: `guard` is a AsyncAPIScopeGuardV2 from your code"]
+
+
+def test_a_block_is_written_on_one_line_for_a_note(project, monkeypatch):
+    monkeypatch.setenv("SCOPE_KEY", KEY)
+    session, _ = project(module=SERVICES)
+    session.add("input", "ScopeGuardOrbital", HOSTED)
+    hosted = session.chains.work["input"][1].orbital
+    kind = codegen.kinds.describe(type(hosted))
+    guard, description = kind.setting("guard"), kind.setting("description")
+    assert guard is not None and description is not None
+    assert codegen.written(guard, hosted.guard) == (  # type: ignore[attr-defined]
+        'guard=ApiBackend(api_url="https://scope.example", api_key_env="SCOPE_KEY")'
+    )
+    line = codegen.written(description, hosted.description)  # type: ignore[attr-defined]
+    assert "\n" not in line
+    assert line.startswith('description=AIServiceDescriptionV2(identity_role="Courier", ')
+    assert codegen.written(description, "A courier.") == 'description="A courier."'
