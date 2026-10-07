@@ -1529,11 +1529,40 @@ def test_a_long_reply_is_broken_at_its_spaces_within_88_columns(project, monkeyp
     run_saved(test, monkeypatch)
 
 
-@pytest.mark.parametrize("reply", ["", " ", "\n", "one\n", "no-space-at-all"])
+SHAPES = [
+    "",
+    " ",
+    "\n",
+    "one\n",
+    "no-space-at-all",
+    "  two spaces lead and two trail  ",
+    "ends with a word past the width " + "w" * 90,
+    "w" * 90 + " starts with one, and goes on for long enough to need a second line",
+    "a line that ends with a word past the width " + "w" * 90 + "\nand a second line",
+]
+
+
+@pytest.mark.parametrize("reply", SHAPES)
 def test_a_reply_of_any_shape_reads_back_as_it_was_written(reply):
+    lines = testgen._reply(reply)
     scope: dict[str, Any] = {}
-    exec("VALUE = [\n" + "\n".join(testgen._reply(reply)) + "\n]", scope)
+    exec("VALUE = [\n" + "\n".join(lines) + "\n]", scope)
     assert scope["VALUE"] == [reply]
+    # A piece is never empty: the file is read by a person before it is committed.
+    assert '        ""' not in lines
+
+
+def test_a_reply_that_fits_a_line_is_written_on_one():
+    fits = "x" * 81  # with its quotes, the indentation and the comma: 88 columns
+    assert testgen._reply(fits) == [f'    "{fits}",']
+    assert testgen._reply("a " * 40 + "b") == ['    "' + "a " * 40 + 'b",']
+    # One character more and it is broken at a space, each piece within the width.
+    broken = testgen._reply("a " * 41 + "b")
+    assert broken[0] == "    (" and broken[-1] == "    ),"
+    assert len(broken) == 4
+    assert max(len(line) for line in broken) <= 88
+    # A reply of one line that ends with a line break is still one literal.
+    assert testgen._reply("one\n") == ['    "one\\n",']
 
 
 def test_a_turn_stopped_by_an_orbital_of_the_studio_alone_is_warned_about(project):

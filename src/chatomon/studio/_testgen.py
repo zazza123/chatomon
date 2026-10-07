@@ -530,25 +530,30 @@ def _decided(turn: _Turn) -> list[str]:
 def _reply(text: str) -> list[str]:
     """Write a reply of the nucleus as an item of the list of replies.
 
-    A model writes long lines: each is broken at its spaces into literals that
-    fit the width, and a line break of the reply ends a literal. A word longer
-    than the width stays whole.
+    A reply of one line that fits the width is one literal. A model writes long
+    lines: each is broken at its spaces into literals that fit the width, and a
+    line break of the reply ends a literal. A word longer than the width stays
+    whole.
 
     Returns:
         The lines of the item, with the indentation of the list.
     """
+    one = f"    {codegen.literal(text)},"
+    if "\n" not in text[:-1] and len(one) <= codegen.WIDTH:
+        return [one]
     room = codegen.WIDTH - 8  # the indentation of a literal inside its parentheses
     parts: list[str] = []
     for line in re.findall(r"[^\n]*\n|[^\n]+", text):
         piece = ""
-        for word in re.findall(r"[^ ]* *", line):
+        # Words with the spaces that follow them: no match is empty, so no piece is.
+        for word in re.findall(r"[^ ]+ *| +", line):
             if piece and len(codegen.literal(piece + word)) > room:
                 parts.append(codegen.literal(piece))
                 piece = ""
             piece += word
         parts.append(codegen.literal(piece))
     if len(parts) < 2:
-        return [f"    {codegen.literal(text)},"]
+        return [one]
     return ["    (", *(f"        {part}" for part in parts), "    ),"]
 
 
