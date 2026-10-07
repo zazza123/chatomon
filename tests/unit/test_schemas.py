@@ -9,6 +9,7 @@ from chatomon.schemas import (
     InputDecision,
     Message,
     OrbitalResult,
+    OutputAttempt,
     OutputDecision,
 )
 
@@ -108,9 +109,29 @@ def test_turn_report_round_trips_to_json():
         final_action="answered",
         escalated=False,
         input=(result,),
-        output=((),),
+        output=(
+            OutputAttempt(results=(), decision="regenerate"),
+            OutputAttempt(nucleus_reply="sha256:def", results=(result,), decision="accept"),
+        ),
     )
     assert TurnReport.model_validate_json(report.model_dump_json()) == report
+    first, second = report.model_dump(mode="json")["output"]
+    assert first == {"nucleus_reply": None, "results": [], "decision": "regenerate"}
+    assert second["nucleus_reply"] == "sha256:def"
+    assert [r["name"] for r in second["results"]] == ["scope_guard"]
+    assert second["decision"] == "accept"
+
+
+def test_output_attempt_defaults_and_is_immutable():
+    attempt = OutputAttempt(results=())
+    assert (attempt.nucleus_reply, attempt.decision) == (None, None)
+    with pytest.raises(ValueError, match="frozen"):
+        attempt.decision = "accept"  # type: ignore[misc]
+
+
+def test_output_attempt_takes_only_a_decision_of_the_engine():
+    with pytest.raises(ValueError, match="decision"):
+        OutputAttempt(results=(), decision="sent")  # type: ignore[arg-type]
 
 
 def test_respond_rejects_whitespace_only_text():

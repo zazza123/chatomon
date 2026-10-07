@@ -81,7 +81,7 @@ async def test_block_with_guidance_asks_for_a_regeneration_then_accepts():
     assert second.kind == "accept"
     assert turn.final_reply == "Open 9-18."
     assert [ctx.attempt for ctx in judge.contexts] == [1, 2]
-    assert len(turn.output_results) == 2
+    assert len(turn.output_attempts) == 2
 
 
 @pytest.mark.parametrize(("max_retries", "regenerations"), [(0, 0), (1, 1), (2, 2)])
@@ -137,7 +137,7 @@ async def test_output_annotations_do_not_leak_between_attempts():
     assert first.kind == "regenerate"
     second = await engine.run_output(turn, reply="Open 9-18.", history=OUT_HISTORY)
     assert len(reader.contexts) == 1
-    assert turn.output_results[1][1].error_type == "MissingAnnotationsError"
+    assert turn.output_attempts[1].results[1].error_type == "MissingAnnotationsError"
     assert second.kind == "replace"
     assert second.text == DEFAULT_REFUSAL
 
@@ -191,7 +191,12 @@ async def test_finish_turn_reports_the_whole_turn():
     assert report.atom_name == "test-atom"
     assert report.final_action == "answered"
     assert [r.name for r in report.input] == ["i"]
-    assert [[r.action for r in attempt] for attempt in report.output] == [["block"], ["allow"]]
+    assert [[r.action for r in attempt.results] for attempt in report.output] == [
+        ["block"],
+        ["allow"],
+    ]
+    assert [attempt.decision for attempt in report.output] == ["regenerate", "accept"]
+    assert [attempt.nucleus_reply for attempt in report.output] == [None, None]
     assert report.user_message is None
     assert report.final_reply is None
     assert report.duration_ms >= 0
@@ -269,7 +274,8 @@ async def test_full_capture_applies_the_redactor_everywhere():
     report = await engine.finish_turn(turn)
     assert report.final_reply == "It is in [CITY]."
     assert report.input[0].guidance == "mention [CITY]"
-    assert report.output[0][0].error_message == "[CITY] timeout"
+    assert report.output[0].results[0].error_message == "[CITY] timeout"
+    assert report.output[0].nucleus_reply == "It is in [CITY]."
 
 
 async def test_default_capture_keeps_content_out_of_logs_spans_and_reports(caplog, spans):

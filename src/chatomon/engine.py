@@ -35,7 +35,9 @@ from chatomon.schemas import (
     Message,
     OrbitalContext,
     OrbitalResult,
+    OutputAttempt,
     OutputDecision,
+    OutputDecisionKind,
     Side,
     TurnReport,
     Verdict,
@@ -77,8 +79,8 @@ class TurnState:
     input_results: list[OrbitalResult] = field(default_factory=list)
     """Audit records of the input chain."""
 
-    output_results: list[list[OrbitalResult]] = field(default_factory=list)
-    """Audit records of the output chain, one list per attempt."""
+    output_attempts: list[OutputAttempt] = field(default_factory=list)
+    """Audit records of the output chain, one per reply it checked."""
 
     input_decision: InputDecision | None = None
     """The decision of the input chain, once it ran."""
@@ -144,6 +146,7 @@ class Engine:
             await engine.run_output(turn, reply="Refunds are handled by email: write to us.")
             report = await engine.finish_turn(turn)
             assert report.final_action == "guided_refusal"
+            assert [attempt.decision for attempt in report.output] == ["accept"]
 
 
         asyncio.run(main())
@@ -291,7 +294,9 @@ class Engine:
     ) -> OutputDecision:
         """Run the output chain on a final reply of the nucleus.
 
-        Call it on every final reply until the decision is not `regenerate`.
+        Call it on every final reply until the decision is not `regenerate`. Every
+        call is one attempt of the turn's report, with the reply recorded according
+        to `capture_content`.
 
         Args:
             turn: The turn whose input chain already ran.
@@ -317,10 +322,30 @@ class Engine:
         if turn.final_action is not None:
             raise RuntimeError("this turn already has its final reply")
         turn.attempt += 1
-        attempt = turn.attempt
         turn.annotations = dict(turn.input_annotations)
         results: list[OrbitalResult] = []
-        turn.output_results.append(results)
+        kind: OutputDecisionKind | None = None
+        try:
+            decision = await self._check_reply(turn, reply, history, results)
+            kind = decision.kind
+        finally:
+            # Also when the turn is cancelled while an orbital runs: the attempt is
+            # recorded with the results it has and no decision.
+            turn.output_attempts.append(
+                OutputAttempt(
+                    nucleus_reply=self._content.text(reply),
+                    results=tuple(results),
+                    decision=kind,
+                )
+            )
+        self._log_decision(turn, "output", decision.kind)
+        return decision
+
+    async def _check_reply(
+        self, turn: TurnState, reply: str, history: Sequence[Message], results: list[OrbitalResult]
+    ) -> OutputDecision:
+        attempt = turn.attempt
+        guided = turn.input_decision is not None and turn.input_decision.kind == "guided_refusal"
         decision: OutputDecision | None = None
         with self._tracer.start_as_current_span(
             "chatomon.output",
@@ -343,11 +368,8 @@ class Engine:
             if decision is None:
                 decision = OutputDecision(kind="accept")
                 turn.final_reply = reply
-                turn.final_action = (
-                    "guided_refusal" if turn.input_decision.kind == "guided_refusal" else "answered"
-                )
+                turn.final_action = "guided_refusal" if guided else "answered"
             span.set_attribute("chatomon.decision.kind", decision.kind)
-        self._log_decision(turn, "output", decision.kind)
         return decision
 
     def reopen_output(self, turn: TurnState) -> None:
@@ -445,7 +467,7 @@ class Engine:
             final_action=final_action,
             escalated=turn.escalated,
             input=tuple(turn.input_results),
-            output=tuple(tuple(attempt) for attempt in turn.output_results),
+            output=tuple(turn.output_attempts),
             user_message=content.text(turn.user_message),
             final_reply=content.text(turn.final_reply),
             error_type=type(error).__name__ if error is not None else None,
