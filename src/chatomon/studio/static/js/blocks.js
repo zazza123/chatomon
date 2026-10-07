@@ -16,7 +16,7 @@ const HELP = {
 // line break written inside its tag, and a block is sent back whole, so every value must
 // come back exactly as it arrived.
 const values = new Map();
-const settings = new Map();
+const drawn = new Map();
 let counter = 0;
 
 const modeOf = (value) => (value == null ? "" : typeof value === "string" ? "text" : value.type);
@@ -82,7 +82,7 @@ export function block(setting, value, pid, changed = false) {
   const modes = [...(setting.optional ? [""] : []), ...(setting.text ? ["text"] : []), ...setting.types.map((type) => type.type)];
   const mode = modes.includes(modeOf(value)) ? modeOf(value) : modes[0];
   const single = modes.length === 1;
-  settings.set(pid, setting);
+  drawn.set(pid, { setting, value });
   const pick = single ? "" : `<div class="field"><label for="${pid}-as">given as</label><select id="${pid}-as" data-blk="mode">${modes.map((m) => `<option value="${esc(m)}"${m === mode ? " selected" : ""}>${esc(modeLabel(m))}</option>`).join("")}</select></div>`;
   return `<fieldset class="block${changed ? " changed" : ""}" data-block="${esc(setting.key)}" data-pid="${pid}" data-only="${single ? esc(modes[0]) : ""}" aria-describedby="${pid}-err">
     <legend>${esc(setting.key)}${single ? ` · ${esc(modes[0])}` : ""}</legend>
@@ -98,10 +98,13 @@ function number(list) {
   $$(":scope > .item > [data-blk='remove']", list).forEach((button, i) => button.setAttribute("aria-label", `Remove entry ${i + 1} of ${name}`));
 }
 
-/** Give the blocks drawn under `root` their values, and remember what each one accepts. */
+/** Give the blocks drawn under `root` their values, and remember what each one accepts and holds. */
 export function hydrate(root) {
   for (const fs of $$("fieldset.block", root)) {
-    if (settings.has(fs.dataset.pid)) { fs._setting = settings.get(fs.dataset.pid); settings.delete(fs.dataset.pid); }
+    if (!drawn.has(fs.dataset.pid)) continue;
+    fs._setting = drawn.get(fs.dataset.pid).setting;
+    keep(fs, drawn.get(fs.dataset.pid).value);
+    drawn.delete(fs.dataset.pid);
   }
   for (const [id, value] of values) {
     const el = root.querySelector(`#${CSS.escape(id)}`);
@@ -134,6 +137,11 @@ function readFields(root, inEntry) {
   return fields;
 }
 
+/** Remember the value a block has on the server: choosing its form again shows it. */
+export function keep(fs, value) {
+  fs._value = value;
+}
+
 /** The JSON value of a block: none, one text, or a type with its fields. */
 export function read(fs) {
   const pick = $("[data-blk='mode']", fs);
@@ -161,7 +169,8 @@ export function handle(e) {
   if (!fs) return null;
   const kind = el.dataset.blk;
   if (kind === "mode" && e.type === "change") {
-    $("[data-blk-body]", fs).innerHTML = body(fs._setting, el.value, null, fs.dataset.pid);
+    // The form the block has comes back with its value; any other form starts empty.
+    $("[data-blk-body]", fs).innerHTML = body(fs._setting, el.value, fs._value, fs.dataset.pid);
     hydrate(fs);
     return fs;
   }

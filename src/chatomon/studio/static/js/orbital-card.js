@@ -1,6 +1,6 @@
 import { $, $$, esc, fmtMs, rich, shortFp } from "./util.js";
 import { addOrbital, patchOrbital, probeOrbital, resetOrbitals } from "./api.js";
-import { TRASH, block, breaksLine, handle, hydrate, mark, read as readBlock } from "./blocks.js";
+import { TRASH, block, breaksLine, handle, hydrate, keep, mark, read as readBlock } from "./blocks.js";
 import { closeDialog, kv, openDialog } from "./cards.js";
 
 const dlg = $("#dlg");
@@ -254,6 +254,7 @@ function settled(state) {
   for (const s of o.settings) {
     const marked = s.type === "block" ? $(`fieldset.block[data-block="${CSS.escape(s.key)}"]`, dlg) : $(`#${CSS.escape(fieldId(s.key))}`, dlg)?.closest(".field");
     marked?.classList.toggle("changed", s.changed);
+    if (marked && s.type === "block") keep(marked, s.value);
   }
 }
 

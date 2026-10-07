@@ -1492,6 +1492,30 @@ def test_a_block_of_a_card_is_applied_when_it_is_left_and_before_a_test(page: Pa
     expect(refusal).to_be_hidden()
 
 
+def test_choosing_again_the_form_a_block_has_shows_what_is_applied(page: Page, connected):
+    studio, service = connected
+    add_scope_guard(page, studio, service)
+    description = block_of(page, "description")
+    given_as = description.get_by_label("given as")
+    given_as.select_option("AIServiceDescriptionV2")
+    given_as.select_option("text")
+    expect(description.locator("[data-blk-text]")).to_have_value("A courier.")
+
+    given_as.select_option("AIServiceDescriptionV2")
+    description.get_by_label("identity_role").fill("Courier")
+    description.get_by_label("context").fill("Italy")
+    card(page).get_by_label("history_window").click()
+    expect(description.locator(":scope > .block-body > .block-state")).to_be_hidden()
+    # After a form the orbital would refuse, the way back is the form it has.
+    given_as.select_option("AIServiceDescription")
+    given_as.select_option("AIServiceDescriptionV2")
+    expect(description.get_by_label("identity_role")).to_have_value("Courier")
+    expect(description.get_by_label("context")).to_have_value("Italy")
+    # Another form starts empty: only what is applied comes back.
+    given_as.select_option("text")
+    expect(description.locator("[data-blk-text]")).to_have_value("")
+
+
 def test_every_orbital_that_calls_a_model_can_be_tested_from_its_card(page: Page, connected):
     studio, _ = connected
     open_studio(page, studio)
