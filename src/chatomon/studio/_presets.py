@@ -18,7 +18,7 @@ drops, instead of refusing, what no longer applies.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, NamedTuple
 
 from chatomon._version import __version__
 from chatomon.errors import ChatomonError
@@ -212,14 +212,29 @@ def _entry_applied(
     return result if raw["enabled"] else result.switched(side, name, False)
 
 
-def _connections(result: Chains, side: Side, raw: dict[str, Any]) -> list[str]:
-    """Say which environment variables an entry's blocks name, showing each block.
+class Notes(NamedTuple):
+    """What applying a preset has to say."""
 
-    A preset decides where the value of a variable is sent: the note shows the
-    block as Copy as code writes it, so the developer sees all of it.
+    connections: list[str]
+    """Where the preset makes an orbital connect, one sentence for each connection."""
+    warnings: list[str]
+    """What differs from the exported session."""
+
+
+_CHECK = "Check where it points before you send a message."
+
+
+def _connections(result: Chains, side: Side, raw: dict[str, Any]) -> list[str]:
+    """Say where an entry's blocks make its orbital connect, showing each block.
+
+    A preset decides where a key and the conversation are sent: the note shows the
+    block as Copy as code writes it, so the developer sees all of it. A block with
+    a field for an environment variable is a connection also when the field is
+    empty: a client can read a key from the environment on its own.
 
     Returns:
-        One sentence per variable; none for an entry that names no variable.
+        One sentence per variable named and one per block that leaves it out; none
+        for an entry whose blocks have no such field.
     """
     name = raw["name"]
     where, index = result.find(side, name)
@@ -230,16 +245,23 @@ def _connections(result: Chains, side: Side, raw: dict[str, Any]) -> list[str]:
         setting = kind.setting(key)
         if setting is None or setting.type != "block":
             continue
+        # A letter of another alphabet can make an address look like one the developer
+        # trusts: whatever is not ASCII is written as an escape.
         shown = codegen.written(setting, getattr(orb, key))
+        shown = shown.encode("ascii", "backslashreplace").decode("ascii")
         notes += [
-            f"{name!r} uses the environment variable {variable}: {shown}. "
-            "Check where it points before you send a message."
+            f"{name!r} uses the environment variable {variable}: {shown}. {_CHECK}"
             for variable in values.variables(setting, value)
         ]
+        if values.unnamed(setting, value):
+            notes.append(
+                f"{name!r} names no environment variable for its key: {shown}. Its client "
+                f"can still send a key it reads from the environment on its own. {_CHECK}"
+            )
     return notes
 
 
-def applied(text: str, chains: Chains, *, atom: str) -> tuple[Chains, list[str]]:
+def applied(text: str, chains: Chains, *, atom: str) -> tuple[Chains, Notes]:
     """Apply a preset to the atom's own chains.
 
     Args:
@@ -248,9 +270,9 @@ def applied(text: str, chains: Chains, *, atom: str) -> tuple[Chains, list[str]]
         atom: The loaded atom's name.
 
     Returns:
-        The new chains and the warnings: the environment variables the preset
-        names, orbitals from code the preset does not mention, and orbitals
-        that differ from the exported ones.
+        The new chains and the notes: where the preset makes an orbital connect,
+        and apart from it the warnings, which are the orbitals from code the preset
+        does not mention and those that differ from the exported ones.
 
     Raises:
         InvalidPresetError: With every problem found; nothing is applied.
@@ -293,9 +315,10 @@ def applied(text: str, chains: Chains, *, atom: str) -> tuple[Chains, list[str]]
             connected.append((side, raw))
     if problems:
         raise InvalidPresetError(problems)
-    warnings: list[str] = []
+    connections: list[str] = []
     for side, raw in connected:
-        warnings += _connections(result, side, raw)
+        connections += _connections(result, side, raw)
+    warnings: list[str] = []
     for side in SIDES:
         missing = [e.orbital.name for e in result.work[side] if e.orbital.name not in wanted[side]]
         for position, name in enumerate([*wanted[side], *missing]):
@@ -313,7 +336,7 @@ def applied(text: str, chains: Chains, *, atom: str) -> tuple[Chains, list[str]]
         f"{name!r} differs from the exported preset: your code or chatomon changed since."
         for name in differing
     ]
-    return result, warnings
+    return result, Notes(connections, warnings)
 
 
 _LOST = "what the studio changed on it was dropped."

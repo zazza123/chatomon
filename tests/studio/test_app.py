@@ -419,7 +419,7 @@ def test_importing_a_preset(tunable):
     response = tunable.post("/api/preset", json={"text": text}, headers=ORIGIN)
     assert response.status_code == 200
     body = response.json()
-    assert body["warnings"] == []
+    assert (body["connections"], body["warnings"]) == ([], [])
     assert [change["text"] for change in body["state"]["changes"]] == ["scope turned off"]
     assert body["state"]["undo"] == "Preset imported"
 

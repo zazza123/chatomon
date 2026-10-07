@@ -467,6 +467,20 @@ def variables(setting: Setting, value: Any) -> list[str]:
     return names
 
 
+def unnamed(setting: Setting, value: Any) -> bool:
+    """Return whether a block's JSON has a field for an environment variable left empty."""
+    found = named(setting, value)
+    if found is None:
+        return False
+    for field in found.fields:
+        got = _fields_of(value).get(field.key)
+        if field.type == "env" and not got:
+            return True
+        if field.type == "items" and isinstance(got, list) and any(unnamed(field, e) for e in got):
+            return True
+    return False
+
+
 def _accepted(setting: Setting) -> str:
     """Say what a block or a list of entries accepts, for a message.
 

@@ -148,9 +148,13 @@ A preset that can be applied but does not reproduce the exported session is appl
 
 - **An orbital differs from the exported one.** Its fingerprint is not the one in the file: your code, or chatomon, changed since the export. The preset's own settings were applied.
 - **An orbital of your code is not in the preset.** It was added to the code after the export. It is placed at the end of its chain and left on: a guardrail in your code stays active until you turn it off.
-- **The preset names an environment variable.** The note shows the whole connection, as Copy as code would write it: `'scope_guard' uses the environment variable SCOPE_KEY: guard=ApiBackend(api_url="https://…", api_key_env="SCOPE_KEY"). Check where it points before you send a message.`
 
-A preset decides where the value of a variable is sent: a file that names `SCOPE_KEY` and an address makes the studio send that key to that address at the first turn. Apply only presets you trust, as you would run only code you trust, and read the note when a preset comes from someone else.
+A preset that sets where an orbital connects is applied with a note for each connection, listed apart from the others. The note shows the whole connection, as Copy as code would write it; a letter that is not ASCII is written as an escape, so an address cannot be made to look like another.
+
+- **The connection names an environment variable.** `'scope_guard' uses the environment variable SCOPE_KEY: guard=ApiBackend(api_url="https://…", api_key_env="SCOPE_KEY"). Check where it points before you send a message.`
+- **The connection names no variable.** `'scope_guard' names no environment variable for its key: guard=ApiBackend(api_url="https://…"). Its client can still send a key it reads from the environment on its own. Check where it points before you send a message.` The client of the `orbitals` library does so: it sends `PRINCIPLED_API_KEY` when that variable is set.
+
+A preset decides where a key and the conversation are sent. A file that gives an address makes the studio send there, at the first turn, the messages the orbital reads and the key of the variable it names, or `PRINCIPLED_API_KEY` when it names none. Apply only presets you trust, as you would run only code you trust, and read these notes when a preset comes from someone else: in the page they are in the card that follows the import, and at a start with `--preset` they are printed in the terminal before the link.
 
 ### Starting with a Preset
 

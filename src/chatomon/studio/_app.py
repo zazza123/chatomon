@@ -263,10 +263,12 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
         if not isinstance(text, str):
             return _error(422, "InvalidBody", 'send {"text": "<the preset>"}')
         try:
-            warnings = session.import_preset(text)
+            noted = session.import_preset(text)
         except ChatomonError as exc:
             return _refusal(exc)
-        return JSONResponse({"state": state(), "warnings": warnings})
+        return JSONResponse(
+            {"state": state(), "connections": noted.connections, "warnings": noted.warnings}
+        )
 
     async def post_reload(request: Request) -> Response:
         try:

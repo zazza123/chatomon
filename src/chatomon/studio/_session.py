@@ -278,7 +278,8 @@ class Session:
         self._undo: tuple[Chains, str] | None = None
         self._agent: Any = self._build(atom, self.chains)
         if preset is not None:
-            self.notes = [*self.notes, *self.import_preset(preset)]
+            noted = self.import_preset(preset)
+            self.notes = [*self.notes, *noted.connections, *noted.warnings]
             # The session starts here: there is no earlier state of it to go back to.
             self._undo = None
 
@@ -485,26 +486,27 @@ class Session:
         """Return the session's orbital changes as a preset."""
         return presets.exported(self.chains, atom=self.atom.name)
 
-    def import_preset(self, text: str) -> list[str]:
+    def import_preset(self, text: str) -> presets.Notes:
         """Replace the session's orbital changes with a preset's; it can be undone.
 
         Args:
             text: The preset, as JSON text.
 
         Returns:
-            The warnings: what differs from the exported session.
+            Where the preset makes an orbital connect, and the warnings: what
+            differs from the exported session.
 
         Raises:
             StudioBusyError: While a turn runs.
             InvalidPresetError: With every problem; nothing changes.
         """  # noqa: DOC502 - raised by the helpers
         self._require_idle()
-        candidate, warnings = presets.applied(text, self.chains, atom=self.atom.name)
+        candidate, noted = presets.applied(text, self.chains, atom=self.atom.name)
         try:
             self._adopt(candidate, undo="Preset imported")
         except ChatomonConfigError as exc:
             raise presets.InvalidPresetError([str(exc)]) from exc
-        return warnings
+        return noted
 
     def signature(self, *, code: bool = False) -> tuple[tuple[str, str, str, bool], ...]:
         """Return what identifies the session's orbitals now.

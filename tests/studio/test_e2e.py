@@ -1516,6 +1516,39 @@ def test_choosing_again_the_form_a_block_has_shows_what_is_applied(page: Page, c
     expect(description.locator("[data-blk-text]")).to_have_value("")
 
 
+def test_a_preset_says_where_an_orbital_connects_apart_from_what_differs(page: Page, connected):
+    studio, service = connected
+    open_studio(page, studio)
+    preset = page.request.get(f"{studio.url}/api/preset").json()
+    preset["input_orbitals"][0]["fingerprint"] = "sha256:another"
+    preset["input_orbitals"].append(
+        {
+            "name": "hosted",
+            "kind": "ScopeGuardOrbital",
+            "from": "studio",
+            "enabled": True,
+            "settings": {
+                "guard": {"type": "ApiBackend", "fields": {"api_url": service.url}},
+                "description": "A courier.",
+            },
+            "fingerprint": "sha256:x",
+        }
+    )
+    page.get_by_role("button", name="Import preset").click()
+    card(page).get_by_label("Preset JSON").fill(json.dumps(preset))
+    card(page).get_by_role("button", name="Apply preset").click()
+    expect(card(page)).to_contain_text("Preset applied")
+    connections = card(page).locator("#preset-connections")
+    expect(connections).to_contain_text("This preset decides where an orbital connects:")
+    expect(connections.locator("li")).to_have_text(
+        [re.compile(r"^'hosted' names no environment variable for its key: guard=ApiBackend\(")]
+    )
+    differences = card(page).locator("#preset-warnings")
+    expect(differences).to_contain_text("The session is not exactly the one that was exported:")
+    expect(differences.locator("li")).to_have_count(2)
+    assert service.requests == []
+
+
 def test_every_orbital_that_calls_a_model_can_be_tested_from_its_card(page: Page, connected):
     studio, _ = connected
     open_studio(page, studio)

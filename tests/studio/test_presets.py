@@ -100,7 +100,7 @@ def test_exporting_and_importing_restores_the_session(change: Callable[[Session]
     change(first)
     text = json.dumps(first.export_preset())
     second = make_session()
-    assert second.import_preset(text) == []
+    assert second.import_preset(text) == ([], [])
     assert snapshot(second) == snapshot(first)
 
 
@@ -365,7 +365,7 @@ def test_a_preset_from_other_code_is_applied_with_notes():
     old.switch("input", "scope", False)
     text = json.dumps(old.export_preset())
     new = make_session(context="Open 9-17.", extra=[ScriptedOrbital(name="new_guard")])
-    assert new.import_preset(text) == [
+    assert new.import_preset(text).warnings == [
         "'new_guard' is in your code but not in the preset: it was added at the end, turned on.",
         "'faithfulness' differs from the exported preset: your code or chatomon changed since.",
     ]
@@ -407,7 +407,7 @@ def test_an_instance_in_both_chains_takes_one_set_of_settings():
     assert preset["input_orbitals"][0]["settings"] == {"max_words": 80}
     assert preset["output_orbitals"][0]["settings"] == {"max_words": 80}
     second = shared_session()
-    assert second.import_preset(json.dumps(preset)) == []
+    assert second.import_preset(json.dumps(preset)) == ([], [])
     assert snapshot(second) == snapshot(first)
     preset["output_orbitals"][0]["settings"] = {"max_words": 90}
     with pytest.raises(InvalidPresetError) as caught:
@@ -873,6 +873,11 @@ NOTE = (
     'guard=ApiBackend(api_url="https://scope.example", api_key_env="SCOPE_KEY"). '
     "Check where it points before you send a message."
 )
+UNNAMED = (
+    "'claim_extractor' names no environment variable for its key: "
+    'extractor=ApiBackend(api_url="https://claims.example"). Its client can still send a key it '
+    "reads from the environment on its own. Check where it points before you send a message."
+)
 
 
 @pytest.fixture
@@ -917,11 +922,12 @@ def test_exporting_and_importing_restores_a_session_with_blocks(key):
     text = json.dumps(exported)
     assert KEY not in text
     second = service_session()
-    assert second.import_preset(text) == [NOTE]
+    # Where each orbital connects is said apart from what differs from the exported session.
+    assert second.import_preset(text) == ([NOTE, UNNAMED], [])
     assert snapshot(second) == snapshot(first)
     started = service_session(preset=text)
     assert snapshot(started) == snapshot(first)
-    assert started.notes == [NOTE]
+    assert started.notes == [NOTE, UNNAMED]
 
 
 def test_a_preset_writes_a_block_whole_with_the_fields_that_differ_from_the_default(key):
@@ -1038,11 +1044,39 @@ def test_a_class_whose_module_lacks_its_extra_is_a_problem_that_names_the_extra(
     ) in caught.value.problems
 
 
-def test_a_preset_that_names_no_variable_gives_no_note(key):
+def test_a_connection_that_names_no_variable_is_noted_too(key):
+    # Without a name the client reads a key from the environment on its own, as the
+    # library's does with PRINCIPLED_API_KEY: the address a preset sets is always said.
     session = service_session()
     plain = {"type": "ApiBackend", "fields": {"api_url": "https://scope.example"}}
-    warnings = session.import_preset(added(guard=plain))
-    assert not any("environment variable" in warning for warning in warnings)
+    assert session.import_preset(added(guard=plain)).connections == [
+        "'hosted' names no environment variable for its key: "
+        'guard=ApiBackend(api_url="https://scope.example"). Its client can still send a key it '
+        "reads from the environment on its own. Check where it points before you send a message."
+    ]
+
+
+def test_a_block_that_is_not_a_connection_gives_no_note(key):
+    session = service_session()
+    preset = session.export_preset()
+    preset["input_orbitals"][0]["settings"] = {"description": "A courier."}
+    notes = session.import_preset(json.dumps(preset))
+    assert notes.connections == []
+    assert notes.warnings == [
+        "'scope' differs from the exported preset: your code or chatomon changed since."
+    ]
+
+
+def test_a_connection_note_writes_letters_that_are_not_ascii_as_escapes(key):
+    # An address with a letter of another alphabet can look like one the developer trusts.
+    session = service_session()
+    lookalike = {
+        "type": "ApiBackend",
+        "fields": {"api_url": "https://sc\u043epe.example", "api_key_env": "SCOPE_KEY"},
+    }
+    (note,) = session.import_preset(added(guard=lookalike)).connections
+    assert 'api_url="https://sc\\u043epe.example"' in note
+    assert note.isascii()
 
 
 def test_blocks_are_carried_over_code_that_was_loaded_again(key):
