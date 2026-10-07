@@ -189,6 +189,79 @@ def test_enter_while_a_turn_runs_keeps_what_was_typed(page: Page, studio: Studio
     expect(page.locator("article.turn")).to_have_count(1)
 
 
+@orbital(name="hours")
+def hours(ctx: OrbitalContext) -> Verdict:
+    """Reject a reply that promises the shop never closes."""
+    if "24/7" in ctx.message:
+        return Verdict.block(guidance="Fix the opening hours.")
+    return Verdict.allow()
+
+
+@pytest.fixture
+def judged() -> Iterator[Studio]:
+    """An atom whose first reply of every turn is rejected; "boom" fails the second one."""
+    calls: dict[str, int] = {}
+
+    async def draft(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        prompt = "".join(
+            part.content
+            for part in messages[-1].parts
+            if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+        )
+        calls[prompt] = calls.get(prompt, 0) + 1
+        if calls[prompt] == 1:
+            return ModelResponse(parts=[TextPart(content="We are open 24/7.")])
+        if "boom" in prompt:
+            raise RuntimeError("model down")
+        return ModelResponse(parts=[TextPart(content=REPLY)])
+
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(FunctionModel(draft)),
+        output_orbitals=[hours],
+    )
+    with running(atom) as handle:
+        yield handle
+
+
+def attempt_labels(page: Page):
+    return page.locator("dialog[open] .attempt-head .pill")
+
+
+def test_the_report_labels_each_attempt_with_what_was_decided(page: Page, judged: Studio):
+    open_studio(page, judged)
+    send(page, "Are you open?", REPLY)
+    open_report(page, 1)
+    expect(attempt_labels(page)).to_have_text(["rejected", "accepted"])
+    expect(attempt_labels(page).nth(0)).to_have_class(re.compile(r"\bact-block\b"))
+    expect(attempt_labels(page).nth(1)).to_have_class(re.compile(r"\bact-allow\b"))
+    page.locator("dialog[open]").get_by_role("button", name="Close").last.click()
+
+    # The nucleus fails while it writes again: the one reply it wrote was rejected, not replaced.
+    send(page, "boom", "The turn failed: RuntimeError: model down")
+    open_report(page, 2)
+    expect(attempt_labels(page)).to_have_text(["rejected"])
+
+
+def test_an_attempt_without_a_decision_is_labelled_interrupted(page: Page, judged: Studio):
+    def interrupted(route) -> None:
+        response = route.fetch()
+        state = response.json()
+        for turn in state["turns"]:
+            turn["report"]["output"][-1]["decision"] = None
+        route.fulfill(response=response, json=state)
+
+    open_studio(page, judged)
+    send(page, "Are you open?", REPLY)
+    # A turn cancelled while an output orbital runs leaves its last attempt with no decision.
+    page.route("**/api/state", interrupted)
+    page.reload()
+    open_report(page, 1)
+    expect(attempt_labels(page)).to_have_text(["rejected", "interrupted"])
+    expect(attempt_labels(page).nth(1)).to_have_class(re.compile(r"\bact-block\b"))
+
+
 def test_a_failed_turn_says_the_nucleus_failed(page: Page, studio: Studio):
     open_studio(page, studio)
     message_box(page).fill("boom")
