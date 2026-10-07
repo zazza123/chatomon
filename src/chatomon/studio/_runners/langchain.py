@@ -9,7 +9,7 @@ from langchain_core.messages import HumanMessage
 
 from chatomon.connectors.base import Connector
 from chatomon.studio._runners import InterruptedTurnError, RunOutcome
-from chatomon.studio._testgen import Call, Framework, Offline
+from chatomon.studio._testgen import Call, Framework, StandIn
 
 _INTERRUPTED = (
     "the agent stopped to wait for an answer, which the studio cannot give: "
@@ -142,7 +142,7 @@ def saved_test(connector: Connector[Any]) -> Framework:
         reply='result["messages"][-1].content',
         marker='@pytest.mark.asyncio(loop_scope="session")',
         notes=(_ASYNC,),
-        offline=Offline(
+        offline=StandIn(
             label="a chat model of its own, `OfflineNucleus`,",
             imports=(
                 "from langchain_core.language_models.fake_chat_models import FakeListChatModel",

@@ -9,7 +9,7 @@ from agent_framework import AgentSession, HistoryProvider, InMemoryHistoryProvid
 from chatomon.connectors.base import Connector
 from chatomon.connectors.maf import MAFFoundryConnector
 from chatomon.studio._runners import InterruptedTurnError, RunOutcome
-from chatomon.studio._testgen import Call, Framework, Offline
+from chatomon.studio._testgen import Call, Framework, StandIn
 
 _INTERRUPTED = (
     "the agent stopped to wait for an approval, which the studio cannot give: "
@@ -129,7 +129,7 @@ def saved_test(connector: Connector[Any]) -> Framework:
         setup=("session = agent.create_session()",),
         marker='@pytest.mark.asyncio(loop_scope="session")',
         notes=(_ASYNC,),
-        offline=Offline(
+        offline=StandIn(
             label="a client of its own, `OfflineNucleus`,",
             imports=(
                 "from agent_framework import "

@@ -115,8 +115,8 @@ class Call:
 
 
 @dataclass(frozen=True)
-class Offline:
-    """What puts a stand-in in place of the nucleus in a test that calls no model."""
+class StandIn:
+    """What puts a stand-in in place of the nucleus of a saved test."""
 
     label: str
     """How a note names the stand-in."""
@@ -146,7 +146,7 @@ class Framework:
     """The call of a turn after another, which carries the conversation."""
     reply: str
     """The expression of the reply the user received."""
-    offline: Offline
+    offline: StandIn
     """What stands in for the nucleus when no model is needed."""
     imports: tuple[str, ...] = ()
     """The import lines every test needs."""

@@ -1238,7 +1238,7 @@ def test_the_names_of_a_frameworks_lines_leave_out_strings_and_comments():
         first=testgen.Call(),
         later=testgen.Call(),
         reply="result.output",
-        offline=testgen.Offline(
+        offline=testgen.StandIn(
             label="a stand-in", before_build=("configure('single quoted words', mode=fast)",)
         ),
         setup=("greeting = prefix  # a comment with words",),

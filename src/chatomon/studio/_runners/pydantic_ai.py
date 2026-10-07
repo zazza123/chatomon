@@ -6,7 +6,7 @@ from typing import Any
 
 from chatomon.connectors.base import Connector
 from chatomon.studio._runners import RunOutcome
-from chatomon.studio._testgen import Call, Framework, Offline
+from chatomon.studio._testgen import Call, Framework, StandIn
 
 
 async def run_turn(agent: Any, message: str, conversation: Any) -> RunOutcome:
@@ -76,7 +76,7 @@ def saved_test(connector: Connector[Any]) -> Framework:
         first=Call(),
         later=Call(arguments=("message_history=result.all_messages()",)),
         reply="result.output",
-        offline=Offline(
+        offline=StandIn(
             label="PydanticAI's `TestModel`",
             imports=("from pydantic_ai.models.test import TestModel",),
             # No tool is called: by default the test model calls every tool the atom has.
