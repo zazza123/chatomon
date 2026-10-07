@@ -108,6 +108,15 @@ async def test_the_report_of_a_turn_has_one_record_for_each_attempt_of_the_nucle
     assert session.state()["turns"][0]["report"]["output"] == attempts
 
 
+async def test_the_studio_has_what_the_nucleus_wrote_whatever_the_atom_captures():
+    atom = make_atom(capture_content="none", redactor=lambda text: "[hidden]")
+    session = Session(atom, source="app:atom")
+    events = await drain(session.start_turn("hello"))
+    attempts = events[-1]["turn"]["report"]["output"]
+    # A saved test repeats these replies: the studio's copy records them in full, as written.
+    assert [attempt["nucleus_reply"] for attempt in attempts] == ["Hi"]
+
+
 async def test_history_carries_across_turns_and_keeps_the_placeholder():
     guard = ScriptedOrbital(Verdict.block("No."), Verdict.allow(), name="guard")
     session = Session(make_atom(input_orbitals=[guard]), source="app:atom")

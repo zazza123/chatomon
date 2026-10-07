@@ -41,6 +41,15 @@ _OFFLINE_NUCLEUS = (
     "    def bind_tools(self, tools, **kwargs):",
     "        return self",
 )
+# LangChain's fake chat model over a list starts again from its first reply when they are
+# over; this one reads an iterator and ends with it.
+_SCRIPTED_NUCLEUS = (
+    "class ScriptedNucleus(GenericFakeChatModel):",
+    '    """Stands in for the nucleus: it repeats its replies, with no model and no tool."""',
+    "",
+    "    def bind_tools(self, tools, **kwargs):",
+    "        return self",
+)
 
 
 def _set(connector: Connector[Any], key: str) -> bool:
@@ -127,7 +136,8 @@ def saved_test(connector: Connector[Any]) -> Framework:
 
     Returns:
         The awaited call that runs a turn around the conversation's messages, the
-        reply, and the chat model the test defines to stand in for the nucleus offline.
+        reply, and the chat models the test defines to stand in for the nucleus:
+        one offline, one that repeats its replies.
     """
     thread = (_THREAD,) if _set(connector, "checkpointer") else ()
     middleware = getattr(connector, "agent_kwargs", {}).get("middleware")
@@ -142,6 +152,17 @@ def saved_test(connector: Connector[Any]) -> Framework:
         reply='result["messages"][-1].content',
         marker='@pytest.mark.asyncio(loop_scope="session")',
         notes=(_ASYNC,),
+        scripted=StandIn(
+            imports=(
+                "from langchain_core.language_models.fake_chat_models import GenericFakeChatModel",
+            ),
+            definitions=_SCRIPTED_NUCLEUS,
+            before_build=(
+                "nucleus = ScriptedNucleus(messages=nucleus_replies())",
+                'monkeypatch.setattr(atom.connector, "model", nucleus)',
+            ),
+            notes=(_MIDDLEWARE,) if middleware else (),
+        ),
         offline=StandIn(
             label="a chat model of its own, `OfflineNucleus`,",
             imports=(
