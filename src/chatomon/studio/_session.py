@@ -6,8 +6,10 @@ import asyncio
 import contextlib
 import json
 import os
+import socket
 import sys
 import threading
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,14 +22,15 @@ from pydantic_core import to_json
 from chatomon._version import __version__
 from chatomon.atom import Atom
 from chatomon.errors import ChatomonConfigError, ChatomonError
-from chatomon.schemas import Side, TurnReport
+from chatomon.orbitals.base import Orbital
+from chatomon.schemas import OrbitalContext, Side, TurnReport
 from chatomon.studio import _codegen as codegen
 from chatomon.studio import _files as files
 from chatomon.studio import _kinds as kinds
 from chatomon.studio import _loading as loading
 from chatomon.studio import _presets as presets
 from chatomon.studio import _testgen as testgen
-from chatomon.studio._chains import SIDES, Chains, Entry, RefusedError
+from chatomon.studio._chains import SIDES, Chains, Entry, InvalidRequestError, RefusedError
 from chatomon.studio._events import Event, EventProcessor
 from chatomon.studio._runners import Runner, runner_for
 
@@ -90,9 +93,78 @@ def _in_thread(function: Callable[[], _T]) -> asyncio.Future[_T]:
     return future
 
 
+def _elapsed(started: float) -> float:
+    return round((time.perf_counter() - started) * 1000, 1)
+
+
 def _notes(runner: Runner, atom: Atom[Any]) -> list[str]:
     """Return what the developer should know at start: about the atom, then about the library."""
     return [*runner.notes(atom.connector), *kinds.import_notes()]
+
+
+SAMPLE = "Hello"
+"""The message a test of an orbital sends. The server writes it: the page sends no text."""
+
+_HINTS = {
+    401: " It did not accept the credentials.",
+    403: " It did not accept the credentials.",
+    404: " Check the address.",
+}
+
+
+@dataclass(frozen=True)
+class Probe:
+    """How one check of an orbital on a sample message went."""
+
+    outcome: str
+    """`answered`, `timeout`, `http`, `unreachable` or `failed`."""
+    message: str
+    duration_ms: float
+    action: str | None = None
+    reason: str | None = None
+    status: int | None = None
+
+    def to_json(self) -> dict[str, Any]:
+        """Return the outcome as the page receives it."""
+        data: dict[str, Any] = {
+            "outcome": self.outcome,
+            "message": self.message,
+            "duration_ms": self.duration_ms,
+        }
+        if self.outcome == "answered":
+            data.update(action=self.action, reason=self.reason)
+        if self.status is not None:
+            data["status"] = self.status
+        return data
+
+
+def _failure(exc: BaseException, timeout: float) -> tuple[str, str, int | None]:
+    """Say how a check failed, from the kind of exception and never from its text.
+
+    A client's error can quote the request it made, and so a key: the sentence is
+    the studio's own. Exceptions are told apart by Python's base classes and by
+    the attributes HTTP clients share, so no client is imported here.
+
+    Returns:
+        The outcome, its sentence and the HTTP status when there is one.
+    """
+    if isinstance(exc, TimeoutError):
+        wait = f"No answer within {timeout:g} s. A service that is starting can take longer."
+        return "timeout", wait, None
+    if isinstance(exc, ChatomonError):
+        return "failed", f"The check failed with {type(exc).__name__}: {exc}.", None
+    for held in (getattr(exc, "status", None), getattr(exc, "status_code", None)):
+        if isinstance(held, int) and not isinstance(held, bool) and 100 <= held <= 599:
+            return "http", f"The service answered {held}.{_HINTS.get(held, '')}", held
+    links = (exc, exc.__cause__, exc.__context__, getattr(exc, "os_error", None))
+    errors = [link for link in links if isinstance(link, OSError)]
+    if any(isinstance(error, ConnectionRefusedError) for error in errors):
+        return "unreachable", "The connection was refused.", None
+    if any(isinstance(error, socket.gaierror) for error in errors):
+        return "unreachable", "The address was not found.", None
+    if errors:
+        return "unreachable", "Could not connect.", None
+    return "failed", f"The check failed with {type(exc).__name__}.", None
 
 
 class StudioBusyError(ChatomonError):
@@ -198,6 +270,7 @@ class Session:
         self.notes: list[str] = _notes(runner, atom)
         self._task: asyncio.Task[None] | None = None
         self._reload: asyncio.Task[Reloaded] | None = None
+        self._probing = False
         self.reloads = 0
         self._running: TurnRecord | None = None
         self._report: TurnReport | None = None
@@ -321,6 +394,82 @@ class Session:
         if self._undo is None:
             raise RefusedError("nothing to undo")
         self._adopt(self._undo[0])
+
+    async def probe(
+        self,
+        side: str,
+        *,
+        name: str | None = None,
+        kind: str | None = None,
+        settings: Mapping[str, Any] | None = None,
+    ) -> Probe:
+        """Run one check of an orbital on a sample message, and keep nothing of it.
+
+        The orbital is one of the session, named by `name`, or one that is not
+        added yet, built from `kind` and `settings` as an addition would build
+        it. The check is not a turn: it does not go through the engine, and it
+        leaves the chains, the conversation and the turns as they were.
+
+        Args:
+            side: `"input"` or `"output"`.
+            name: The name of an orbital of the session.
+            kind: The class name of an orbital to build for the test.
+            settings: Its settings, when `kind` is given.
+
+        Returns:
+            How the check went: an answer, or why there was none.
+
+        Raises:
+            StudioBusyError: While another test runs.
+            UnknownOrbitalError: If the session has no orbital with that name.
+            InvalidRequestError: If the side does not exist, or neither or both of
+                `name` and `kind` are given.
+            InvalidSettingError: If the orbital to build is refused, as when the
+                environment variable it names is not set.
+            RefusedError: If the class cannot be added, the orbital calls no model,
+                or it reads the annotations of other orbitals.
+        """  # noqa: DOC502 - raised by the helpers
+        if self._probing:
+            raise StudioBusyError("a test is running; wait for it to finish")
+        orb = self._probed(side, name, kind, settings)
+        if not orb.calls_model:
+            raise RefusedError(f"{orb.name!r} calls no model: there is nothing to test")
+        if orb.reads:
+            read = " and ".join(repr(other) for other in orb.reads)
+            raise RefusedError(
+                f"{orb.name!r} reads the annotations of {read}: it can be tried only in a turn"
+            )
+        self._probing = True
+        started = time.perf_counter()
+        try:
+            # As Atom.build() does: a judge reaches its model through the atom's connector.
+            orb.bind(self.atom.connector)
+            ctx = OrbitalContext(side=self.chains.find_side(side), message=SAMPLE, turn_id="probe")
+            verdict = await asyncio.wait_for(orb.check(ctx), timeout=orb.timeout)
+        except Exception as exc:
+            outcome, message, status = _failure(exc, orb.timeout)
+            return Probe(outcome, message, _elapsed(started), status=status)
+        finally:
+            self._probing = False
+        return Probe(
+            "answered",
+            "The orbital answered.",
+            _elapsed(started),
+            action=verdict.action,
+            reason=verdict.reason,
+        )
+
+    def _probed(
+        self, side: str, name: str | None, kind: str | None, settings: Mapping[str, Any] | None
+    ) -> Orbital:
+        if (name is None) == (kind is None):
+            raise InvalidRequestError("name the orbital to test, or the class to build for it")
+        if name is not None:
+            where, index = self.chains.find(side, name)
+            return self.chains.work[where][index].orbital
+        # Built as an addition would build it, on chains that are never adopted.
+        candidate = self.chains.added(side, kind or "", settings or {})
+        return candidate.work[self.chains.find_side(side)][-1].orbital
 
     def code(self) -> dict[str, Any]:
         """Return Copy as code: the text, the changes, the placeholders and the notes."""

@@ -14,6 +14,7 @@ from chatomon.orbitals import MessageLengthOrbital
 from chatomon.studio._app import create_app
 from chatomon.studio._loading import load, namespace
 from chatomon.studio._session import Session, StudioBusyError
+from tests.fake_service import closed_url
 from tests.fakes import ScriptedOrbital
 
 TOKEN = "t0ken"
@@ -866,3 +867,149 @@ def test_changes_of_the_studio_that_no_longer_build_have_no_traceback(reloadable
     message = response.json()["error"]["message"]
     assert message.startswith("the reloaded atom does not build with the studio's changes: ")
     assert capsys.readouterr().err == f"chatomon studio: reload failed: {message}\n"
+
+
+# --- Test connection ----------------------------------------------------------
+
+KEY = "key-0123456789-not-for-the-page"
+
+
+def probe(client, *, side="input", headers=ORIGIN, **body):
+    return client.post("/api/orbitals/probe", json={"side": side, **body}, headers=headers)
+
+
+def scope_guard(url: str, variable: str = "SCOPE_KEY", **settings):
+    backend = {"type": "ApiBackend", "fields": {"api_url": url, "api_key_env": variable}}
+    return {"guard": backend, "description": "A courier.", **settings}
+
+
+def test_testing_an_orbital_answers_how_the_check_went(tunable, service, monkeypatch):
+    monkeypatch.setenv("SCOPE_KEY", KEY)
+    service.key = KEY
+    before = tunable.get("/api/state").json()
+    new = probe(tunable, kind="ScopeGuardOrbital", settings=scope_guard(service.url))
+    assert new.status_code == 200
+    assert new.headers["cache-control"] == "no-store"
+    body = new.json()
+    assert (body["outcome"], body["action"], body["reason"]) == (
+        "answered",
+        "allow",
+        "Directly Supported",
+    )
+    assert set(body) == {"outcome", "message", "duration_ms", "action", "reason"}
+    assert tunable.get("/api/state").json() == before
+
+    refused = probe(tunable, kind="ScopeGuardOrbital", settings=scope_guard(closed_url()))
+    assert (refused.status_code, refused.json()["outcome"], refused.json()["message"]) == (
+        200,
+        "unreachable",
+        "The connection was refused.",
+    )
+    service.key = "another-key"
+    denied = probe(tunable, kind="ScopeGuardOrbital", settings=scope_guard(service.url)).json()
+    assert (denied["outcome"], denied["status"]) == ("http", 401)
+
+    add(tunable, "ScopeGuardOrbital", scope_guard(service.url))
+    service.key = KEY
+    named = probe(tunable, name="scope_guard")
+    assert (named.status_code, named.json()["outcome"]) == (200, "answered")
+
+
+def test_what_the_test_route_refuses(tunable, service, monkeypatch):
+    monkeypatch.delenv("SCOPE_KEY", raising=False)
+    unset = probe(tunable, kind="ScopeGuardOrbital", settings=scope_guard(service.url))
+    assert (unset.status_code, unset.json()["error"]) == (
+        422,
+        {"type": "InvalidSetting", "message": "the environment variable SCOPE_KEY is not set"},
+    )
+    empty = probe(tunable, kind="ScopeGuardOrbital", settings={})
+    assert (empty.status_code, empty.json()["error"]["setting"]) == (422, "guard")
+    cases = [
+        (probe(tunable, name="message_length"), 409, "Refused"),
+        (probe(tunable, name="ghost"), 404, "UnknownOrbital"),
+        (probe(tunable, kind="NoSuchOrbital", settings={}), 409, "Refused"),
+        (probe(tunable, name="scope", side="sideways"), 422, "InvalidBody"),
+        (probe(tunable), 422, "InvalidBody"),
+        (probe(tunable, name="scope", kind="JudgeOrbital"), 422, "InvalidBody"),
+        (probe(tunable, name="scope", settings={}), 422, "InvalidBody"),
+        (probe(tunable, kind="JudgeOrbital", settings=[]), 422, "InvalidBody"),
+        (probe(tunable, name=3), 422, "InvalidBody"),
+        (tunable.post("/api/orbitals/probe", content=b"nope", headers=ORIGIN), 422, "InvalidBody"),
+    ]
+    for response, status, kind in cases:
+        assert (response.status_code, response.json()["error"]["type"]) == (status, kind)
+    assert service.requests == []
+
+
+def test_the_test_route_needs_the_studios_origin(tunable):
+    assert probe(tunable, name="scope", headers={}).status_code == 403
+    assert (
+        probe(tunable, name="scope", headers={"origin": "http://evil.example"}).status_code == 403
+    )
+
+
+def test_a_test_refused_while_another_runs_is_busy(tunable, monkeypatch):
+    async def busy(*args, **kwargs):
+        raise StudioBusyError("a test is running; wait for it to finish")
+
+    monkeypatch.setattr(Session, "probe", busy)
+    response = probe(tunable, name="scope")
+    assert (response.status_code, response.json()["error"]["type"]) == (409, "Busy")
+
+
+def test_the_key_appears_in_nothing_the_studio_sends_or_prints(
+    tunable, service, monkeypatch, capsys, caplog
+):
+    """One session through everything that touches a connection, with a key to look for."""
+    monkeypatch.setenv("SCOPE_KEY", KEY)
+    monkeypatch.setenv("WRONG_KEY", KEY + "-wrong")
+    service.key = KEY
+    seen: list[str] = []
+
+    def keep(response):
+        seen.append(response.text)
+        seen.append(json.dumps(dict(response.headers)))
+        return response
+
+    with caplog.at_level(logging.DEBUG):
+        keep(probe(tunable, kind="ScopeGuardOrbital", settings=scope_guard(service.url)))
+        keep(
+            probe(tunable, kind="ScopeGuardOrbital", settings=scope_guard(service.url, "WRONG_KEY"))
+        )
+        keep(probe(tunable, kind="ScopeGuardOrbital", settings=scope_guard(closed_url())))
+        keep(add(tunable, "ScopeGuardOrbital", scope_guard(service.url)))
+        keep(
+            add(
+                tunable,
+                "ScopeGuardOrbital",
+                {**scope_guard(service.url, "WRONG_KEY"), "name": "wrong"},
+            )
+        )
+        keep(add(tunable, "ScopeGuardOrbital", {**scope_guard(closed_url()), "name": "down"}))
+        for name in ("scope_guard", "wrong", "down"):
+            keep(probe(tunable, name=name))
+        # Three turns: two stopped by the guard the service refuses, one by the guard that
+        # cannot connect. A failed check is recorded with the text of its error.
+        keep(tunable.post("/api/turns", json={"message": "hello"}, headers=ORIGIN))
+        keep(patch(tunable, "scope_guard", enabled=False))
+        keep(tunable.post("/api/turns", json={"message": "hello"}, headers=ORIGIN))
+        keep(patch(tunable, "wrong", enabled=False))
+        keep(tunable.post("/api/turns", json={"message": "hello"}, headers=ORIGIN))
+        keep(tunable.get("/api/state"))
+        keep(tunable.get("/api/code"))
+        preset = keep(tunable.get("/api/preset"))
+        keep(tunable.post("/api/preset", json={"text": preset.text}, headers=ORIGIN))
+        for n in (1, 2, 3):
+            keep(tunable.get(f"/api/turns/{n}/test"))
+    state = tunable.get("/api/state").json()
+    errors = [
+        result["error_type"]
+        for turn in state["turns"]
+        for result in turn["report"]["input"]
+        if result["error_type"]
+    ]
+    assert errors == ["ClientResponseError", "ClientResponseError", "ClientConnectorError"]
+    printed = capsys.readouterr()
+    everything = "\n".join([*seen, printed.out, printed.err, caplog.text])
+    assert "SCOPE_KEY" in everything  # the name is what travels
+    assert KEY not in everything

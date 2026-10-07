@@ -141,14 +141,23 @@ class Chains:
         Raises:
             InvalidRequestError: If the side does not exist.
             UnknownOrbitalError: If there is no such orbital.
-        """
-        if side not in SIDES:
-            raise InvalidRequestError("side must be 'input' or 'output'")
-        where = cast("Side", side)
+        """  # noqa: DOC502 - InvalidRequestError is raised by find_side()
+        where = self.find_side(side)
         for index, entry in enumerate(self.work[where]):
             if entry.orbital.name == name:
                 return where, index
         raise UnknownOrbitalError(f"the atom has no {where} orbital named {name!r}")
+
+    @staticmethod
+    def find_side(side: str) -> Side:
+        """Return a side as the engine names it.
+
+        Raises:
+            InvalidRequestError: If the side does not exist.
+        """
+        if side not in SIDES:
+            raise InvalidRequestError("side must be 'input' or 'output'")
+        return cast("Side", side)
 
     def free_name(self, cls: type[Orbital]) -> str:
         """Return the first name a new orbital of that class can take."""
@@ -258,9 +267,7 @@ class Chains:
             RefusedError: If the class cannot be added, or not on that side.
             InvalidSettingError: If the name or a value is refused.
         """  # noqa: DOC502 - InvalidSettingError comes from the helpers
-        if side not in SIDES:
-            raise InvalidRequestError("side must be 'input' or 'output'")
-        where = cast("Side", side)
+        where = self.find_side(side)
         found = next((k for k in kinds.addable() if k.cls.__name__ == kind), None)
         if found is None:
             raise RefusedError(kinds.unknown(kind))
