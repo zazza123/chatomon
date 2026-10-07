@@ -56,7 +56,7 @@ scope_guard = ScopeGuardOrbital(
 )
 ```
 
-The alternative is `gcloud run services proxy`, which exposes the service on a local port with the caller's credentials; the orbital then points at the local address and needs no headers. It suits development only.
+The alternative is `gcloud run services proxy`, which exposes the service on a local port with the caller's credentials; the orbital then points at the local address and needs no headers, so an `ApiBackend` with that address is enough. It suits development only.
 
 ## Cold Starts and Timeouts
 
