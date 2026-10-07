@@ -29,7 +29,10 @@ def test_i_want_a_refund(monkeypatch: pytest.MonkeyPatch) -> None:
     assert report.final_action == "answered"
     assert [(r.name, r.action) for r in report.input if r.action != "allow"] == []
     assert [
-        (r.name, r.action) for a in report.output for r in a if r.action != "allow"
+        (r.name, r.action)
+        for attempt in report.output
+        for r in attempt.results
+        if r.action != "allow"
     ] == []
 
     # Turn 2: blocked

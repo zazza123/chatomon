@@ -73,21 +73,36 @@ agent = Atom(
 agent.run_sync("hello")
 assert audit_log[0]["final_action"] == "answered"
 assert audit_log[0]["user_message"].startswith("sha256:")
+attempt = audit_log[0]["output"][0]
+assert attempt["nucleus_reply"].startswith("sha256:")
+assert attempt["decision"] == "accept"
 ```
 
 | Field | Meaning |
 |-------|---------|
 | `final_action` | `answered`, `orbital_response`, `blocked`, `guided_refusal`, `fallback_refusal` or `aborted` |
 | `escalated` | Whether any orbital asked for a human |
-| `input`, `output` | One `OrbitalResult` per orbital (output: one list per attempt), with action, reason, fingerprint, timing, error type and error policy |
+| `input` | One `OrbitalResult` per input orbital, with action, reason, fingerprint, timing, error type and error policy |
+| `output` | One `OutputAttempt` per reply of the nucleus that the output chain checked: the reply (`nucleus_reply`), one `OrbitalResult` per output orbital (`results`) and what chatomon decided about the reply (`decision`) |
 | `error_type` | The exception type of an aborted turn |
-| `user_message`, `final_reply` and the content fields of each result | Only according to `capture_content` |
+| `user_message`, `final_reply`, the `nucleus_reply` of each attempt and the content fields of each result | Only according to `capture_content` |
+
+A turn has one attempt for every reply the nucleus wrote and the output chain checked, in order. A turn the input chain answered has none, and a step in which the nucleus calls a tool is not an attempt. Each attempt keeps what the nucleus wrote, also when that text never reached the user: `final_reply` is what the user received, and a reply that an orbital gave instead is in that orbital's result too.
+
+| `decision` | What chatomon did with the reply |
+|------------|----------------------------------|
+| `accept` | Took it as the reply of the turn |
+| `replace` | Sent another text instead: the reply of an orbital, or the atom's refusal |
+| `regenerate` | Asked the nucleus to write it again with the orbital's guidance; another attempt follows |
+| none | Nothing: the turn was aborted while the output chain was running |
+
+An accepted attempt is the last one unless the framework asks the model again afterwards, for example when its own validation of the output fails.
 
 The ready-made orbitals use fixed `reason` labels that contain no user text, so they are safe to record without content capture and an application can act on them — for example [the limit orbitals](orbitals/limits.md#decisions-and-audit) (`message_too_long`, `turn_limit`, ...), such as closing a chat when `turn_limit` appears. Your own orbitals choose their labels: keep user text out of them.
 
 ## Content Capture
 
-One setting, `Atom(capture_content=...)`, governs message content in logs, spans and reports: the user message, replies, guidance, annotations, judge explanations and exception messages.
+One setting, `Atom(capture_content=...)`, governs every piece of conversation content chatomon records: the user message, the reply of the nucleus at every attempt, the final reply, guidance, annotations, judge explanations and exception messages. Content is recorded in turn reports only. Log records and spans carry labels — names, actions, reasons, timings and error types — whatever the setting.
 
 | Value | Effect |
 |-------|--------|
@@ -109,7 +124,7 @@ These notes are orientation, not legal advice.
 
 - [Concepts](concepts.md) — the final actions of a turn
 - [Connectors](connectors/index.md) — span nesting per framework
-- [API Reference](reference/index.md) — `TurnReport`, `OrbitalResult` and `ContentPolicy`
+- [API Reference](reference/index.md) — `TurnReport`, `OutputAttempt`, `OrbitalResult` and `ContentPolicy`
 
 ---
 **Last Updated:** October 2026

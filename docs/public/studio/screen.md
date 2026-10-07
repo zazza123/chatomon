@@ -41,7 +41,7 @@ The conversation flows under the atom. Every turn is a block with your message, 
 
 A message with a dashed red outline was blocked: it is kept out of the conversation history, where the atom's placeholder replaces it. **Re-run** sends the same message again with the orbitals as they are now, which is how you compare a turn before and after a change. **New conversation** clears the history.
 
-The lens of a turn opens its report: every orbital with its action, reason, duration, guidance, annotations and fingerprint, then the attempts of the nucleus and the reply that was sent. It is the turn's `TurnReport`, described in [Observability and Audit](../observability.md). A turn keeps the names and fingerprints its orbitals had when it ran, so earlier turns still tell you which settings produced them.
+The lens of a turn opens its report: every orbital with its action, reason, duration, guidance, annotations and fingerprint, then the attempts of the nucleus and the reply that was sent. Each attempt says what chatomon decided about that reply: **accepted**, **replaced** by another text, or **rejected** when the nucleus was asked to write it again; an attempt the turn was aborted in is **interrupted**. It is the turn's `TurnReport`, described in [Observability and Audit](../observability.md). A turn keeps the names and fingerprints its orbitals had when it ran, so earlier turns still tell you which settings produced them.
 
 The report also says how many changes the session had against your code when the turn ran. **Save as test** turns the turn into a pytest file: see [Saving a Turn as a Test](testing.md).
 
