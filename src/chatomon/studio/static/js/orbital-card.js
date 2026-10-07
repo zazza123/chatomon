@@ -105,9 +105,9 @@ async function probe(request) {
 // In an orbital's card a block is applied whole when the focus leaves it. A press inside it
 // that takes the focus nowhere, as on its padding, is not leaving it. These two are listeners
 // and not properties of the card's body: `focusout` has no property to assign a handler to.
-dlg.addEventListener("pointerdown", (e) => { pressedBlock = e.target.closest(".block"); });
+dlg.addEventListener("pointerdown", (e) => { pressedBlock = e.target.closest("fieldset.block"); });
 dlg.addEventListener("focusout", (e) => {
-  const fs = e.target.closest(".block");
+  const fs = e.target.closest("fieldset.block");
   if (!fs || !fs.classList.contains("dirty") || !$("#card-switch", dlg)) return;
   if (e.relatedTarget ? fs.contains(e.relatedTarget) : pressedBlock === fs) return;
   settling = commitBlock(fs);
@@ -150,7 +150,7 @@ function draw(state) {
   $("#card-switch").onchange = (e) => act(() => patchOrbital(view.side, view.name, { enabled: e.target.checked }), "#card-switch");
   $("#dlg-body").oninput = (e) => {
     if (e.target.tagName === "TEXTAREA") grow(e.target);
-    const fs = e.target.closest(".block");
+    const fs = e.target.closest("fieldset.block");
     if (fs) touch(fs);
   };
   $("#dlg-body").onchange = (e) => {
@@ -166,7 +166,7 @@ function draw(state) {
   // In a block Enter applies the block, except where a list is written one entry per line.
   $("#dlg-body").onkeydown = (e) => {
     if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
-    const fs = e.target.closest(".block");
+    const fs = e.target.closest("fieldset.block");
     if (fs) {
       if (!["TEXTAREA", "INPUT"].includes(e.target.tagName) || breaksLine(e.target)) return;
       e.preventDefault();
@@ -184,7 +184,7 @@ function draw(state) {
     if (e.target.closest('[data-dlg="probe"]')) {
       // A block edited and not applied is applied first; a refused one leaves nothing to test.
       const { side, name } = view;
-      if (await settling && !$(".block.dirty", dlg)) await probe(() => probeOrbital(side, { name }));
+      if (await settling && !$("fieldset.block.dirty", dlg)) await probe(() => probeOrbital(side, { name }));
       return;
     }
     const b = e.target.closest('[data-dlg="up"], [data-dlg="down"]');
@@ -252,7 +252,7 @@ function settled(state) {
   const reset = $('[data-dlg="reset-one"]', dlg);
   if (reset) reset.disabled = !o.modified;
   for (const s of o.settings) {
-    const marked = s.type === "block" ? $(`.block[data-block="${CSS.escape(s.key)}"]`, dlg) : $(`#${CSS.escape(fieldId(s.key))}`, dlg)?.closest(".field");
+    const marked = s.type === "block" ? $(`fieldset.block[data-block="${CSS.escape(s.key)}"]`, dlg) : $(`#${CSS.escape(fieldId(s.key))}`, dlg)?.closest(".field");
     marked?.classList.toggle("changed", s.changed);
   }
 }
@@ -326,7 +326,7 @@ function showAddForm(side, kind) {
   const gathered = () => {
     const settings = {};
     for (const el of $$("[data-key]", dlg)) { clear(el); settings[el.dataset.key] = read(el); }
-    for (const fs of $$(".block", dlg)) { mark(fs, null); settings[fs.dataset.block] = readBlock(fs); }
+    for (const fs of $$("fieldset.block", dlg)) { mark(fs, null); settings[fs.dataset.block] = readBlock(fs); }
     return settings;
   };
   $("#dlg-body").oninput = (e) => { if (e.target.tagName === "TEXTAREA") grow(e.target); };
@@ -347,7 +347,7 @@ function showAddForm(side, kind) {
     $("#add-form").requestSubmit();
   };
   const first = kind.settings.find((s) => s.required);
-  ((first && first.type === "block" ? $(`.block[data-block="${CSS.escape(first.key)}"] :is(textarea, input, select)`, dlg) : $(`#${CSS.escape(fieldId((first || {}).key || "name"))}`, dlg)) || $("#f-name")).focus();
+  ((first && first.type === "block" ? $(`fieldset.block[data-block="${CSS.escape(first.key)}"] :is(textarea, input, select)`, dlg) : $(`#${CSS.escape(fieldId((first || {}).key || "name"))}`, dlg)) || $("#f-name")).focus();
   $("#add-form").onsubmit = async (e) => {
     e.preventDefault();
     const settings = gathered();
@@ -355,7 +355,7 @@ function showAddForm(side, kind) {
     try {
       await ctx.apply(() => addOrbital(side, kind.kind, settings));
     } catch (error) {
-      const fs = error.setting ? $(`.block[data-block="${CSS.escape(error.setting)}"]`, dlg) : null;
+      const fs = error.setting ? $(`fieldset.block[data-block="${CSS.escape(error.setting)}"]`, dlg) : null;
       if (fs) { mark(fs, error.message); $(":is(textarea, input, select)", fs)?.focus(); return; }
       const el = error.setting ? $(`#${CSS.escape(fieldId(error.setting))}`, dlg) : null;
       if (el) { fail(el, error.message); el.focus(); return; }

@@ -62,3 +62,16 @@ def test_every_font_ships_its_licence():
     fonts = STATIC / "fonts"
     for font in fonts.glob("*.woff2"):
         assert (fonts / f"OFL-{font.stem}.txt").is_file(), font.name
+
+
+def test_the_class_of_a_block_of_fields_is_written_with_its_element():
+    # `block` is also the class of what marks a blocking decision (`.lg.block`,
+    # `.trail i.block`, `.res-dash.block`): a rule or a query meant for a block of fields
+    # names the fieldset, so it never reaches those marks.
+    offenders = [
+        f"{path.relative_to(STATIC)}:{number}"
+        for path in text_files()
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if re.search(r"(?<![\w.\]-])\.block(?![\w-])", line)
+    ]
+    assert offenders == []

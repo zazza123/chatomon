@@ -1552,3 +1552,19 @@ def test_the_form_of_a_scope_guard_fits_a_phone(page: Page, connected):
     body = card(page).locator("#dlg-body")
     assert body.evaluate("el => el.scrollWidth <= el.clientWidth")
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def test_a_block_of_fields_leaves_the_marks_of_a_blocking_orbital_as_they_were(page: Page, saving):
+    # `block` is the class of a block of fields and of what marks a blocking decision:
+    # the legend's sample, the dash in a turn's trail and the one in its report.
+    open_studio(page, saving)
+    send(page, LONG, "Too long.")
+    marks = [
+        (page.locator(".legend .lg.block"), "14px"),
+        (page.locator("article.turn .trail i.block").first, "11px"),
+    ]
+    open_report(page, 1)
+    marks.append((card(page).locator(".res-dash.block").first, "12px"))
+    for mark, width in marks:
+        expect(mark).to_have_css("width", width)
+        expect(mark).to_have_css("height", "5px")

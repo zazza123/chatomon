@@ -100,7 +100,7 @@ function number(list) {
 
 /** Give the blocks drawn under `root` their values, and remember what each one accepts. */
 export function hydrate(root) {
-  for (const fs of $$(".block", root)) {
+  for (const fs of $$("fieldset.block", root)) {
     if (settings.has(fs.dataset.pid)) { fs._setting = settings.get(fs.dataset.pid); settings.delete(fs.dataset.pid); }
   }
   for (const [id, value] of values) {
@@ -108,8 +108,8 @@ export function hydrate(root) {
     if (el) el.value = value;
   }
   values.clear();
-  $$(".block textarea", root).forEach(grow);
-  $$(".block .items", root).forEach(number);
+  $$("fieldset.block textarea", root).forEach(grow);
+  $$("fieldset.block .items", root).forEach(number);
 }
 
 function readControl(el) {
@@ -157,7 +157,7 @@ export function mark(fs, message) {
  */
 export function handle(e) {
   const el = e.target.closest("[data-blk]");
-  const fs = el && el.closest(".block");
+  const fs = el && el.closest("fieldset.block");
   if (!fs) return null;
   const kind = el.dataset.blk;
   if (kind === "mode" && e.type === "change") {
