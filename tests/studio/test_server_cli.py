@@ -86,7 +86,14 @@ def test_a_wildcard_host_is_refused(runs):
 def test_another_host_prints_a_warning(runs, capsys, monkeypatch):
     monkeypatch.setattr(server, "_check_port", lambda host, port: None)
     serve(make_atom(), host="192.168.1.10", port=8125, open_browser=False)
-    assert "warning" in capsys.readouterr().err
+    # All that the link gives: since an orbital can be given a connection from the page,
+    # that includes sending a variable of the machine to any address.
+    assert (
+        "warning: the studio listens on a network address. Anyone who reaches it with this "
+        "link can read the conversation, call the atom's models and, by adding an orbital that "
+        "connects to a service, send a variable of this machine's environment to an address of "
+        "their choice.\n"
+    ) in capsys.readouterr().err
 
 
 def test_a_port_in_use_is_reported_before_starting(runs):

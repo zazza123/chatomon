@@ -169,7 +169,7 @@ function refresh(state) {
   $("#chip-scope").textContent = local ? "\u00a0· local only" : "\u00a0· network address";
   $("#content-chip").title = local
     ? `${LOCAL_NOTE} It only listens on this machine.`
-    : `${LOCAL_NOTE} It listens on a network address: anyone who reaches it with the link can read this conversation.`;
+    : `${LOCAL_NOTE} It listens on a network address: anyone who reaches it with the link can read this conversation, use the atom's models and send a variable of this machine's environment to an address of their choice.`;
   drawer.render(state);
   stage.setOrbitals(state.orbitals, state.atom);
   drawTurns();

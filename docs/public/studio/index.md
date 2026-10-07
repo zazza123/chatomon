@@ -78,7 +78,7 @@ The studio shows conversation text and calls models with your credentials, so it
 - The link it prints carries a key for this run. The page keeps it in a cookie; opened without it, the page asks for the link from the terminal. Treat the link like a password.
 - It answers only on its own address and accepts changes only from its own page, so other sites open in your browser cannot start turns or change orbitals.
 - Its pages run only the studio's own files and cannot be shown inside another page.
-- With `--host` and a network address it prints a warning: anyone who reaches that address with the link can read the conversation and use your models. Addresses that listen everywhere, such as `0.0.0.0`, are refused.
+- With `--host` and a network address it prints a warning: anyone who reaches that address with the link can read the conversation, use your models and, by adding an orbital that connects to a service, send a variable of that machine's environment to an address of their choice. Addresses that listen everywhere, such as `0.0.0.0`, are refused.
 - A key never reaches the page, a preset or generated code. A connection names the environment variable that holds its key, and the orbital reads the value on the server. Since a preset can name a variable and an address, [apply only presets you trust](export.md#problems-and-notes).
 
 ## Limits of This Version

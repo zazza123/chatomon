@@ -141,7 +141,7 @@ export function showAtom(ctx, outcome = "") {
 export function showNotice(local) {
   const where = local
     ? "The studio listens only on this machine."
-    : "The studio listens on a network address: anyone who reaches it with the link can read this conversation and use the atom's models.";
+    : "The studio listens on a network address: anyone who reaches it with the link can read this conversation, use the atom's models and, by adding an orbital that connects to a service, send a variable of this machine's environment to an address of their choice.";
   openDialog({
     title: "Content visible",
     body: `<p class="note">The studio runs a copy of your atom with <code>capture_content="full"</code>, so it can show message text, guidance and judge explanations. Your atom keeps its own setting.</p>

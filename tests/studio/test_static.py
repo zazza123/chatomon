@@ -75,3 +75,11 @@ def test_the_class_of_a_block_of_fields_is_written_with_its_element():
         if re.search(r"(?<![\w.\]-])\.block(?![\w-])", line)
     ]
     assert offenders == []
+
+
+def test_the_page_says_all_that_a_link_on_a_network_address_gives():
+    for name in ("js/cards.js", "js/main.js"):
+        text = (STATIC / name).read_text(encoding="utf-8")
+        (line,) = [line for line in text.splitlines() if "listens on a network address" in line]
+        for given in ("read this conversation", "the atom's models", "an address of their choice"):
+            assert given in line, f"{name}: {given}"

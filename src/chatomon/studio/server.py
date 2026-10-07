@@ -116,7 +116,9 @@ def _start(
     if host not in LOOPBACK:
         print(
             "warning: the studio listens on a network address. Anyone who reaches it with "
-            "this link can read the conversation and call the atom's models.",
+            "this link can read the conversation, call the atom's models and, by adding an "
+            "orbital that connects to a service, send a variable of this machine's environment "
+            "to an address of their choice.",
             file=sys.stderr,
         )
     if open_browser:
