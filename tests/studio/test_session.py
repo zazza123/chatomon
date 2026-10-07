@@ -8,14 +8,19 @@ from typing import Any
 
 import pytest
 from langchain_core.tools import tool
+from orbitals.scope_guard_v2 import AsyncScopeGuardV2
+from orbitals.types import AIServiceDescriptionV2
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
-from chatomon import Atom, ChatomonConfigError, Verdict
+from chatomon import Atom, ChatomonConfigError, Verdict, orbital
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
+from chatomon.errors import MissingExtraError
 from chatomon.orbitals import JudgeOrbital, MessageLengthOrbital
+from chatomon.orbitals.principled import ScopeGuardOrbital
 from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER
+from chatomon.studio import _kinds as kinds
 from chatomon.studio import _loading as loading
 from chatomon.studio._chains import RefusedError, UnknownOrbitalError
 from chatomon.studio._loading import load, namespace
@@ -1163,3 +1168,177 @@ async def test_the_two_connectors_of_one_framework_share_the_conversation(monkey
     assert (await session.reload()).restarted is None
     assert (await say(session, "and now?")).reply == "two"
     assert guard.heard() == [("user", "hello"), ("assistant", "one")]
+
+
+def test_the_state_of_an_orbital_with_blocks(monkeypatch):
+    monkeypatch.setenv("SCOPE_KEY", "key-not-for-the-page")
+    session = Session(make_atom(), source="app:atom")
+    session.add(
+        "input",
+        "ScopeGuardOrbital",
+        {
+            "guard": {
+                "type": "ApiBackend",
+                "fields": {"api_url": "https://scope.example", "api_key_env": "SCOPE_KEY"},
+            },
+            "description": "A courier.",
+        },
+    )
+    state = session.state()
+    assert "key-not-for-the-page" not in json.dumps(state)
+    guard = state["orbitals"]["input"][0]
+    assert (guard["kind"], guard["origin"], guard["calls_model"], guard["fixed"]) == (
+        "ScopeGuardOrbital",
+        "studio",
+        True,
+        [],
+    )
+    assert guard["settings"][0] == {
+        "key": "guard",
+        "type": "block",
+        "optional": False,
+        "required": True,
+        "default": None,
+        "text": False,
+        "types": [
+            {
+                "type": "ApiBackend",
+                "fields": [
+                    {
+                        "key": "api_url",
+                        "type": "text",
+                        "optional": False,
+                        "required": True,
+                        "default": None,
+                    },
+                    {
+                        "key": "api_key_env",
+                        "type": "env",
+                        "optional": True,
+                        "required": False,
+                        "default": None,
+                    },
+                    {
+                        "key": "model",
+                        "type": "text",
+                        "optional": True,
+                        "required": False,
+                        "default": None,
+                    },
+                ],
+            }
+        ],
+        "value": {
+            "type": "ApiBackend",
+            "fields": {
+                "api_url": "https://scope.example",
+                "api_key_env": "SCOPE_KEY",
+                "model": None,
+            },
+        },
+        "changed": False,
+    }
+    description = guard["settings"][1]
+    assert (description["key"], description["text"], description["value"]) == (
+        "description",
+        True,
+        "A courier.",
+    )
+    assert [found["type"] for found in description["types"]] == [
+        "AIServiceDescription",
+        "AIServiceDescriptionV2",
+    ]
+
+
+def test_a_client_from_code_is_listed_with_the_objects_and_its_description_can_be_edited():
+    client = AsyncScopeGuardV2(backend="api", api_url="http://scope-guard.test", api_key="k")
+    service = AIServiceDescriptionV2(identity_role="Courier", context="Italy")
+    code = ScopeGuardOrbital(guard=client, description=service)
+    session = Session(
+        make_atom(input_orbitals=[code]), source="app:atom", namespace={"scope_client": client}
+    )
+    guard = session.state()["orbitals"]["input"][0]
+    assert guard["fixed"] == [
+        {"key": "guard", "type": "AsyncAPIScopeGuardV2", "name": "scope_client"}
+    ]
+    assert [setting["key"] for setting in guard["settings"]] == [
+        "description",
+        "history_window",
+        "timeout",
+        "on_error",
+    ]
+    shown = guard["settings"][0]["value"]
+    shown["fields"]["context"] = "Italy and France"
+    session.edit("input", "scope_guard", {"description": shown})
+    edited = session.state()["orbitals"]["input"][0]
+    assert (edited["modified"], edited["settings"][0]["changed"]) == (True, True)
+    assert [change["text"] for change in session.state()["changes"]] == [
+        "scope_guard.description changed"
+    ]
+    assert code.description is service  # the developer's orbital is as it was
+
+
+def test_the_state_says_which_orbitals_call_a_model():
+    @orbital(calls_model=True)
+    def remote(ctx):
+        return Verdict.allow()
+
+    session = Session(
+        make_atom(input_orbitals=[MessageLengthOrbital(max_words=3), remote]), source="app:atom"
+    )
+    state = session.state()
+    assert [o["calls_model"] for o in state["orbitals"]["input"]] == [False, True]
+    assert {kind["kind"]: kind["calls_model"] for kind in state["kinds"]} == {
+        "JudgeOrbital": True,
+        "MessageLengthOrbital": False,
+        "TurnLimitOrbital": False,
+        "ClaimExtractorOrbital": True,
+        "ScopeGuardOrbital": True,
+    }
+    assert state["studio"]["extras"] == []
+
+
+@pytest.fixture
+def broken_library(monkeypatch):
+    """Make the import of the principled orbitals fail, and forget what was found."""
+
+    def fail(error: Exception) -> None:
+        real = kinds.importlib.import_module
+
+        def fake(name: str, package: str | None = None) -> Any:
+            if name == "chatomon.orbitals.principled":
+                raise error
+            return real(name, package)
+
+        monkeypatch.setattr(kinds.importlib, "import_module", fake)
+        kinds._library.cache_clear()
+
+    yield fail
+    monkeypatch.undo()
+    kinds._library.cache_clear()
+
+
+def test_the_state_lists_the_extras_that_would_bring_more_orbitals(broken_library):
+    broken_library(MissingExtraError("principled", "orbitals"))
+    session = Session(make_atom(), source="app:atom")
+    state = session.state()
+    assert state["studio"]["extras"] == [
+        {"module": "chatomon.orbitals.principled", "extra": "principled"}
+    ]
+    assert [kind["kind"] for kind in state["kinds"]] == [
+        "JudgeOrbital",
+        "MessageLengthOrbital",
+        "TurnLimitOrbital",
+    ]
+    assert session.notes == []
+    with pytest.raises(RefusedError, match="pip install 'chatomon\\[principled\\]'"):
+        session.add("input", "ScopeGuardOrbital", {})
+
+
+def test_a_module_of_orbitals_that_fails_to_import_is_a_note_of_the_session(broken_library):
+    broken_library(RuntimeError("broken install"))
+    session = Session(make_atom(), source="app:atom")
+    assert session.notes == [
+        "chatomon.orbitals.principled could not be imported: RuntimeError: broken install"
+    ]
+    assert session.state()["studio"]["extras"] == []

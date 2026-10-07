@@ -1,9 +1,14 @@
 from typing import Any
 
 import pytest
+from orbitals.scope_guard_v2 import AsyncScopeGuardV2
+from orbitals.types import AIServiceDescriptionV2
 
 from chatomon import Atom, Knowledge
+from chatomon.errors import MissingExtraError
 from chatomon.orbitals import JudgeOrbital, MessageLengthOrbital
+from chatomon.orbitals.principled import ApiBackend, ScopeGuardOrbital
+from chatomon.studio import _kinds as kinds
 from chatomon.studio._chains import (
     Chains,
     InvalidRequestError,
@@ -227,3 +232,69 @@ def test_a_knowledge_changed_back_is_the_developers_object_again():
     retitled = again.work["output"][0].orbital
     assert isinstance(retitled, JudgeOrbital) and retitled.context is not None
     assert retitled.context.title == "FAQ"  # the title comes back from the code's knowledge
+
+
+BACKEND = {"type": "ApiBackend", "fields": {"api_url": "https://scope.example"}}
+SERVICE = AIServiceDescriptionV2(identity_role="Courier", context="Italy")
+
+
+def test_an_orbital_with_blocks_is_added_from_its_json(chains):
+    added = chains.added(
+        "input", "ScopeGuardOrbital", {"guard": BACKEND, "description": "A courier."}
+    )
+    assert names(added) == ["message_length", "scope", "scope_guard"]
+    guard = added.work["input"][2].orbital
+    assert isinstance(guard, ScopeGuardOrbital)
+    assert (guard.guard, guard.description) == (
+        ApiBackend(api_url="https://scope.example"),
+        "A courier.",
+    )
+    assert texts(added) == ["scope_guard added"]
+    with pytest.raises(InvalidSettingError, match="`description` needs a value"):
+        chains.added("input", "ScopeGuardOrbital", {"guard": BACKEND})
+    with pytest.raises(RefusedError, match="ScopeGuardOrbital cannot run on the output side"):
+        chains.added("output", "ScopeGuardOrbital", {"guard": BACKEND, "description": "x"})
+
+
+def test_a_block_of_an_orbital_from_code_is_one_change_and_goes_back_to_the_codes_object():
+    client = AsyncScopeGuardV2(backend="api", api_url="http://scope-guard.test", api_key="k")
+    code = ScopeGuardOrbital(guard=client, description=SERVICE)
+    chains = Chains.from_atom(make_atom(input_orbitals=[code]))
+    shown = kinds.values(code)["description"]
+    shown["fields"]["context"] = "Italy and France"
+    shown["fields"]["constraints"] = ["Never discuss refunds"]
+    edited = chains.edited("input", "scope_guard", {"description": shown})
+    entry = edited.work["input"][0]
+    assert entry.orbital is not code and entry.base is code
+    assert texts(edited) == ["scope_guard.description changed"]
+    assert [(c.type, c.setting) for c in edited.changes()] == [("setting", "description")]
+    back = edited.edited("input", "scope_guard", {"description": kinds.values(code)["description"]})
+    assert back.work["input"][0].orbital is code
+    assert back.changes() == []
+    with pytest.raises(InvalidSettingError, match="`guard` is an object from your code"):
+        chains.edited("input", "scope_guard", {"guard": BACKEND})
+
+
+def test_a_class_the_studio_does_not_know_names_the_missing_extra(chains, monkeypatch):
+    def fake(name: str, package: str | None = None) -> Any:
+        raise MissingExtraError("principled", "orbitals")
+
+    real = kinds.importlib.import_module
+    monkeypatch.setattr(
+        kinds.importlib,
+        "import_module",
+        lambda name, package=None: (
+            fake(name) if name.endswith(".principled") else real(name, package)
+        ),
+    )
+    kinds._library.cache_clear()
+    try:
+        with pytest.raises(RefusedError) as caught:
+            chains.added("input", "ScopeGuardOrbital", {})
+    finally:
+        monkeypatch.undo()
+        kinds._library.cache_clear()
+    assert str(caught.value) == (
+        "ScopeGuardOrbital is not an orbital this studio can add. The orbitals of "
+        "chatomon.orbitals.principled need: pip install 'chatomon[principled]'."
+    )

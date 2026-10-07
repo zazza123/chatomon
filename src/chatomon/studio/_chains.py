@@ -263,7 +263,7 @@ class Chains:
         where = cast("Side", side)
         found = next((k for k in kinds.addable() if k.cls.__name__ == kind), None)
         if found is None:
-            raise RefusedError(f"{kind} cannot be added from the studio: add it in your code")
+            raise RefusedError(kinds.unknown(kind))
         if where not in found.cls.sides:
             raise RefusedError(f"{kind} cannot run on the {where} side")
         values = dict(settings)
@@ -334,7 +334,7 @@ class Chains:
                     found.extend(
                         Change("setting", side, f"{name}.{key} changed", name, key)
                         for key in now
-                        if now[key] != before[key]
+                        if now[key] != before.get(key)
                     )
             kept = [id(entry.base) for entry in self.work[side] if entry.base is not None]
             if kept != [id(orb) for orb in self.code[side]]:

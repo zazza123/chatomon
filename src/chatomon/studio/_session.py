@@ -90,6 +90,11 @@ def _in_thread(function: Callable[[], _T]) -> asyncio.Future[_T]:
     return future
 
 
+def _notes(runner: Runner, atom: Atom[Any]) -> list[str]:
+    """Return what the developer should know at start: about the atom, then about the library."""
+    return [*runner.notes(atom.connector), *kinds.import_notes()]
+
+
 class StudioBusyError(ChatomonError):
     """A turn is running, so the session cannot start another one or change its orbitals."""
 
@@ -190,7 +195,7 @@ class Session:
         self.provider.add_span_processor(self.processor)
         self.conversation: Any = None
         self.turns: list[TurnRecord] = []
-        self.notes: list[str] = runner.notes(atom.connector)
+        self.notes: list[str] = _notes(runner, atom)
         self._task: asyncio.Task[None] | None = None
         self._reload: asyncio.Task[Reloaded] | None = None
         self.reloads = 0
@@ -575,7 +580,7 @@ class Session:
             atom=atom,
             namespace=loading.namespace(self.source),
             runner=runner,
-            notes=runner.notes(atom.connector),
+            notes=_notes(runner, atom),
             chains=candidate,
             agent=agent,
             dropped=dropped,
@@ -682,6 +687,8 @@ class Session:
                 "capture_content": "full",
                 # Without a module the studio does not know what to import again.
                 "reload": self.namespace is not None,
+                # The extras that would bring more orbitals to add.
+                "extras": [{"module": module, "extra": extra} for module, extra in kinds.extras()],
             },
             "atom": {
                 "name": a.name,
@@ -703,6 +710,7 @@ class Session:
                     "kind": kind.cls.__name__,
                     "sides": sorted(kind.cls.sides),
                     "summary": kinds.summary(kind.cls),
+                    "calls_model": kind.cls.calls_model,
                     "name": self.chains.free_name(kind.cls),
                     "settings": [setting.schema() for setting in kind.settings],
                 }
@@ -751,6 +759,7 @@ class Session:
             "kind": type(orb).__name__,
             "side": side,
             "enabled": entry.enabled,
+            "calls_model": orb.calls_model,
             "config": orb.config(),
             "fingerprint": orb.fingerprint(),
             "origin": entry.origin,
