@@ -1152,6 +1152,8 @@ def test_a_langchain_fallback_is_not_reached_by_an_offline_test(project, monkeyp
         "This atom has middleware of its own: one that chooses the model can still reach a "
         "real model in this test."
     ) in test.notes
+    # Offline the nucleus is never called, so no middleware calls the model in its place.
+    assert all("calls the model itself" not in note for note in test.notes)
     # The code changes and lets the message through. A stand-in that refused the atom's
     # tools with an error would send the fallback middleware to its other model.
     atom = session.atom
@@ -1713,6 +1715,11 @@ def test_every_framework_keeps_a_reply_that_repeats_an_earlier_one_in_the_histor
     run_saved(test, monkeypatch)
 
 
+CALLS_THE_MODEL = (
+    "A middleware that calls the model itself, as one that selects tools or summarises the "
+    "conversation does, gets the stand-in in place of the model: with one, this test fails "
+    "on the unchanged atom."
+)
 ASKS_AGAIN = '''
 from langchain.agents.middleware import AgentMiddleware, hook_config  # noqa: E402
 
@@ -1746,11 +1753,12 @@ def test_a_turn_the_framework_asked_again_is_repeated_and_said(project, monkeypa
         "In turn 1 your code asked the nucleus again after chatomon had decided on a reply: "
         "the test expects it to ask again."
     ) in test.notes
-    # The note of the stand-in is given whenever the stand-in is there.
+    # The notes of the stand-in are given whenever the stand-in is there.
     assert (
         "This atom has middleware of its own: one that chooses the model can still reach a "
         "real model in this test."
     ) in test.notes
+    assert CALLS_THE_MODEL in test.notes
     run_saved(test, monkeypatch)
 
     # Asked again with every reply accepted, the turn keeps the real nucleus and says nothing.

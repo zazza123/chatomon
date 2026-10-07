@@ -32,6 +32,13 @@ _MIDDLEWARE = (
     "This atom has middleware of its own: one that chooses the model can still reach a "
     "real model in this test."
 )
+# A middleware reaches the model through the connector as the agent does, so in a test that
+# repeats the replies it gets the stand-in, which has only those replies to give.
+_CALLS_THE_MODEL = (
+    "A middleware that calls the model itself, as one that selects tools or summarises the "
+    "conversation does, gets the stand-in in place of the model: with one, this test fails "
+    "on the unchanged atom."
+)
 # LangChain's fake chat model refuses tools with an error, which a fallback middleware
 # takes as a reason to call another model: the stand-in takes them and calls none.
 _OFFLINE_NUCLEUS = (
@@ -161,7 +168,7 @@ def saved_test(connector: Connector[Any]) -> Framework:
                 "nucleus = ScriptedNucleus(messages=nucleus_replies())",
                 'monkeypatch.setattr(atom.connector, "model", nucleus)',
             ),
-            notes=(_MIDDLEWARE,) if middleware else (),
+            notes=(_MIDDLEWARE, _CALLS_THE_MODEL) if middleware else (),
         ),
         offline=StandIn(
             label="a chat model of its own, `OfflineNucleus`,",
