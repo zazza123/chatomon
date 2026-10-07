@@ -197,8 +197,7 @@ def hours(ctx: OrbitalContext) -> Verdict:
     return Verdict.allow()
 
 
-@pytest.fixture
-def judged() -> Iterator[Studio]:
+def judged_atom() -> Atom:
     """An atom whose first reply of every turn is rejected; "boom" fails the second one."""
     calls: dict[str, int] = {}
 
@@ -215,13 +214,17 @@ def judged() -> Iterator[Studio]:
             raise RuntimeError("model down")
         return ModelResponse(parts=[TextPart(content=REPLY)])
 
-    atom = Atom(
+    return Atom(
         name="speedypack",
         instructions="Be brief.",
         connector=PydanticAIConnector(FunctionModel(draft)),
         output_orbitals=[hours],
     )
-    with running(atom) as handle:
+
+
+@pytest.fixture
+def judged() -> Iterator[Studio]:
+    with running(judged_atom()) as handle:
         yield handle
 
 
@@ -242,6 +245,74 @@ def test_the_report_labels_each_attempt_with_what_was_decided(page: Page, judged
     send(page, "boom", "The turn failed: RuntimeError: model down")
     open_report(page, 2)
     expect(attempt_labels(page)).to_have_text(["rejected"])
+
+
+def test_the_report_shows_what_the_nucleus_wrote_at_every_attempt(page: Page, judged: Studio):
+    open_studio(page, judged)
+    send(page, "Are you open?", REPLY)
+    open_report(page, 1)
+    wrote = card(page).locator(".attempt .draft")
+    expect(wrote).to_contain_text(["We are open 24/7.", REPLY])
+    # Read aloud, the text is told from the orbitals' rows that follow it.
+    expect(wrote.nth(0).locator(".sr")).to_have_text("The nucleus wrote:")
+    # The rejected reply is in its attempt only; what the user received is the accepted one.
+    expect(card(page).locator(".final")).to_have_text(REPLY)
+    # The text comes before the rows of the orbitals that checked it.
+    order = (
+        card(page)
+        .locator(".attempt")
+        .first.evaluate("attempt => [...attempt.children].map((el) => el.className)")
+    )
+    assert order == ["attempt-head", "draft", "res-list"]
+
+
+def changed_reply(text: str):
+    """Give the page a state whose first attempt holds another text."""
+
+    def handle(route) -> None:
+        response = route.fetch()
+        state = response.json()
+        for turn in state["turns"]:
+            turn["report"]["output"][0]["nucleus_reply"] = text
+        route.fulfill(response=response, json=state)
+
+    return handle
+
+
+def test_an_attempt_with_no_text_says_that_the_nucleus_wrote_nothing(page: Page, judged: Studio):
+    open_studio(page, judged)
+    send(page, "Are you open?", REPLY)
+    # A framework can hand over a reply with no text: the attempt is there, its text is empty.
+    page.route("**/api/state", changed_reply(""))
+    page.reload()
+    open_report(page, 1)
+    first = card(page).locator(".attempt").first
+    expect(first.locator(".draft")).to_have_count(0)
+    expect(first.locator("p.muted")).to_have_text("The nucleus wrote nothing.")
+    expect(card(page).locator(".attempt .draft")).to_have_count(1)
+
+
+def test_what_the_nucleus_wrote_fits_a_phone_and_keeps_its_lines(page: Page, judged: Studio):
+    page.set_viewport_size({"width": 390, "height": 800})
+    open_studio(page, judged)
+    send(page, "Are you open?", REPLY)
+    long = "https://speedypack.example/" + "tracking" * 30
+    page.route("**/api/state", changed_reply(f"First line.\n{long}"))
+    page.reload()
+    open_report(page, 1)
+    wrote = card(page).locator(".attempt .draft").first
+    expect(wrote).to_contain_text("First line.")
+    assert wrote.evaluate("el => getComputedStyle(el).whiteSpace") == "pre-wrap"
+    past_the_edge = card(page).evaluate(
+        """dialog => {
+            const body = dialog.querySelector("#dlg-body");
+            const padding = parseFloat(getComputedStyle(body).paddingRight);
+            const limit = body.getBoundingClientRect().right - padding;
+            return [...body.querySelectorAll(".draft")]
+                .filter((el) => el.getBoundingClientRect().right > limit + 0.5).length;
+        }"""
+    )
+    assert past_the_edge == 0
 
 
 def test_an_attempt_without_a_decision_is_labelled_interrupted(page: Page, judged: Studio):

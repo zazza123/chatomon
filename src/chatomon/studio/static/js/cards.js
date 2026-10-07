@@ -182,7 +182,12 @@ export function showReport(turn, { total, onNav, onRerun, onSave, onClose, busy 
     ? `<section class="rep-sec"><h3 class="label">Nucleus and output chain</h3>${attempts.map((attempt, i) => {
         const status = DECIDED[attempt.decision] || "interrupted";
         const rows = results(turn, "output", i);
-        return `<div class="attempt"><div class="attempt-head"><strong>Attempt ${i + 1}</strong><span class="pill ${attempt.decision === "accept" ? "act-allow" : "act-block"}">${status}</span></div>${rows.length ? `<div class="res-list">${rows.map(resRow).join("")}</div>` : `<p class="muted">No output orbitals were on.</p>`}</div>`;
+        // What the nucleus wrote, whatever was decided about it: the text that replaced a reply
+        // is under "Sent to the user".
+        const wrote = attempt.nucleus_reply
+          ? `<p class="draft"><span class="sr">The nucleus wrote: </span>${esc(attempt.nucleus_reply)}</p>`
+          : `<p class="muted">The nucleus wrote nothing.</p>`;
+        return `<div class="attempt"><div class="attempt-head"><strong>Attempt ${i + 1}</strong><span class="pill ${attempt.decision === "accept" ? "act-allow" : "act-block"}">${status}</span></div>${wrote}${rows.length ? `<div class="res-list">${rows.map(resRow).join("")}</div>` : `<p class="muted">No output orbitals were on.</p>`}</div>`;
       }).join("")}</section>`
     : `<section class="rep-sec"><h3 class="label">Nucleus</h3><p class="muted">${nucleusFailed(turn)
         ? "The nucleus was called and failed before a reply could be checked."
