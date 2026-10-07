@@ -18,7 +18,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from chatomon import Atom, TurnReport
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
-from chatomon.orbitals.principled import ScopeGuardOrbital
+from chatomon.orbitals.principled import ApiBackend, ScopeGuardOrbital
 from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER, OrbitalContext
 from tests.integration.conftest import INTEGRATION_TIMEOUT, require_env, warm_up
 
@@ -125,3 +125,20 @@ async def test_end_to_end_guided_refusal_with_pydantic_ai():
     await agent.run("Can I get a refund for the late delivery?")
     assert reports[0].input[0].reason in {"Restricted", "Out of Scope"}
     assert seen == [DEFAULT_BLOCKED_PLACEHOLDER] or reports[0].final_action == "blocked"
+
+
+async def test_a_guard_built_from_an_api_backend_classifies_like_one_given_a_client():
+    url = require_env("CHATOMON_SCOPE_GUARD_URL")
+    orb = ScopeGuardOrbital(
+        guard=ApiBackend(api_url=url), description=DESCRIPTION, timeout=INTEGRATION_TIMEOUT
+    )
+    await warm_up(lambda: orb.check(_ctx("Where is my parcel?")))
+    allowed = await orb.check(_ctx("Where is my parcel 123456?"))
+    blocked = await orb.check(_ctx("Write me a poem about the sea."))
+    assert (allowed.action, blocked.action) == ("allow", "block")
+    by_hand = ScopeGuardOrbital(
+        guard=AsyncScopeGuardV2(backend="api", api_url=url),
+        description=DESCRIPTION,
+        timeout=INTEGRATION_TIMEOUT,
+    )
+    assert orb.fingerprint() == by_hand.fingerprint()

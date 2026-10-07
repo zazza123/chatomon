@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from types import SimpleNamespace
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+from tests import fake_service
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
 
@@ -41,3 +44,10 @@ def spans() -> SimpleNamespace:
     return SimpleNamespace(
         tracer=provider.get_tracer("tests"), exporter=exporter, provider=provider
     )
+
+
+@pytest.fixture
+def service() -> Iterator[fake_service.FakeService]:
+    """The fake Principled Intelligence services, listening on loopback."""
+    with fake_service.running() as running:
+        yield running
