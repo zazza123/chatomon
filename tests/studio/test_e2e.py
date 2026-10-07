@@ -292,27 +292,18 @@ def test_an_attempt_with_no_text_says_that_the_nucleus_wrote_nothing(page: Page,
     expect(card(page).locator(".attempt .draft")).to_have_count(1)
 
 
-def test_what_the_nucleus_wrote_fits_a_phone_and_keeps_its_lines(page: Page, judged: Studio):
-    page.set_viewport_size({"width": 390, "height": 800})
+def test_an_attempt_of_blank_space_says_so_instead_of_showing_an_empty_box(
+    page: Page, judged: Studio
+):
     open_studio(page, judged)
     send(page, "Are you open?", REPLY)
-    long = "https://speedypack.example/" + "tracking" * 30
-    page.route("**/api/state", changed_reply(f"First line.\n{long}"))
+    page.route("**/api/state", changed_reply("   \n  "))
     page.reload()
     open_report(page, 1)
-    wrote = card(page).locator(".attempt .draft").first
-    expect(wrote).to_contain_text("First line.")
-    assert wrote.evaluate("el => getComputedStyle(el).whiteSpace") == "pre-wrap"
-    past_the_edge = card(page).evaluate(
-        """dialog => {
-            const body = dialog.querySelector("#dlg-body");
-            const padding = parseFloat(getComputedStyle(body).paddingRight);
-            const limit = body.getBoundingClientRect().right - padding;
-            return [...body.querySelectorAll(".draft")]
-                .filter((el) => el.getBoundingClientRect().right > limit + 0.5).length;
-        }"""
-    )
-    assert past_the_edge == 0
+    first = card(page).locator(".attempt").first
+    # An empty box would read as a fault of the page.
+    expect(first.locator(".draft")).to_have_count(0)
+    expect(first.locator("p.muted")).to_have_text("The nucleus wrote only blank space.")
 
 
 def test_an_attempt_without_a_decision_is_labelled_interrupted(page: Page, judged: Studio):
