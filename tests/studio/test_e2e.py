@@ -306,6 +306,43 @@ def test_an_attempt_of_blank_space_says_so_instead_of_showing_an_empty_box(
     expect(first.locator("p.muted")).to_have_text("The nucleus wrote only blank space.")
 
 
+def test_markup_in_what_the_nucleus_wrote_is_shown_as_text(page: Page, judged: Studio):
+    open_studio(page, judged)
+    send(page, "Are you open?", REPLY)
+    markup = '<img src=x onerror="document.title=1"><script>document.title = 2</script><b>bold</b>'
+    page.route("**/api/state", changed_reply(markup))
+    page.reload()
+    open_report(page, 1)
+    wrote = card(page).locator(".attempt .draft").first
+    # A model writes this text: it is shown, never taken as part of the page.
+    expect(wrote).to_contain_text(markup)
+    expect(wrote.locator("img, script, b")).to_have_count(0)
+    assert page.title() == "chatomon studio"
+
+
+def test_what_the_nucleus_wrote_fits_a_phone_and_keeps_its_lines(page: Page, judged: Studio):
+    page.set_viewport_size({"width": 390, "height": 800})
+    open_studio(page, judged)
+    send(page, "Are you open?", REPLY)
+    long = "https://speedypack.example/" + "tracking" * 30
+    page.route("**/api/state", changed_reply(f"First line.\n{long}"))
+    page.reload()
+    open_report(page, 1)
+    wrote = card(page).locator(".attempt .draft").first
+    expect(wrote).to_contain_text("First line.")
+    assert wrote.evaluate("el => getComputedStyle(el).whiteSpace") == "pre-wrap"
+    past_the_edge = card(page).evaluate(
+        """dialog => {
+            const body = dialog.querySelector("#dlg-body");
+            const padding = parseFloat(getComputedStyle(body).paddingRight);
+            const limit = body.getBoundingClientRect().right - padding;
+            return [...body.querySelectorAll(".draft")]
+                .filter((el) => el.getBoundingClientRect().right > limit + 0.5).length;
+        }"""
+    )
+    assert past_the_edge == 0
+
+
 def test_an_attempt_without_a_decision_is_labelled_interrupted(page: Page, judged: Studio):
     def interrupted(route) -> None:
         response = route.fetch()
@@ -1291,6 +1328,35 @@ def test_an_atom_of_another_framework_runs_a_turn_and_saves_it(page: Page, monke
         expect(code).to_contain_text(call)
         expect(code).to_contain_text("# Turn 2: answered")
         expect(card(page)).to_contain_text("is marked integration")
+
+
+@pytest.mark.parametrize("name", list(SMOKE))
+def test_an_atom_of_another_framework_saves_a_turn_with_a_rejected_reply(
+    page: Page, monkeypatch, name
+):
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=frameworks.harness(name, monkeypatch).connector("We are open 24/7.", REPLY),
+        output_orbitals=[hours],
+    )
+    with running(atom) as studio:
+        open_studio(page, studio)
+        send(page, "Are you open?", REPLY)
+        open_report(page, 1)
+        expect(attempt_labels(page)).to_have_text(["rejected", "accepted"])
+        expect(card(page).locator(".attempt .draft")).to_contain_text(["We are open 24/7.", REPLY])
+        card(page).get_by_role("button", name="Close").last.click()
+
+        save_as_test(page, 1)
+        code = card(page).locator("pre.code")
+        expect(code).to_contain_text("class ScriptedNucleus(")
+        expect(code).to_contain_text('("regenerate", [("hours", "block")]),')
+        # The words of a test that defines a class and awaits its turns are keywords too.
+        assert {"class", "async", "await", "def", "return"} <= set(
+            code.locator("span.k").all_inner_texts()
+        )
+        expect(card(page).locator("#dlg-sub")).to_have_text("Runs offline: no model is called")
 
 
 RELOADABLE = """

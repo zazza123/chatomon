@@ -1466,10 +1466,13 @@ REPLACED = {
 
 
 @pytest.mark.parametrize("verdict", REPLACED)
-def test_a_replaced_reply_is_repeated_like_a_rejected_one(project, monkeypatch, verdict):
+def test_every_framework_repeats_a_replaced_reply_like_a_rejected_one(
+    project, monkeypatch, framework: StudioHarness, verdict
+):
     ended, action, replies = REPLACED[verdict]
-    module = QUIET.replace('Verdict.block(guidance="Write it again, politely.")', verdict)
-    assert module != QUIET
+    text = quiet(framework.name)
+    module = text.replace('Verdict.block(guidance="Write it again, politely.")', verdict)
+    assert module != text
     session = project(module=module)
     say(session, "I am angry")
     test = save(session)
