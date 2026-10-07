@@ -22,7 +22,9 @@ __all__ = [
     "Message",
     "OrbitalContext",
     "OrbitalResult",
+    "OutputAttempt",
     "OutputDecision",
+    "OutputDecisionKind",
     "Side",
     "TurnReport",
     "Verdict",
@@ -39,12 +41,17 @@ ErrorPolicy = Literal["block", "allow"]
 """What the engine does when an orbital fails or times out."""
 
 CaptureContent = Literal["none", "hash", "full"]
-"""How much message content chatomon records in logs, traces and reports."""
+"""How much message content chatomon records in turn reports; logs and traces carry
+labels only."""
 
 FinalAction = Literal[
     "answered", "orbital_response", "blocked", "guided_refusal", "fallback_refusal", "aborted"
 ]
 """How a turn ended, as recorded in the [TurnReport][chatomon.schemas.TurnReport]."""
+
+OutputDecisionKind = Literal["accept", "replace", "regenerate"]
+"""What the engine decided about a reply of the nucleus: `accept` sends it, `replace`
+sends another text instead, `regenerate` asks the nucleus for a new one."""
 
 DEFAULT_REFUSAL = "I'm sorry, I can't help with that."
 """Reply used when a message is blocked without a specific reply."""
@@ -265,7 +272,7 @@ class OutputDecision(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    kind: Literal["accept", "replace", "regenerate"]
+    kind: OutputDecisionKind
     """`accept`: send the reply; `replace`: send `text` instead; `regenerate`: call
     the nucleus again with `guidance`, then run the output chain again."""
 
@@ -338,6 +345,24 @@ class OrbitalResult(BaseModel):
     """Annotations as JSON, according to `capture_content`."""
 
 
+class OutputAttempt(BaseModel):
+    """Audit record of one reply of the nucleus and of the output chain that checked it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    nucleus_reply: str | None = None
+    """The reply the nucleus wrote, according to `capture_content`. It is what the
+    nucleus wrote whatever the decision: a text that took its place is in the result
+    of the orbital that gave it and, when it ended the turn, in `final_reply`."""
+
+    results: tuple[OrbitalResult, ...]
+    """Results of the output chain on this reply, in order."""
+
+    decision: OutputDecisionKind | None = None
+    """What the engine decided about the reply; `None` when the turn was aborted
+    while the output chain was running."""
+
+
 class TurnReport(BaseModel):
     """Audit record of one conversation turn, delivered to `on_turn`."""
 
@@ -367,8 +392,8 @@ class TurnReport(BaseModel):
     input: tuple[OrbitalResult, ...]
     """Results of the input chain."""
 
-    output: tuple[tuple[OrbitalResult, ...], ...]
-    """Results of the output chain, one tuple per attempt."""
+    output: tuple[OutputAttempt, ...]
+    """The attempts of the nucleus, in order: one per reply the output chain checked."""
 
     user_message: str | None = None
     """The user message, according to `capture_content`."""

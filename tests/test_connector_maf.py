@@ -24,17 +24,22 @@ from agent_framework import (
 )
 from agent_framework.foundry import FoundryAgent, FoundryChatClient, RawFoundryAgentChatClient
 
-from chatomon import Atom, ChatomonConfigError, MissingExtraError, Verdict
+from chatomon import Atom, ChatomonConfigError, MissingExtraError, TurnReport, Verdict
 from chatomon.connectors.maf import MAFConnector, MAFFoundryConnector
 from chatomon.orbitals import JudgeOrbital
-from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER
+from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER, CaptureContent
 from tests.contract.harness import Call
 from tests.contract.harness_maf import FakeProjectClient, ScriptedMAFClient, visible
 from tests.fakes import ScriptedOrbital
 
 
 def make_agent(
-    script: list[str | Exception], *, input_orbitals=(), output_orbitals=(), **kwargs: Any
+    script: list[str | Exception],
+    *,
+    input_orbitals=(),
+    output_orbitals=(),
+    capture_content: CaptureContent = "none",
+    **kwargs: Any,
 ):
     calls: list[Call] = []
     client = ScriptedMAFClient(script, calls)
@@ -46,8 +51,13 @@ def make_agent(
         input_orbitals=input_orbitals,
         output_orbitals=output_orbitals,
         on_turn=reports.append,
+        capture_content=capture_content,
     )
     return atom.build(), client, reports
+
+
+def attempts(report: TurnReport) -> list[tuple[str | None, str | None]]:
+    return [(attempt.nucleus_reply, attempt.decision) for attempt in report.output]
 
 
 async def test_native_agent_uses_local_history_and_store_false():
@@ -69,7 +79,9 @@ async def test_native_agent_uses_local_history_and_store_false():
 
 
 async def test_input_only_streams_and_reports_after_completion():
-    agent, client, reports = make_agent(["Hello world"], input_orbitals=[ScriptedOrbital()])
+    agent, client, reports = make_agent(
+        ["Hello world"], input_orbitals=[ScriptedOrbital()], capture_content="full"
+    )
     session = agent.create_session()
     stream = agent.run("hello", session=session, stream=True)
     assert reports == []
@@ -77,6 +89,8 @@ async def test_input_only_streams_and_reports_after_completion():
     assert updates
     assert (await stream.get_final_response()).text == "Hello world"
     assert [report.final_action for report in reports] == ["answered"]
+    # A streamed reply is one attempt too, recorded when the stream ends.
+    assert attempts(reports[0]) == [("Hello world", "accept")]
     assert visible(session.state["in_memory"]["messages"]) == [
         ("user", "hello"),
         ("assistant", "Hello world"),
@@ -306,6 +320,7 @@ async def test_foundry_output_orbitals_replace_before_local_history():
 
 async def test_foundry_output_regeneration_uses_transient_developer_guidance():
     observer = _CaptureChatRequest()
+    reports: list[TurnReport] = []
     out = ScriptedOrbital(Verdict.block(guidance="Answer safely."), Verdict.allow(), name="out")
     agent = Atom(
         name="test",
@@ -317,6 +332,8 @@ async def test_foundry_output_regeneration_uses_transient_developer_guidance():
             middleware=[observer],
         ),
         output_orbitals=[out],
+        on_turn=reports.append,
+        capture_content="full",
     ).build()
     scripted = ScriptedMAFClient(["rejected draft", "approved answer"], [])
     replace_transport(agent.client, scripted)
@@ -329,6 +346,7 @@ async def test_foundry_output_regeneration_uses_transient_developer_guidance():
         ("user", "hello"),
         ("assistant", "approved answer"),
     ]
+    assert attempts(reports[0]) == [("rejected draft", "regenerate"), ("approved answer", "accept")]
 
 
 class _CaptureChatRequest(ChatMiddleware):

@@ -39,7 +39,10 @@ async def test_long_reply_regenerates_then_falls_back_to_the_refusal():
     assert (second.kind, second.text) == ("replace", DEFAULT_REFUSAL)
     report = await engine.finish_turn(turn)
     assert report.final_action == "fallback_refusal"
-    assert [attempt[0].reason for attempt in report.output] == ["reply_too_long", "reply_too_long"]
+    assert [attempt.results[0].reason for attempt in report.output] == [
+        "reply_too_long",
+        "reply_too_long",
+    ]
 
 
 async def test_long_reply_without_retries_is_refused_at_once():
@@ -113,7 +116,7 @@ async def test_one_length_orbital_reports_each_side_with_its_reason():
     await engine.run_output(turn, reply=LONG)
     report = await engine.finish_turn(turn)
     assert (report.input[0].action, report.input[0].reason) == ("allow", None)
-    assert report.output[0][0].reason == "reply_too_long"
+    assert report.output[0].results[0].reason == "reply_too_long"
 
 
 def test_turn_limit_cannot_guard_the_output():

@@ -6,10 +6,10 @@ import sys
 
 import pytest
 
-from chatomon import Atom, ChatomonConfigError, MissingExtraError
+from chatomon import Atom, ChatomonConfigError, MissingExtraError, Verdict
 from chatomon.observability import ContentPolicy
 from chatomon.orbitals import JudgeOrbital
-from tests.fakes import FakeConnector
+from tests.fakes import FakeConnector, ScriptedOrbital, make_engine
 
 QUESTION = "Where is my parcel?"
 
@@ -25,6 +25,32 @@ def test_failing_redactor_records_a_marker_instead_of_raising():
         raise RuntimeError("redactor down")
 
     assert ContentPolicy("full", redactor=broken).text("secret") == "[redaction failed]"
+
+
+@pytest.mark.parametrize("returned", [None, 42, b"bytes", ["a", "list"]])
+def test_a_redactor_that_returns_no_text_records_a_marker(returned):
+    policy = ContentPolicy("full", redactor=lambda text: returned)
+    assert policy.text("secret") == "[redaction failed]"
+    assert policy.data({"k": "secret"}) == "[redaction failed]"
+
+
+async def test_a_redactor_that_returns_no_text_does_not_cost_the_turn_its_report():
+    engine = make_engine(
+        inputs=[ScriptedOrbital(Verdict.allow("be brief"), name="i")],
+        outputs=[ScriptedOrbital(Verdict.block(guidance="Shorter."), Verdict.allow(), name="o")],
+        content=ContentPolicy("full", redactor=lambda text: 42),  # type: ignore[arg-type,return-value]
+    )
+    turn = engine.start_turn()
+    await engine.run_input(turn, message="hello")
+    await engine.run_output(turn, reply="a long reply")
+    await engine.run_output(turn, reply="short")
+    report = await engine.finish_turn(turn)
+    assert report.final_action == "answered"
+    marker = "[redaction failed]"
+    assert (report.user_message, report.final_reply) == (marker, marker)
+    assert report.input[0].guidance == marker
+    assert [attempt.nucleus_reply for attempt in report.output] == [marker, marker]
+    assert report.output[0].results[0].guidance == marker
 
 
 def test_unserializable_annotations_record_a_marker_instead_of_raising():

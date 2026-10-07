@@ -4,7 +4,7 @@ import pytest
 
 from chatomon import OrbitalContext, Verdict, orbital
 from tests.contract.harness import build_agent
-from tests.fakes import ScriptedOrbital
+from tests.fakes import HangingOrbital, ScriptedOrbital
 
 
 async def test_model_error_aborts_the_turn_and_the_next_turn_works(harness):
@@ -15,6 +15,27 @@ async def test_model_error_aborts_the_turn_and_the_next_turn_works(harness):
     assert reports[0].error_type == "RuntimeError"
     assert await harness.ask(agent, "hello again") == "Back online."
     assert reports[1].final_action == "answered"
+
+
+async def test_a_turn_cancelled_while_an_output_orbital_runs_reports_the_attempt(harness):
+    hanging = HangingOrbital()
+    agent, reports = build_agent(
+        harness,
+        ["Open 24/7"],
+        output_orbitals=[ScriptedOrbital(name="first"), hanging],
+        capture_content="full",
+    )
+    running = asyncio.ensure_future(harness.ask(agent, "hours?"))
+    await hanging.started.wait()
+    running.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await running
+    assert [report.final_action for report in reports] == ["aborted"]
+    [attempt] = reports[0].output
+    # The reply under check and the orbitals that had answered are in the report.
+    assert attempt.nucleus_reply == "Open 24/7"
+    assert [result.name for result in attempt.results] == ["first"]
+    assert attempt.decision is None
 
 
 def test_sync_api(harness):

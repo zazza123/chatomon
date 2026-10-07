@@ -7,7 +7,7 @@ export function results(turn, side, attempt = -1) {
   const report = turn.report;
   let ran = [];
   if (report && side === "input") ran = report.input;
-  if (report && side === "output") ran = report.output.at(attempt) || [];
+  if (report && side === "output") ran = report.output.at(attempt)?.results || [];
   const byName = new Map(ran.map((r) => [r.name, r]));
   return turn.chain[side].map((name) => byName.get(name) || { name, action: "skip" });
 }

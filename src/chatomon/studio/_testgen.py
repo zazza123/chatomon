@@ -88,7 +88,10 @@ _KEEPS_OFFLINE = "# No model is called in this test: the test model keeps the nu
 _INPUT = 'assert [(r.name, r.action) for r in report.input if r.action != "allow"] == '
 _NO_OUTPUT = (
     "assert [",
-    '    (r.name, r.action) for a in report.output for r in a if r.action != "allow"',
+    "    (r.name, r.action)",
+    "    for attempt in report.output",
+    "    for r in attempt.results",
+    '    if r.action != "allow"',
     "] == []",
 )
 # Names the test itself uses: something imported under one of them gets an alias.
@@ -278,7 +281,8 @@ def _read(turn: TurnRecord) -> _Turn:
     report = turn.report
     if report is None:
         raise RefusedError(CANNOT_SAVE)
-    ran = [*report.input, *(result for attempt in report.output for result in attempt)]
+    checked = [result for attempt in report.output for result in attempt.results]
+    ran = [*report.input, *checked]
     nucleus = _nucleus_called(report)
     reply: str | None = None
     reply_by: str | None = None
@@ -298,7 +302,7 @@ def _read(turn: TurnRecord) -> _Turn:
         action=report.final_action,
         stopped=[(r.name, r.action) for r in report.input if r.action != "allow"],
         nucleus=nucleus,
-        output_stopped=any(r.action != "allow" for attempt in report.output for r in attempt),
+        output_stopped=any(r.action != "allow" for r in checked),
         remote=list(dict.fromkeys(r.name for r in ran if r.name in turn.models)),
         reply=reply,
         reply_by=reply_by,

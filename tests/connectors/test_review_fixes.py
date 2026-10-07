@@ -156,11 +156,33 @@ async def test_langchain_jump_back_to_the_model_is_checked_again():
         connector=LangChainConnector(model, middleware=[_JumpBackOnce()]),
         output_orbitals=[out],
         on_turn=reports.append,
+        capture_content="full",
     ).build()
     state = await agent.ainvoke({"messages": [HumanMessage(content="hello")]})
     assert state["messages"][-1].content == "second"
     assert [ctx.message for ctx in out.contexts] == ["first", "second"]
     assert reports[0].final_action == "answered"
+    assert [(a.nucleus_reply, a.decision) for a in reports[0].output] == [
+        ("first", "accept"),
+        ("second", "accept"),
+    ]
+
+
+async def test_langchain_reply_with_no_text_is_an_attempt_with_an_empty_reply():
+    reports: list[TurnReport] = []
+    out = ScriptedOrbital(name="out")
+    agent = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=LangChainConnector(ScriptedChatModel(script=[AIMessage(content="")])),
+        output_orbitals=[out],
+        on_turn=reports.append,
+        capture_content="full",
+    ).build()
+    await agent.ainvoke({"messages": [HumanMessage(content="hello")]})
+    assert [ctx.message for ctx in out.contexts] == [""]
+    # Recorded as an empty text, not as a reply that was not captured.
+    assert [(a.nucleus_reply, a.decision) for a in reports[0].output] == [("", "accept")]
 
 
 async def test_pydantic_ai_output_validator_retry_is_checked_again():
@@ -177,6 +199,7 @@ async def test_pydantic_ai_output_validator_retry_is_checked_again():
         connector=PydanticAIConnector(FunctionModel(respond)),
         output_orbitals=[out],
         on_turn=reports.append,
+        capture_content="full",
     ).build()
 
     @agent.output_validator
@@ -189,6 +212,11 @@ async def test_pydantic_ai_output_validator_retry_is_checked_again():
     assert result.output == "a longer reply"
     assert [ctx.message for ctx in out.contexts] == ["too short", "a longer reply"]
     assert reports[0].final_action == "answered"
+    # chatomon accepted the first reply; the framework's validator asked for another.
+    assert [(a.nucleus_reply, a.decision) for a in reports[0].output] == [
+        ("too short", "accept"),
+        ("a longer reply", "accept"),
+    ]
 
 
 async def test_pydantic_ai_empty_response_is_not_checked():

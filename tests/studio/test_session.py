@@ -79,6 +79,35 @@ async def test_a_turn_streams_its_events_and_is_recorded():
     assert [record.n for record in session.turns] == [1]
 
 
+async def test_the_report_of_a_turn_has_one_record_for_each_attempt_of_the_nucleus():
+    replies = iter(["Open 24/7.", "Open 9-18."])
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content=next(replies))])
+
+    judge = ScriptedOrbital(Verdict.block(guidance="Fix the hours."), Verdict.allow(), name="judge")
+    session = Session(
+        make_atom(connector=PydanticAIConnector(FunctionModel(respond)), output_orbitals=[judge]),
+        source="app:atom",
+    )
+    events = await drain(session.start_turn("hours?"))
+    attempts = events[-1]["turn"]["report"]["output"]
+    # The shape the page reads, in the event of the turn and in the state alike.
+    assert [sorted(attempt) for attempt in attempts] == [
+        ["decision", "nucleus_reply", "results"],
+        ["decision", "nucleus_reply", "results"],
+    ]
+    assert [(attempt["nucleus_reply"], attempt["decision"]) for attempt in attempts] == [
+        ("Open 24/7.", "regenerate"),
+        ("Open 9-18.", "accept"),
+    ]
+    assert [[r["name"] for r in attempt["results"]] for attempt in attempts] == [
+        ["judge"],
+        ["judge"],
+    ]
+    assert session.state()["turns"][0]["report"]["output"] == attempts
+
+
 async def test_history_carries_across_turns_and_keeps_the_placeholder():
     guard = ScriptedOrbital(Verdict.block("No."), Verdict.allow(), name="guard")
     session = Session(make_atom(input_orbitals=[guard]), source="app:atom")

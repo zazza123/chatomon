@@ -169,17 +169,20 @@ function resRow(x) {
     <dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd${mono.has(k) ? ' class="mono"' : ""}${k === "fingerprint" ? ` title="${esc(x.fingerprint)}"` : ""}>${esc(v)}</dd>`).join("")}</dl></details>`;
 }
 
+// What the engine decided about a reply of the nucleus, as the report says it; an attempt
+// with no decision is one the turn was aborted in.
+const DECIDED = { accept: "accepted", replace: "replaced", regenerate: "rejected" };
+
 export function showReport(turn, { total, onNav, onRerun, onSave, onClose, busy }) {
   const r = turn.report;
   const action = r ? r.final_action : "aborted";
   const attempts = r ? r.output : [];
   const input = `<section class="rep-sec"><h3 class="label">Input chain</h3>${turn.chain.input.length ? `<div class="res-list">${results(turn, "input").map(resRow).join("")}</div>` : `<p class="muted">No input orbitals were on.</p>`}</section>`;
   const output = attempts.length
-    ? `<section class="rep-sec"><h3 class="label">Nucleus and output chain</h3>${attempts.map((_, i) => {
-        const last = i === attempts.length - 1;
-        const status = last ? (action === "answered" || action === "guided_refusal" ? "sent" : "replaced") : "rejected";
+    ? `<section class="rep-sec"><h3 class="label">Nucleus and output chain</h3>${attempts.map((attempt, i) => {
+        const status = DECIDED[attempt.decision] || "interrupted";
         const rows = results(turn, "output", i);
-        return `<div class="attempt"><div class="attempt-head"><strong>Attempt ${i + 1}</strong><span class="pill ${status === "sent" ? "act-allow" : "act-block"}">${status}</span></div>${rows.length ? `<div class="res-list">${rows.map(resRow).join("")}</div>` : `<p class="muted">No output orbitals were on.</p>`}</div>`;
+        return `<div class="attempt"><div class="attempt-head"><strong>Attempt ${i + 1}</strong><span class="pill ${attempt.decision === "accept" ? "act-allow" : "act-block"}">${status}</span></div>${rows.length ? `<div class="res-list">${rows.map(resRow).join("")}</div>` : `<p class="muted">No output orbitals were on.</p>`}</div>`;
       }).join("")}</section>`
     : `<section class="rep-sec"><h3 class="label">Nucleus</h3><p class="muted">${nucleusFailed(turn)
         ? "The nucleus was called and failed before a reply could be checked."

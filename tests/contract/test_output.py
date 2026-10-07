@@ -1,4 +1,4 @@
-from chatomon import Verdict
+from chatomon import TurnReport, Verdict
 from chatomon.connectors import render_guidance
 from chatomon.orbitals import JudgeOrbital
 from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER as PLACEHOLDER
@@ -29,11 +29,53 @@ async def test_regeneration_accumulates_guidance_and_keeps_only_the_final_reply(
     assert len(harness.calls) == 3
     assert render_guidance(["Fix the hours.", "No prices."]) in harness.calls[2].system
     assert harness.history(agent) == [("user", "hours?"), ("assistant", "Open 9-18")]
-    assert [[r.action for r in attempt] for attempt in reports[0].output] == [
+    assert [[r.action for r in attempt.results] for attempt in reports[0].output] == [
         ["block"],
         ["block"],
         ["allow"],
     ]
+
+
+def attempts(report: TurnReport) -> list[tuple[str | None, str | None]]:
+    return [(attempt.nucleus_reply, attempt.decision) for attempt in report.output]
+
+
+async def test_the_report_records_every_reply_the_nucleus_wrote(harness):
+    judge = ScriptedOrbital(
+        Verdict.block(guidance="Fix the hours."),
+        Verdict.block(guidance="No prices."),
+        Verdict.allow(),
+        name="judge",
+    )
+    agent, reports = build_agent(
+        harness,
+        ["Open 24/7", "Open 9-18, 5 euro", "Open 9-18"],
+        output_orbitals=[judge],
+        capture_content="full",
+    )
+    await harness.ask(agent, "hours?")
+    assert attempts(reports[0]) == [
+        ("Open 24/7", "regenerate"),
+        ("Open 9-18, 5 euro", "regenerate"),
+        ("Open 9-18", "accept"),
+    ]
+    assert reports[0].final_reply == "Open 9-18"
+
+
+async def test_the_report_keeps_the_reply_an_orbital_replaced(harness):
+    out = ScriptedOrbital(Verdict.respond("Please call us."), name="out")
+    agent, reports = build_agent(harness, ["draft"], output_orbitals=[out], capture_content="full")
+    await harness.ask(agent, "hello")
+    assert attempts(reports[0]) == [("draft", "replace")]
+    assert reports[0].final_reply == "Please call us."
+
+
+async def test_the_report_records_no_reply_by_default(harness):
+    judge = ScriptedOrbital(Verdict.block(guidance="Fix the hours."), Verdict.allow(), name="judge")
+    agent, reports = build_agent(harness, ["Open 24/7", "Open 9-18"], output_orbitals=[judge])
+    await harness.ask(agent, "hours?")
+    assert attempts(reports[0]) == [(None, "regenerate"), (None, "accept")]
+    assert "Open" not in reports[0].model_dump_json()
 
 
 async def test_exhausted_retries_fall_back_to_the_refusal(harness):
@@ -64,6 +106,8 @@ async def test_tool_call_steps_are_not_checked(harness):
     assert await harness.ask(agent, "hours?") == "Open 9-18"
     assert [ctx.message for ctx in out.contexts] == ["Open 9-18"]
     assert reports[0].final_action == "answered"
+    # A step that calls a tool is not a reply: the turn has one attempt.
+    assert [attempt.decision for attempt in reports[0].output] == ["accept"]
 
 
 async def test_guided_refusal_reply_goes_through_output_orbitals(harness):
@@ -90,4 +134,4 @@ async def test_judge_orbital_uses_the_atom_connector(harness):
     )
     assert await harness.ask(agent, "hello") == "Short."
     assert render_guidance(["Shorter."]) in harness.calls[1].system
-    assert reports[0].output[0][0].reason == "judge_block"
+    assert reports[0].output[0].results[0].reason == "judge_block"

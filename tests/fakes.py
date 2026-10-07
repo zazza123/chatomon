@@ -56,6 +56,21 @@ class SlowOrbital(Orbital):
         return Verdict.allow()
 
 
+class HangingOrbital(Orbital):
+    """Starts and never answers, so a test can cancel the turn while it runs."""
+
+    calls_model = False
+
+    def __init__(self) -> None:
+        super().__init__(name="hanging")
+        self.started = asyncio.Event()
+
+    async def check(self, ctx: OrbitalContext) -> Verdict:
+        self.started.set()
+        await asyncio.Event().wait()
+        return Verdict.allow()
+
+
 def make_engine(
     *, inputs: Sequence[Orbital] = (), outputs: Sequence[Orbital] = (), **kwargs: object
 ) -> Engine:

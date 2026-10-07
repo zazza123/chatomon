@@ -43,8 +43,8 @@ class Atom(Generic[AgentT]):
         blocked_placeholder: Text that replaces a blocked user message in the history.
         max_retries: Regenerations allowed when an output orbital blocks with guidance.
         on_turn: Receives the [TurnReport][chatomon.schemas.TurnReport] of every turn.
-        capture_content: `"none"` (default), `"hash"` or `"full"`; applies to logs,
-            traces and reports.
+        capture_content: `"none"` (default), `"hash"` or `"full"`: how much of the
+            conversation the turn reports record. Logs and traces carry labels only.
         redactor: Applied to recorded text when `capture_content="full"`.
         tracer_provider: OpenTelemetry provider; the global one when `None`.
 

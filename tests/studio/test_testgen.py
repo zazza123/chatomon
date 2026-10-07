@@ -226,7 +226,7 @@ MARKED = (
     ", so the test is marked `integration`: register the marker in your pytest "
     "configuration and run it when the credentials are set."
 )
-OUTPUT_CHECK = '(r.name, r.action) for a in report.output for r in a if r.action != "allow"'
+OUTPUT_CHECK = "for attempt in report.output\n        for r in attempt.results\n"
 ALONE = (
     "Turn {n} is saved alone: if it depended on what came before it, as a turn limit does, "
     "the test fails. Replay the earlier turns in that case."
@@ -375,7 +375,8 @@ def test_what_the_nucleus_wrote_is_never_checked_and_no_name_is_left_unused(proj
     say(session, "hello")
     test = save(session)
     assert '    agent.run_sync("hello")\n' in test.code
-    assert "result" not in test.code
+    # The result of the call is kept under no name; `attempt.results` is another word.
+    assert "result = " not in test.code
     assert "Hi." not in test.code
     run_saved(test, monkeypatch)
 
