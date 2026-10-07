@@ -1106,6 +1106,44 @@ def test_saving_a_turn_writes_a_test_and_asks_before_replacing_it(page: Page, sa
     expect(card(page).locator("#dlg-title")).to_be_focused()
 
 
+@pytest.fixture
+def saving_judged(tmp_path, monkeypatch) -> Iterator[Studio]:
+    """A studio that can write tests, on the atom whose first reply is always rejected."""
+    monkeypatch.chdir(tmp_path)
+    atom = judged_atom()
+    with running(atom, namespace={"atom": atom}) as handle:
+        yield handle
+
+
+REJECTED = "tests/studio/test_are_you_open.py"
+
+
+def test_a_turn_with_a_rejected_reply_is_saved_with_the_replies_of_the_nucleus(
+    page: Page, saving_judged, tmp_path
+):
+    open_studio(page, saving_judged)
+    send(page, "Are you open?", REPLY)
+    save_as_test(page, 1)
+    # The first thing the card says is that the file will hold text of the conversation.
+    expect(card(page).locator("p.note").first).to_have_text(
+        "This test stores the 2 replies the nucleus gave in the studio, as text: "
+        "read them before you commit the file."
+    )
+    expect(card(page).locator("#dlg-sub")).to_have_text("Runs offline: no model is called")
+    code = card(page).locator("pre.code")
+    expect(code).to_contain_text("NUCLEUS_REPLIES = [")
+    expect(code).to_contain_text('("regenerate", [("hours", "block")]),')
+    # The words a test with a stand-in of its own uses are highlighted as keywords.
+    keywords = code.locator("span.k").all_inner_texts()
+    assert {"def", "yield", "raise", "return"} <= set(keywords)
+
+    card(page).get_by_role("button", name="Write file").click()
+    expect(card(page).locator("#test-done")).to_contain_text(f"Saved as {REJECTED}")
+    written = (tmp_path / REJECTED).read_text(encoding="utf-8")
+    assert '    "We are open 24/7.",\n' in written
+    assert f"    {json.dumps(REPLY)},\n" in written
+
+
 def test_a_test_holds_the_conversation_or_the_turn_alone(page: Page, saving):
     open_studio(page, saving)
     send(page, "hello", REPLY)
@@ -1115,7 +1153,7 @@ def test_a_test_holds_the_conversation_or_the_turn_alone(page: Page, saving):
     expect(earlier).to_be_checked()
     code = card(page).locator("pre.code")
     expect(code).to_contain_text('agent.run_sync("hello")')
-    expect(card(page).locator("#dlg-sub")).to_contain_text("marked integration")
+    expect(card(page).locator("#dlg-sub")).to_have_text("Calls real models: marked integration")
     card(page).get_by_label("File, inside").fill("tests/mine.py")
 
     earlier.click()
