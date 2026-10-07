@@ -1,11 +1,14 @@
-import { $, $$, esc, rich, shortFp } from "./util.js";
-import { addOrbital, patchOrbital, resetOrbitals } from "./api.js";
+import { $, $$, esc, fmtMs, rich, shortFp } from "./util.js";
+import { addOrbital, patchOrbital, probeOrbital, resetOrbitals } from "./api.js";
+import { TRASH, block, breaksLine, handle, hydrate, mark, read as readBlock } from "./blocks.js";
 import { closeDialog, kv, openDialog } from "./cards.js";
 
-const TRASH = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>`;
 const dlg = $("#dlg");
 let ctx = null;
 let view = { side: null, name: null };
+// The block being applied, so that a test started by the same click waits for it.
+let settling = Promise.resolve(true);
+let pressedBlock = null;
 
 const find = (state, side, name) => state.orbitals[side].find((o) => o.name === name);
 const fieldId = (key) => `f-${key}`;
@@ -65,6 +68,57 @@ function clear(el) {
 }
 const grow = (el) => { el.style.height = "auto"; el.style.height = `${el.scrollHeight + 2}px`; };
 
+/** A setting as its field, or as a block when its value has fields of its own. */
+const drawn = (s, value, names, changed = false) => (s.type === "block" ? block(s, value, `b-${s.key}`, changed) : field(s, value, names, changed));
+
+const PROBE = `<div class="card-row"><span class="label">Connection</span><span class="probe" id="probe-out" role="status">Not tested yet</span><button class="btn sm" type="button" data-dlg="probe">Test connection</button></div>
+  <p class="hint">Sends one sample message, as a turn would. Nothing is added or saved.</p>`;
+
+/** Run a test and show how it went, in the words of the server. */
+async function probe(request) {
+  const out = $("#probe-out", dlg);
+  const button = $('[data-dlg="probe"]', dlg);
+  button.disabled = true;
+  button.textContent = "Testing…";
+  out.className = "probe";
+  out.textContent = "Sending one sample message…";
+  try {
+    const result = await request();
+    if (!out.isConnected) return;
+    if (result.outcome === "answered") {
+      out.innerHTML = `<span class="pill act-${esc(result.action)}">${esc(result.action)}</span>${result.reason ? `<span>${esc(result.reason)}</span>` : ""}<span class="mono">${fmtMs(result.duration_ms)}</span>`;
+    } else {
+      out.className = "probe err";
+      out.textContent = result.message;
+    }
+  } catch (error) {
+    if (!out.isConnected) return;
+    // A refusal before the check, such as a variable that is not set, is shown where the outcome is.
+    if (![404, 409, 422].includes(error.status)) { closeDialog(); await ctx.refused(error); return; }
+    out.className = "probe err";
+    out.innerHTML = rich(error.message);
+  } finally {
+    if (button.isConnected) { button.disabled = false; button.textContent = "Test connection"; }
+  }
+}
+
+// In an orbital's card a block is applied whole when the focus leaves it. A press inside it
+// that takes the focus nowhere, as on its padding, is not leaving it. These two are listeners
+// and not properties of the card's body: `focusout` has no property to assign a handler to.
+dlg.addEventListener("pointerdown", (e) => { pressedBlock = e.target.closest(".block"); });
+dlg.addEventListener("focusout", (e) => {
+  const fs = e.target.closest(".block");
+  if (!fs || !fs.classList.contains("dirty") || !$("#card-switch", dlg)) return;
+  if (e.relatedTarget ? fs.contains(e.relatedTarget) : pressedBlock === fs) return;
+  settling = commitBlock(fs);
+});
+
+/** A block starts to differ from what the server has: say so until it is applied. */
+function touch(fs) {
+  fs.classList.add("dirty");
+  $(":scope > .block-body > .block-state", fs).hidden = false;
+}
+
 function draw(state) {
   const o = find(state, view.side, view.name);
   if (!o) { closeDialog(); return; }
@@ -76,7 +130,7 @@ function draw(state) {
   const fixed = o.fixed.length ? `<dl class="kv">${o.fixed.map((f) => `<dt>${esc(f.key)}</dt><dd>${esc(f.name ? `${f.name} (${f.type})` : f.type)} <span class="from">· from code</span></dd>`).join("")}</dl>` : "";
   const config = Object.entries(o.config).filter(([k]) => k !== "kind" && k !== "name").map(([k, v]) => [k, typeof v === "string" ? v : JSON.stringify(v)]);
   const body = o.editable
-    ? `${fixed}<div class="fields">${added ? nameField(o.name) : ""}${o.settings.map((s) => field(s, s.value, names, s.changed)).join("")}</div>${o.fixed.length ? `<p class="hint">Settings marked “from code” are objects in your code. The studio changes only the others.</p>` : ""}`
+    ? `${fixed}<div class="fields">${added ? nameField(o.name) : ""}${o.settings.map((s) => drawn(s, s.value, names, s.changed)).join("")}</div>${o.fixed.length ? `<p class="hint">Settings marked “from code” are objects in your code. The studio changes only the others.</p>` : ""}`
     : `${kv(config)}<p class="hint">${esc(o.note)} Here you can turn it off or move it in the chain.</p>`;
   const position = `<div class="card-row"><span class="label">Position</span><span class="pos" id="card-pos">${i + 1} of ${list.length} in the ${o.side} chain</span><button class="btn sm" type="button" data-dlg="up"${i === 0 ? " disabled" : ""}>Move up</button><button class="btn sm" type="button" data-dlg="down"${i === list.length - 1 ? " disabled" : ""}>Move down</button></div>`;
   const left = added
@@ -86,14 +140,22 @@ function draw(state) {
     title: `<span class="dlg-glyph${o.enabled ? "" : " off"}"></span><span class="mono" id="card-title">${esc(o.name)}</span>`,
     sub: `${esc(o.kind)} · ${o.side} orbital · ${added ? "added in the studio" : `from ${source}`}`,
     extra: `<span class="sw-label">${o.enabled ? "On" : "Off"}</span><label class="switch big"><input type="checkbox" role="switch" id="card-switch"${o.enabled ? " checked" : ""} aria-label="${esc(o.name)}"><span></span></label>`,
-    body: `${body}${position}<div class="fp" id="card-fp" title="${esc(o.fingerprint)}">fingerprint ${esc(shortFp(o.fingerprint))} · changes with every setting and is recorded in each turn report</div>`,
+    body: `${body}${o.calls_model ? PROBE : ""}${position}<div class="fp" id="card-fp" title="${esc(o.fingerprint)}">fingerprint ${esc(shortFp(o.fingerprint))} · changes with every setting and is recorded in each turn report</div>`,
     actions: `${left}<span class="spacer"></span>${added ? "" : `<button class="btn" type="button" data-dlg="reset-one"${o.modified ? "" : " disabled"}>Reset to code</button>`}<button class="btn primary" type="button" data-dlg="close">Done</button>`,
     onClose: () => ctx.closed(view.side, view.name),
   });
   $$("textarea", dlg).forEach(grow);
+  hydrate(dlg);
+  settling = Promise.resolve(true);
   $("#card-switch").onchange = (e) => act(() => patchOrbital(view.side, view.name, { enabled: e.target.checked }), "#card-switch");
-  $("#dlg-body").oninput = (e) => { if (e.target.tagName === "TEXTAREA") grow(e.target); };
+  $("#dlg-body").oninput = (e) => {
+    if (e.target.tagName === "TEXTAREA") grow(e.target);
+    const fs = e.target.closest(".block");
+    if (fs) touch(fs);
+  };
   $("#dlg-body").onchange = (e) => {
+    const changed = handle(e);
+    if (changed) { touch(changed); return; }
     const el = e.target.closest("[data-key]");
     if (!el) return;
     // Enter already sent this value: leaving the field afterwards is not a second change.
@@ -101,13 +163,30 @@ function draw(state) {
     commit(el);
   };
   // In a text area Enter applies the setting, as in the other fields; Shift+Enter breaks the line.
+  // In a block Enter applies the block, except where a list is written one entry per line.
   $("#dlg-body").onkeydown = (e) => {
-    if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.target.tagName !== "TEXTAREA") return;
+    if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+    const fs = e.target.closest(".block");
+    if (fs) {
+      if (!["TEXTAREA", "INPUT"].includes(e.target.tagName) || breaksLine(e.target)) return;
+      e.preventDefault();
+      if (fs.classList.contains("dirty")) settling = commitBlock(fs);
+      return;
+    }
+    if (e.target.tagName !== "TEXTAREA") return;
     e.preventDefault();
     e.target.dataset.entered = e.target.value;
     commit(e.target);
   };
-  $("#dlg-body").onclick = (e) => {
+  $("#dlg-body").onclick = async (e) => {
+    const changed = handle(e);
+    if (changed) { touch(changed); return; }
+    if (e.target.closest('[data-dlg="probe"]')) {
+      // A block edited and not applied is applied first; a refused one leaves nothing to test.
+      const { side, name } = view;
+      if (await settling && !$(".block.dirty", dlg)) await probe(() => probeOrbital(side, { name }));
+      return;
+    }
     const b = e.target.closest('[data-dlg="up"], [data-dlg="down"]');
     if (!b || b.disabled) return;
     const up = b.dataset.dlg === "up";
@@ -159,6 +238,11 @@ async function commit(el) {
   }
   if (!dlg.open || !el.isConnected) return;
   if (key === "name") view.name = value;
+  settled(state);
+}
+
+/** After an accepted change the card is not drawn again: only what derives from it changes. */
+function settled(state) {
   const o = find(state, view.side, view.name);
   if (!o) { closeDialog(); return; }
   $("#card-title").textContent = o.name;
@@ -167,7 +251,36 @@ async function commit(el) {
   $("#card-fp").textContent = `fingerprint ${shortFp(o.fingerprint)} · changes with every setting and is recorded in each turn report`;
   const reset = $('[data-dlg="reset-one"]', dlg);
   if (reset) reset.disabled = !o.modified;
-  for (const s of o.settings) $(`#${CSS.escape(fieldId(s.key))}`, dlg)?.closest(".field").classList.toggle("changed", s.changed);
+  for (const s of o.settings) {
+    const marked = s.type === "block" ? $(`.block[data-block="${CSS.escape(s.key)}"]`, dlg) : $(`#${CSS.escape(fieldId(s.key))}`, dlg)?.closest(".field");
+    marked?.classList.toggle("changed", s.changed);
+  }
+}
+
+/** Send a block whole. Resolves to whether it was accepted. */
+async function commitBlock(fs) {
+  const key = fs.dataset.block;
+  const { side, name } = view;
+  mark(fs, null);
+  let state;
+  try {
+    state = await ctx.apply(() => patchOrbital(side, name, { settings: { [key]: readBlock(fs) } }));
+  } catch (error) {
+    // As for a field: a refusal stays under the block, or goes to the toast when the card closed.
+    if (error.status === 422 || error.status === 409) {
+      if (dlg.open && fs.isConnected) mark(fs, error.message);
+      else ctx.toast(`${name}: ${error.message}`);
+      return false;
+    }
+    closeDialog();
+    await ctx.refused(error);
+    return false;
+  }
+  if (!dlg.open || !fs.isConnected) return true;
+  fs.classList.remove("dirty");
+  $(":scope > .block-body > .block-state", fs).hidden = true;
+  settled(state);
+  return true;
 }
 
 /** Draw the open orbital card again after a change made outside it, such as Undo. */
@@ -188,7 +301,8 @@ export function showPicker(side, context) {
     title: `Add an ${side} orbital`,
     sub: side === "input" ? "It runs on the user's message, after the orbitals already in the chain." : "It runs on the nucleus reply, after the orbitals already in the chain.",
     body: `<div class="picks">${kinds.map((kind) => `<button class="pick" type="button" data-kind="${esc(kind.kind)}"><span class="orb-name">${esc(kind.kind)}</span><span class="orb-kind">${esc(kind.summary)}</span></button>`).join("")}</div>
-      <p class="hint">Orbitals that need your own objects, such as clients or functions, are added in code.</p>`,
+      ${ctx.state().studio.extras.map((missing) => `<p class="hint">More orbitals with <code>pip install 'chatomon[${esc(missing.extra)}]'</code></p>`).join("")}
+      <p class="hint">Orbitals that need your own objects, such as functions, are added in code.</p>`,
     actions: `<span class="spacer"></span><button class="btn" type="button" data-dlg="close">Cancel</button>`,
   });
   $("#dlg-body").onclick = (e) => {
@@ -202,28 +316,47 @@ function showAddForm(side, kind) {
   openDialog({
     title: `Add <span class="mono">${esc(kind.kind)}</span>`,
     sub: `${side} orbital · it is created when you press Add`,
-    body: `<form id="add-form" class="fields" novalidate>${nameField(kind.name)}${kind.settings.map((s) => field(s, s.default, names)).join("")}</form>
-      <p class="field-err" id="add-err" role="alert" hidden></p>`,
+    body: `<form id="add-form" class="fields" novalidate>${nameField(kind.name)}${kind.settings.map((s) => drawn(s, s.default, names)).join("")}</form>
+      <p class="field-err" id="add-err" role="alert" hidden></p>${kind.calls_model ? PROBE : ""}`,
     actions: `<button class="btn" type="button" data-dlg="back">Back</button><span class="spacer"></span><button class="btn" type="button" data-dlg="close">Cancel</button><button class="btn primary" type="submit" form="add-form">Add</button>`,
   });
   $$("textarea", dlg).forEach(grow);
+  hydrate(dlg);
+  /** What the form holds now: the plain settings and, whole, the blocks. */
+  const gathered = () => {
+    const settings = {};
+    for (const el of $$("[data-key]", dlg)) { clear(el); settings[el.dataset.key] = read(el); }
+    for (const fs of $$(".block", dlg)) { mark(fs, null); settings[fs.dataset.block] = readBlock(fs); }
+    return settings;
+  };
   $("#dlg-body").oninput = (e) => { if (e.target.tagName === "TEXTAREA") grow(e.target); };
+  $("#dlg-body").onchange = (e) => { handle(e); };
+  $("#dlg-body").onclick = (e) => {
+    if (handle(e)) return;
+    if (!e.target.closest('[data-dlg="probe"]')) return;
+    // The form as it is, before anything is added; the name plays no part in the check.
+    const { name: _, ...settings } = gathered();
+    probe(() => probeOrbital(side, { kind: kind.kind, settings }));
+  };
   $("#dlg-actions").onclick = (e) => { if (e.target.closest('[data-dlg="back"]')) showPicker(side, ctx); };
-  // Enter adds the orbital from a text area too; Shift+Enter breaks the line.
+  // Enter adds the orbital from a text area too; Shift+Enter breaks the line, and so does
+  // Enter where a list is written one entry per line.
   $("#dlg-body").onkeydown = (e) => {
-    if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.target.tagName !== "TEXTAREA") return;
+    if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.target.tagName !== "TEXTAREA" || breaksLine(e.target)) return;
     e.preventDefault();
     $("#add-form").requestSubmit();
   };
-  ($(`#${CSS.escape(fieldId((kind.settings.find((s) => s.required) || {}).key || "name"))}`, dlg) || $("#f-name")).focus();
+  const first = kind.settings.find((s) => s.required);
+  ((first && first.type === "block" ? $(`.block[data-block="${CSS.escape(first.key)}"] :is(textarea, input, select)`, dlg) : $(`#${CSS.escape(fieldId((first || {}).key || "name"))}`, dlg)) || $("#f-name")).focus();
   $("#add-form").onsubmit = async (e) => {
     e.preventDefault();
-    const settings = {};
-    for (const el of $$("[data-key]", e.target)) { clear(el); settings[el.dataset.key] = read(el); }
+    const settings = gathered();
     $("#add-err").hidden = true;
     try {
       await ctx.apply(() => addOrbital(side, kind.kind, settings));
     } catch (error) {
+      const fs = error.setting ? $(`.block[data-block="${CSS.escape(error.setting)}"]`, dlg) : null;
+      if (fs) { mark(fs, error.message); $(":is(textarea, input, select)", fs)?.focus(); return; }
       const el = error.setting ? $(`#${CSS.escape(fieldId(error.setting))}`, dlg) : null;
       if (el) { fail(el, error.message); el.focus(); return; }
       $("#add-err").innerHTML = rich(error.message);
