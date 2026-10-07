@@ -17,7 +17,7 @@ from chatomon.errors import ChatomonError
 from chatomon.orbitals.base import Orbital
 from chatomon.schemas import Side
 from chatomon.studio import _kinds as kinds
-from chatomon.studio._kinds import InvalidSettingError
+from chatomon.studio._values import InvalidSettingError
 
 SIDES: tuple[Side, ...] = ("input", "output")
 

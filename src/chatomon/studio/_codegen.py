@@ -23,6 +23,7 @@ from chatomon.orbitals.base import Orbital
 from chatomon.schemas import Side
 from chatomon.studio import _kinds as kinds
 from chatomon.studio._chains import SIDES, Chains, Entry
+from chatomon.studio._values import plain
 
 WIDTH = 88
 OFF = "# Off in the studio:"
@@ -222,21 +223,21 @@ class _Writer:
             if key == "name":
                 continue
             setting = kind.setting(key)
-            if setting is None:
+            if setting is None or setting.type == "block":
                 value = kinds.read(orb, key, self.chains.connector)
                 if value is None:
                     continue
                 text, comment, more = self._object(orb.name, key, value)
             else:
                 raw = getattr(orb, key)
-                if not setting.required and kinds.plain(raw) == kinds.plain(setting.default):
+                if not setting.required and plain(raw) == plain(setting.default):
                     continue
                 if isinstance(raw, Knowledge):
                     text, comment, more = self._object(orb.name, key, raw)
                 elif isinstance(raw, str):
                     text, comment, more = text_literal(raw), None, set()
                 else:
-                    text, comment, more = literal(kinds.plain(raw)), None, set()
+                    text, comment, more = literal(plain(raw)), None, set()
             args.append((key, text, comment))
             needs |= more
         return _layout(cls.__name__, args), needs

@@ -24,10 +24,10 @@ from chatomon.errors import ChatomonConfigError, ChatomonError
 from chatomon.studio._chains import InvalidRequestError, UnknownOrbitalError
 from chatomon.studio._events import Event
 from chatomon.studio._files import InvalidPathError, OwnFileExistsError
-from chatomon.studio._kinds import InvalidSettingError
 from chatomon.studio._presets import InvalidPresetError
 from chatomon.studio._security import LOOPBACK, Guard
 from chatomon.studio._session import Session, StudioBusyError, UnknownTurnError
+from chatomon.studio._values import InvalidSettingError
 
 _STATIC = files("chatomon.studio") / "static"
 _NO_STORE = {"Cache-Control": "no-store"}

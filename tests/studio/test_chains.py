@@ -10,7 +10,7 @@ from chatomon.studio._chains import (
     RefusedError,
     UnknownOrbitalError,
 )
-from chatomon.studio._kinds import InvalidSettingError
+from chatomon.studio._values import InvalidSettingError
 from tests.fakes import FakeConnector, ScriptedOrbital
 
 

@@ -732,12 +732,14 @@ class Session:
                 {
                     **setting.schema(),
                     "value": now[setting.key],
-                    "changed": now[setting.key] != before[setting.key],
+                    "changed": now[setting.key] != before.get(setting.key),
                 }
                 for setting in kind.settings
+                if setting.key in now
             ]
             known = codegen.names(self.namespace)
-            for key in kind.objects:
+            # A block that holds an object of the developer's is listed with the objects.
+            for key in (name for name in kind.order if name in {*kind.objects, *kinds.opaque(orb)}):
                 value = kinds.read(orb, key, self.atom.connector)
                 if value is not None:
                     # The class name only: an object's repr could carry a secret.

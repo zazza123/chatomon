@@ -1,86 +1,50 @@
 """What the studio can edit in an orbital, read from the orbital's constructor.
 
-Nothing here lists the orbitals or their settings. The classes exported by
-`chatomon.orbitals` are read one parameter at a time: a keyword parameter with
-a plain annotation is a setting, any other parameter is an object that comes
-from the developer's code, and every value is read back from the public
-attribute named like its parameter. The exceptions to that convention are the
-only hand-written part.
+Nothing here lists the orbitals or their settings. The modules of
+`chatomon.orbitals` are walked for the classes they export, and each class is
+read one parameter at a time: a keyword parameter with a plain annotation is a
+setting, one that accepts a value made of plain fields is a block (see
+`_values.py`), any other parameter is an object that comes from the developer's
+code, and every value is read back from the public attribute named like its
+parameter. The exceptions to that convention are the only hand-written part.
 """
 
 from __future__ import annotations
 
+import importlib
 import inspect
-import math
+import pkgutil
 import re
 import sys
-import types
-import typing
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import cache
-from typing import Any, Literal
+from typing import Any
 
 import chatomon.orbitals as library
 from chatomon.connectors.base import Connector
-from chatomon.errors import ChatomonConfigError, ChatomonError
+from chatomon.errors import ChatomonConfigError, MissingExtraError
 from chatomon.knowledge import Knowledge
 from chatomon.orbitals.base import FunctionOrbital, Orbital
 from chatomon.orbitals.judge import JudgeOrbital
-
-SettingType = Literal["int", "number", "text", "bool", "choice", "names"]
-Shape = tuple[SettingType, bool, tuple[str, ...]]
+from chatomon.studio import _values
+from chatomon.studio._values import (
+    OPAQUE,
+    REFUSALS,
+    InvalidSettingError,
+    Setting,
+    Shape,
+    check_shape,
+    represented,
+)
 
 FUNCTION = "Written with @orbital: change it in your code."
 UNREADABLE = "The studio cannot rebuild this orbital from its settings: change it in your code."
 
 _NAME = re.compile(r"[a-z0-9_.\-]+")
-_PLAIN: dict[type, SettingType] = {int: "int", float: "number", str: "text", bool: "bool"}
-_EXPECTED: dict[SettingType, str] = {
-    "int": "a whole number",
-    "number": "a number",
-    "text": "text",
-    "bool": "true or false",
-    "names": "a list of orbital names",
-}
-# What a constructor may raise on a value it does not accept.
-_REFUSALS = (ChatomonConfigError, TypeError, ValueError, OverflowError)
 
 # Settings whose annotation alone would make them objects.
 _SETTINGS: dict[tuple[type, str], Shape] = {(JudgeOrbital, "context"): ("text", True, ())}
-
-
-class InvalidSettingError(ChatomonError):
-    """A value that the studio or the orbital's constructor refuses."""
-
-    def __init__(self, message: str, *, setting: str | None = None) -> None:
-        super().__init__(message)
-        self.setting = setting
-
-
-@dataclass(frozen=True)
-class Setting:
-    """One plain constructor parameter of an orbital class."""
-
-    key: str
-    type: SettingType
-    optional: bool
-    required: bool
-    default: Any
-    options: tuple[str, ...] = ()
-
-    def schema(self) -> dict[str, Any]:
-        """Return the setting as the page receives it."""
-        data: dict[str, Any] = {
-            "key": self.key,
-            "type": self.type,
-            "optional": self.optional,
-            "required": self.required,
-            "default": plain(self.default),
-        }
-        if self.options:
-            data["options"] = list(self.options)
-        return data
 
 
 @dataclass(frozen=True)
@@ -97,49 +61,6 @@ class Kind:
     def setting(self, key: str) -> Setting | None:
         """Return the setting with that key, if the class has it."""
         return next((setting for setting in self.settings if setting.key == key), None)
-
-
-def plain(value: Any) -> Any:
-    """Return a setting's value as JSON data: a knowledge as its text, a tuple as a list."""
-    if isinstance(value, Knowledge):
-        return value.text
-    if isinstance(value, tuple):
-        return list(value)
-    return value
-
-
-def _hint(function: Any, annotation: Any) -> Any:
-    """Resolve one annotation on its own; one that does not resolve is an object.
-
-    Returns:
-        The annotation as an object, or `None` when it cannot be resolved.
-    """
-    if not isinstance(annotation, str):
-        return annotation
-    try:
-        # The text is an annotation of the library's own constructor, never user input.
-        return eval(annotation, getattr(function, "__globals__", {}))
-    except Exception:
-        return None
-
-
-def _shape(hint: Any) -> Shape | None:
-    """Return the setting type of a plain annotation, or `None` for an object."""
-    origin, args = typing.get_origin(hint), typing.get_args(hint)
-    if origin in (types.UnionType, typing.Union):
-        rest = [arg for arg in args if arg is not type(None)]
-        if len(rest) != 1 or len(rest) == len(args):
-            return None
-        inner = _shape(rest[0])
-        return None if inner is None else (inner[0], True, inner[2])
-    if origin is Literal and args and all(isinstance(arg, str) for arg in args):
-        return ("choice", False, tuple(args))
-    if origin in (Sequence, list) and args == (str,):
-        return ("names", False, ())
-    if origin is tuple and args == (str, ...):
-        return ("names", False, ())
-    kind = _PLAIN.get(hint) if isinstance(hint, type) else None
-    return None if kind is None else (kind, False, ())
 
 
 @cache
@@ -162,13 +83,20 @@ def describe(cls: type[Orbital]) -> Kind:
         if parameter.name == "name":
             continue
         required = parameter.default is inspect.Parameter.empty
-        shape = _SETTINGS.get((cls, parameter.name)) or _shape(_hint(init, parameter.annotation))
-        if shape is None:
-            objects.append(parameter.name)
-            addable = addable and not required
+        annotation = _values.hint(init, parameter.annotation)
+        shape = _SETTINGS.get((cls, parameter.name)) or _values.shape(annotation)
+        if shape is not None:
+            default = None if required else parameter.default
+            settings.append(
+                Setting(parameter.name, shape[0], shape[1], required, default, shape[2])
+            )
             continue
-        default = None if required else parameter.default
-        settings.append(Setting(parameter.name, shape[0], shape[1], required, default, shape[2]))
+        block = _values.block(parameter.name, annotation, required)
+        if block is not None:
+            settings.append(block)
+            continue
+        objects.append(parameter.name)
+        addable = addable and not required
     order = tuple(parameter.name for parameter in parameters)
     return Kind(cls, tuple(settings), tuple(objects), order, readable, addable)
 
@@ -185,15 +113,85 @@ def is_builtin(cls: type) -> bool:
     )
 
 
+@dataclass(frozen=True)
+class _Library:
+    """What walking the modules of `chatomon.orbitals` found."""
+
+    classes: tuple[type[Orbital], ...]
+    extras: tuple[tuple[str, str], ...]
+    notes: tuple[str, ...]
+
+
 @cache
+def _library() -> _Library:
+    """Import the modules of `chatomon.orbitals` and take the orbital classes they export.
+
+    Returns:
+        The classes, those of `chatomon.orbitals` first; the modules that need an
+        extra, each with it; and a note for every other module that did not import.
+    """
+    names = [library.__name__]
+    names += sorted(
+        f"{library.__name__}.{module.name}"
+        for module in pkgutil.iter_modules(library.__path__)
+        if not module.name.startswith("_")
+    )
+    classes: list[type[Orbital]] = []
+    extras: list[tuple[str, str]] = []
+    notes: list[str] = []
+    for name in names:
+        try:
+            module = importlib.import_module(name)
+        except MissingExtraError as exc:
+            extras.append((name, exc.extra))
+            continue
+        except Exception as exc:
+            notes.append(f"{name} could not be imported: {type(exc).__name__}: {exc}")
+            continue
+        for exported in getattr(module, "__all__", ()):
+            value = getattr(module, exported, None)
+            if isinstance(value, type) and issubclass(value, Orbital) and value not in classes:
+                classes.append(value)
+    return _Library(tuple(classes), tuple(extras), tuple(notes))
+
+
+def classes() -> tuple[type[Orbital], ...]:
+    """Return every orbital class the modules of `chatomon.orbitals` export."""
+    return _library().classes
+
+
 def addable() -> tuple[Kind, ...]:
-    """Return the exported classes whose required parameters are all settings."""
-    found: list[Kind] = []
-    for name in library.__all__:
-        value = getattr(library, name)
-        if isinstance(value, type) and issubclass(value, Orbital) and describe(value).addable:
-            found.append(describe(value))
-    return tuple(found)
+    """Return the exported classes whose required parameters are all settings or blocks."""
+    return tuple(describe(cls) for cls in classes() if describe(cls).addable)
+
+
+def extras() -> tuple[tuple[str, str], ...]:
+    """Return the modules of `chatomon.orbitals` that need an extra, each with its extra."""
+    return _library().extras
+
+
+def import_notes() -> tuple[str, ...]:
+    """Return one sentence for each module of `chatomon.orbitals` that failed to import."""
+    return _library().notes
+
+
+def unknown(kind: str) -> str:
+    """Say that a class cannot be added, naming the extras that would bring more classes.
+
+    Args:
+        kind: The class name that was asked for.
+
+    Returns:
+        The refusal. The studio does not know which module an unknown class is in.
+    """
+    missing = extras()
+    if not missing:
+        return f"{kind} cannot be added from the studio: add it in your code"
+    hints = " ".join(
+        f"The orbitals of {module} need: pip install 'chatomon[{extra}]'."
+        for module, extra in missing
+    )
+    return f"{kind} is not an orbital this studio can add. {hints}"
 
 
 def summary(cls: type) -> str:
@@ -245,8 +243,26 @@ def arguments(orb: Orbital, connector: Connector[Any]) -> dict[str, Any]:
 
 
 def values(orb: Orbital) -> dict[str, Any]:
-    """Return the orbital's settings as JSON data, in constructor order."""
-    return {s.key: plain(getattr(orb, s.key)) for s in describe(type(orb)).settings}
+    """Return the orbital's settings as JSON data, in constructor order.
+
+    A block whose value the studio could not write back, such as a client, is
+    left out: for this orbital it is an object from the developer's code.
+    """
+    found: dict[str, Any] = {}
+    for setting in describe(type(orb)).settings:
+        value = represented(setting, getattr(orb, setting.key))
+        if value is not OPAQUE:
+            found[setting.key] = value
+    return found
+
+
+def opaque(orb: Orbital) -> tuple[str, ...]:
+    """Return the blocks of an orbital that hold an object from the developer's code."""
+    return tuple(
+        setting.key
+        for setting in describe(type(orb)).settings
+        if represented(setting, getattr(orb, setting.key)) is OPAQUE
+    )
 
 
 def read_only(orb: Orbital, connector: Connector[Any]) -> str | None:
@@ -295,56 +311,6 @@ def check_name(name: Any) -> str:
     return name
 
 
-def _is_text(value: Any) -> bool:
-    """Say whether a value is text the studio can send back as UTF-8.
-
-    Returns:
-        `False` for anything that is not a string, or that cannot be encoded.
-    """
-    if not isinstance(value, str):
-        return False
-    try:
-        value.encode("utf-8")
-    except UnicodeEncodeError:
-        # A lone surrogate from a JSON escape would break every later response.
-        return False
-    return True
-
-
-def check_shape(setting: Setting, value: Any) -> None:
-    """Check that a JSON value has the shape its setting needs.
-
-    Args:
-        setting: The setting.
-        value: The value from the request or the preset.
-
-    Raises:
-        InvalidSettingError: With the studio's own message.
-    """
-    key = setting.key
-    if value is None:
-        if setting.optional:
-            return
-        raise InvalidSettingError(f"`{key}` needs a value", setting=key)
-    number = isinstance(value, int | float) and not isinstance(value, bool)
-    if setting.type == "int":
-        ok = isinstance(value, int) and not isinstance(value, bool)
-    elif setting.type == "number":
-        ok = number and (isinstance(value, int) or math.isfinite(value))
-    elif setting.type == "text":
-        ok = _is_text(value)
-    elif setting.type == "bool":
-        ok = isinstance(value, bool)
-    elif setting.type == "choice":
-        ok = isinstance(value, str) and value in setting.options
-    else:
-        ok = isinstance(value, list) and all(_is_text(item) for item in value)
-    if ok:
-        return
-    expected = _EXPECTED.get(setting.type) or f"one of: {', '.join(setting.options)}"
-    raise InvalidSettingError(f"`{key}` must be {expected}", setting=key)
-
-
 def _setting(kind: Kind, key: str) -> Setting:
     if key in kind.objects:
         raise InvalidSettingError(
@@ -356,19 +322,29 @@ def _setting(kind: Kind, key: str) -> Setting:
     return setting
 
 
-def _written(orb: Orbital, key: str, value: Any, base: Orbital | None) -> Any:
+def _written(orb: Orbital, setting: Setting, value: Any, base: Orbital | None) -> Any:
     """Turn a setting's new value into the constructor argument.
 
     A knowledge the developer shared is the same object again whenever the text
     is the one it has, now or in the code, and keeps its title when the text
-    changes.
+    changes. A block that reads like the one the orbital has, now or in the
+    code, is that object again.
 
     Returns:
         The value to pass to the constructor.
-    """
+
+    Raises:
+        InvalidSettingError: If the constructor of a block's type refuses it.
+    """  # noqa: DOC502 - raised by built()
+    key = setting.key
+    held = [getattr(source, key, None) for source in (orb, base) if source is not None]
+    if setting.type == "block":
+        new = _values.built(setting, value, getattr(orb, key, None))
+        wanted = represented(setting, new)
+        # The developer's object first: back to the code's values is back to the code's object.
+        return next((old for old in reversed(held) if represented(setting, old) == wanted), new)
     if not isinstance(value, str):
         return value
-    held = [getattr(source, key, None) for source in (orb, base) if source is not None]
     shared = [knowledge for knowledge in held if isinstance(knowledge, Knowledge)]
     for knowledge in shared:
         if value == knowledge.text:
@@ -396,22 +372,31 @@ def rebuilt(
         The new orbital.
 
     Raises:
-        InvalidSettingError: If a value has the wrong shape or the constructor
+        InvalidSettingError: If a value has the wrong shape or a constructor
             refuses it; the message is the constructor's own in the second case.
     """
     kind = describe(type(orb))
+    found: dict[str, Setting] = {}
     for key, value in changes.items():
         if key == "name":
             check_name(value)
-        else:
-            check_shape(_setting(kind, key), value)
+            continue
+        setting = _setting(kind, key)
+        if setting.type == "block" and key in opaque(orb):
+            raise InvalidSettingError(
+                f"`{key}` is an object from your code: change it there", setting=key
+            )
+        check_shape(setting, value)
+        found[key] = setting
     only = next(iter(changes)) if len(changes) == 1 else None
     try:
         args = arguments(orb, connector)
         for key, value in changes.items():
-            args[key] = value if key == "name" else _written(orb, key, value, base)
+            args[key] = value if key == "name" else _written(orb, found[key], value, base)
         return type(orb)(**args)
-    except _REFUSALS as exc:
+    except InvalidSettingError as exc:
+        raise InvalidSettingError(str(exc), setting=only) from exc
+    except REFUSALS as exc:
         raise InvalidSettingError(str(exc), setting=only) from exc
 
 
@@ -427,16 +412,28 @@ def created(kind: Kind, name: str, settings: Mapping[str, Any]) -> Orbital:
         The new orbital.
 
     Raises:
-        InvalidSettingError: If a value is missing, has the wrong shape, or the
+        InvalidSettingError: If a value is missing, has the wrong shape, or a
             constructor refuses it.
     """
     check_name(name)
+    found: dict[str, Setting] = {}
     for key, value in settings.items():
-        check_shape(_setting(kind, key), value)
+        found[key] = _setting(kind, key)
+        check_shape(found[key], value)
     for setting in kind.settings:
         if setting.required and settings.get(setting.key) is None:
             raise InvalidSettingError(f"`{setting.key}` needs a value", setting=setting.key)
+    made: dict[str, Any] = {}
+    for key, value in settings.items():
+        if found[key].type != "block":
+            made[key] = value
+            continue
+        try:
+            made[key] = _values.built(found[key], value)
+        except InvalidSettingError as exc:
+            # The constructor of the block's type refused it: the refusal is the block's.
+            raise InvalidSettingError(str(exc), setting=key) from exc
     try:
-        return kind.cls(name=name, **settings)
-    except _REFUSALS as exc:
+        return kind.cls(name=name, **made)
+    except REFUSALS as exc:
         raise InvalidSettingError(str(exc)) from exc

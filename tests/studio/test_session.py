@@ -428,8 +428,10 @@ def test_the_state_lists_what_can_be_added():
         "JudgeOrbital",
         "MessageLengthOrbital",
         "TurnLimitOrbital",
+        "ClaimExtractorOrbital",
+        "ScopeGuardOrbital",
     ]
-    judge, length, turns = kinds
+    judge, length, turns = kinds[:3]
     assert judge["sides"] == ["input", "output"]
     assert turns["sides"] == ["input"]
     assert judge["summary"] == "A small LLM agent that judges messages following your instructions."
