@@ -1,6 +1,8 @@
 import asyncio
 import json
 import math
+import re
+import socket
 import sys
 import textwrap
 import threading
@@ -8,19 +10,28 @@ from typing import Any
 
 import pytest
 from langchain_core.tools import tool
+from orbitals.scope_guard_v2 import AsyncScopeGuardV2
+from orbitals.types import AIServiceDescriptionV2
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
-from chatomon import Atom, ChatomonConfigError, Verdict
+from chatomon import Atom, ChatomonConfigError, Verdict, orbital
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
+from chatomon.errors import MissingExtraError
 from chatomon.orbitals import JudgeOrbital, MessageLengthOrbital
-from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER
+from chatomon.orbitals.base import Orbital
+from chatomon.orbitals.principled import ScopeGuardOrbital
+from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER, OrbitalContext
+from chatomon.studio import _kinds as kinds
 from chatomon.studio import _loading as loading
-from chatomon.studio._chains import RefusedError, UnknownOrbitalError
+from chatomon.studio._chains import InvalidRequestError, RefusedError, UnknownOrbitalError
 from chatomon.studio._loading import load, namespace
+from chatomon.studio._presets import InvalidPresetError
 from chatomon.studio._session import Reloaded, Session, StudioBusyError, UnknownTurnError
+from chatomon.studio._values import InvalidSettingError
 from tests.contract.harness import ToolCall
+from tests.fake_service import closed_url
 from tests.fakes import FakeConnector, ScriptedOrbital
 from tests.studio import frameworks
 from tests.studio.frameworks import Reply, StudioHarness
@@ -428,8 +439,10 @@ def test_the_state_lists_what_can_be_added():
         "JudgeOrbital",
         "MessageLengthOrbital",
         "TurnLimitOrbital",
+        "ClaimExtractorOrbital",
+        "ScopeGuardOrbital",
     ]
-    judge, length, turns = kinds
+    judge, length, turns = kinds[:3]
     assert judge["sides"] == ["input", "output"]
     assert turns["sides"] == ["input"]
     assert judge["summary"] == "A small LLM agent that judges messages following your instructions."
@@ -1161,3 +1174,514 @@ async def test_the_two_connectors_of_one_framework_share_the_conversation(monkey
     assert (await session.reload()).restarted is None
     assert (await say(session, "and now?")).reply == "two"
     assert guard.heard() == [("user", "hello"), ("assistant", "one")]
+
+
+def test_the_state_of_an_orbital_with_blocks(monkeypatch):
+    monkeypatch.setenv("SCOPE_KEY", "key-not-for-the-page")
+    session = Session(make_atom(), source="app:atom")
+    session.add(
+        "input",
+        "ScopeGuardOrbital",
+        {
+            "guard": {
+                "type": "ApiBackend",
+                "fields": {"api_url": "https://scope.example", "api_key_env": "SCOPE_KEY"},
+            },
+            "description": "A courier.",
+        },
+    )
+    state = session.state()
+    assert "key-not-for-the-page" not in json.dumps(state)
+    guard = state["orbitals"]["input"][0]
+    assert (guard["kind"], guard["origin"], guard["calls_model"], guard["fixed"]) == (
+        "ScopeGuardOrbital",
+        "studio",
+        True,
+        [],
+    )
+    assert guard["settings"][0] == {
+        "key": "guard",
+        "type": "block",
+        "optional": False,
+        "required": True,
+        "default": None,
+        "text": False,
+        "types": [
+            {
+                "type": "ApiBackend",
+                "fields": [
+                    {
+                        "key": "api_url",
+                        "type": "text",
+                        "optional": False,
+                        "required": True,
+                        "default": None,
+                    },
+                    {
+                        "key": "api_key_env",
+                        "type": "env",
+                        "optional": True,
+                        "required": False,
+                        "default": None,
+                    },
+                    {
+                        "key": "model",
+                        "type": "text",
+                        "optional": True,
+                        "required": False,
+                        "default": None,
+                    },
+                ],
+            }
+        ],
+        "value": {
+            "type": "ApiBackend",
+            "fields": {
+                "api_url": "https://scope.example",
+                "api_key_env": "SCOPE_KEY",
+                "model": None,
+            },
+        },
+        "changed": False,
+    }
+    description = guard["settings"][1]
+    assert (description["key"], description["text"], description["value"]) == (
+        "description",
+        True,
+        "A courier.",
+    )
+    assert [found["type"] for found in description["types"]] == [
+        "AIServiceDescription",
+        "AIServiceDescriptionV2",
+    ]
+
+
+def test_a_client_from_code_is_listed_with_the_objects_and_its_description_can_be_edited():
+    client = AsyncScopeGuardV2(backend="api", api_url="http://scope-guard.test", api_key="k")
+    service = AIServiceDescriptionV2(identity_role="Courier", context="Italy")
+    code = ScopeGuardOrbital(guard=client, description=service)
+    session = Session(
+        make_atom(input_orbitals=[code]), source="app:atom", namespace={"scope_client": client}
+    )
+    guard = session.state()["orbitals"]["input"][0]
+    assert guard["fixed"] == [
+        {"key": "guard", "type": "AsyncAPIScopeGuardV2", "name": "scope_client"}
+    ]
+    assert [setting["key"] for setting in guard["settings"]] == [
+        "description",
+        "history_window",
+        "timeout",
+        "on_error",
+    ]
+    shown = guard["settings"][0]["value"]
+    shown["fields"]["context"] = "Italy and France"
+    session.edit("input", "scope_guard", {"description": shown})
+    edited = session.state()["orbitals"]["input"][0]
+    assert (edited["modified"], edited["settings"][0]["changed"]) == (True, True)
+    assert [change["text"] for change in session.state()["changes"]] == [
+        "scope_guard.description changed"
+    ]
+    assert code.description is service  # the developer's orbital is as it was
+
+
+def test_the_state_says_which_orbitals_call_a_model():
+    @orbital(calls_model=True)
+    def remote(ctx):
+        return Verdict.allow()
+
+    session = Session(
+        make_atom(input_orbitals=[MessageLengthOrbital(max_words=3), remote]), source="app:atom"
+    )
+    state = session.state()
+    assert [o["calls_model"] for o in state["orbitals"]["input"]] == [False, True]
+    assert {kind["kind"]: kind["calls_model"] for kind in state["kinds"]} == {
+        "JudgeOrbital": True,
+        "MessageLengthOrbital": False,
+        "TurnLimitOrbital": False,
+        "ClaimExtractorOrbital": True,
+        "ScopeGuardOrbital": True,
+    }
+    assert state["studio"]["extras"] == []
+
+
+@pytest.fixture
+def broken_library(monkeypatch):
+    """Make the import of the principled orbitals fail, and forget what was found."""
+
+    def fail(error: Exception) -> None:
+        real = kinds.importlib.import_module
+
+        def fake(name: str, package: str | None = None) -> Any:
+            if name == "chatomon.orbitals.principled":
+                raise error
+            return real(name, package)
+
+        monkeypatch.setattr(kinds.importlib, "import_module", fake)
+        kinds._library.cache_clear()
+
+    yield fail
+    monkeypatch.undo()
+    kinds._library.cache_clear()
+
+
+def test_the_state_lists_the_extras_that_would_bring_more_orbitals(broken_library):
+    broken_library(MissingExtraError("principled", "orbitals"))
+    session = Session(make_atom(), source="app:atom")
+    state = session.state()
+    assert state["studio"]["extras"] == [
+        {"module": "chatomon.orbitals.principled", "extra": "principled"}
+    ]
+    assert [kind["kind"] for kind in state["kinds"]] == [
+        "JudgeOrbital",
+        "MessageLengthOrbital",
+        "TurnLimitOrbital",
+    ]
+    assert session.notes == []
+    with pytest.raises(RefusedError, match="pip install 'chatomon\\[principled\\]'"):
+        session.add("input", "ScopeGuardOrbital", {})
+
+
+def test_a_module_of_orbitals_that_fails_to_import_is_a_note_of_the_session(broken_library):
+    broken_library(RuntimeError("broken install"))
+    session = Session(make_atom(), source="app:atom")
+    assert session.notes == [
+        "chatomon.orbitals.principled could not be imported: RuntimeError: broken install"
+    ]
+    assert session.state()["studio"]["extras"] == []
+
+
+# --- Test connection: one check of an orbital, nothing kept ---------------------
+
+KEY = "key-0123456789-not-for-the-page"
+
+
+def backend(url: str, **fields: Any) -> dict[str, Any]:
+    return {"type": "ApiBackend", "fields": {"api_url": url, **fields}}
+
+
+def guard_settings(url: str, **settings: Any) -> dict[str, Any]:
+    return {"guard": backend(url, api_key_env="SCOPE_KEY"), "description": "A courier.", **settings}
+
+
+def kept(session: Session) -> Any:
+    """Everything a test of an orbital must leave as it was."""
+    return (
+        json.dumps(session.state(), sort_keys=True),
+        session.chains,
+        session.conversation,
+        list(session.turns),
+        session.export_preset(),
+        session.code(),
+    )
+
+
+async def test_an_orbital_is_tested_before_it_is_added_and_nothing_is_kept(service, monkeypatch):
+    monkeypatch.setenv("SCOPE_KEY", KEY)
+    service.key = KEY
+    service.scope_class = "Chit Chat"
+    session = Session(make_atom(), source="app:atom")
+    before = kept(session)
+    probe = await session.probe(
+        "input", kind="ScopeGuardOrbital", settings=guard_settings(service.url)
+    )
+    assert (probe.outcome, probe.action, probe.reason, probe.status) == (
+        "answered",
+        "allow",
+        "Chit Chat",
+        None,
+    )
+    assert probe.to_json() == {
+        "outcome": "answered",
+        "message": "The orbital answered.",
+        "duration_ms": probe.duration_ms,
+        "action": "allow",
+        "reason": "Chit Chat",
+    }
+    assert probe.duration_ms > 0
+    assert kept(session) == before
+    # One request, with the message the studio wrote and the description of the form.
+    (request,) = service.requests
+    assert request["body"]["conversation"] == [{"role": "user", "content": "Hello"}]
+    assert request["body"]["ai_service_description"] == "A courier."
+
+
+async def test_an_orbital_of_the_session_is_tested_as_it_is(service, monkeypatch):
+    monkeypatch.setenv("SCOPE_KEY", KEY)
+    service.key = KEY
+    session = Session(make_atom(), source="app:atom")
+    session.add("input", "ScopeGuardOrbital", guard_settings(service.url))
+    session.switch("input", "scope_guard", False)
+    before = kept(session)
+    probe = await session.probe("input", name="scope_guard")
+    assert (probe.outcome, probe.reason) == ("answered", "Directly Supported")
+    assert kept(session) == before
+
+
+@pytest.mark.parametrize(
+    ("status", "message"),
+    [
+        (401, "The service answered 401. It did not accept the credentials."),
+        (403, "The service answered 403. It did not accept the credentials."),
+        (404, "The service answered 404. Check the address."),
+        (500, "The service answered 500."),
+    ],
+)
+async def test_a_service_that_answers_with_an_error_is_said_by_its_status(
+    service, monkeypatch, status, message
+):
+    monkeypatch.setenv("SCOPE_KEY", KEY)
+    service.status = status
+    session = Session(make_atom(), source="app:atom")
+    probe = await session.probe(
+        "input", kind="ScopeGuardOrbital", settings=guard_settings(service.url)
+    )
+    assert (probe.outcome, probe.message, probe.status) == ("http", message, status)
+    assert probe.to_json()["status"] == status
+    assert KEY not in json.dumps(probe.to_json())
+
+
+async def test_a_refused_connection_and_a_slow_service(service, monkeypatch):
+    monkeypatch.setenv("SCOPE_KEY", KEY)
+    session = Session(make_atom(), source="app:atom")
+    refused = await session.probe(
+        "input", kind="ScopeGuardOrbital", settings=guard_settings(closed_url())
+    )
+    assert (refused.outcome, refused.message) == ("unreachable", "The connection was refused.")
+    service.delay = 2.0
+    slow = await session.probe(
+        "input", kind="ScopeGuardOrbital", settings=guard_settings(service.url, timeout=0.2)
+    )
+    assert (slow.outcome, slow.message) == (
+        "timeout",
+        "No answer within 0.2 s. A service that is starting can take longer.",
+    )
+    assert 150 < slow.duration_ms < 1500
+
+
+async def test_a_variable_that_is_not_set_is_a_refusal_before_the_check(service, monkeypatch):
+    monkeypatch.delenv("SCOPE_KEY", raising=False)
+    session = Session(make_atom(), source="app:atom")
+    with pytest.raises(InvalidSettingError, match="the environment variable SCOPE_KEY is not set"):
+        await session.probe("input", kind="ScopeGuardOrbital", settings=guard_settings(service.url))
+    with pytest.raises(InvalidSettingError, match="`description` needs a value"):
+        await session.probe(
+            "input", kind="ScopeGuardOrbital", settings={"guard": backend(service.url)}
+        )
+    assert service.requests == []
+
+
+NETWORK = (
+    "the studio listens on a network address: where an orbital connects is set in your code, "
+    "or in a preset given when the studio starts, not from the page"
+)
+
+
+async def test_on_a_network_address_the_page_gives_no_orbital_a_connection(service, monkeypatch):
+    monkeypatch.setenv("SCOPE_KEY", KEY)
+    service.key = KEY
+    local = Session(make_atom(), source="app:atom")
+    local.add("input", "ScopeGuardOrbital", guard_settings(service.url))
+    preset = json.dumps(local.export_preset())
+    # What the command was started with is the developer's, like the code.
+    session = Session(make_atom(), source="app:atom", preset=preset)
+    session.local = False
+    before = kept(session)
+    with pytest.raises(InvalidSettingError) as added:
+        session.add("input", "ScopeGuardOrbital", guard_settings(service.url, name="second"))
+    with pytest.raises(InvalidSettingError) as edited:
+        session.edit("input", "scope_guard", {"guard": backend(closed_url())})
+    with pytest.raises(InvalidSettingError) as tested:
+        await session.probe("input", kind="ScopeGuardOrbital", settings=guard_settings(service.url))
+    for refused in (added, edited, tested):
+        assert (str(refused.value), refused.value.setting) == (NETWORK, "guard")
+    with pytest.raises(InvalidPresetError) as imported:
+        session.import_preset(preset)
+    assert imported.value.problems == [NETWORK]
+    assert kept(session) == before
+    assert service.requests == []
+    # An orbital that needs a connection is not offered; the others are.
+    offered = [kind["kind"] for kind in session.state()["kinds"]]
+    assert "ScopeGuardOrbital" not in offered and "ClaimExtractorOrbital" not in offered
+    assert "JudgeOrbital" in offered and "ScopeGuardOrbital" in [
+        kind["kind"] for kind in local.state()["kinds"]
+    ]
+    # What is not a connection is still changed, and an orbital that is there is still tested.
+    session.edit("input", "scope_guard", {"history_window": 2})
+    session.add("input", "TurnLimitOrbital", {"max_turns": 3})
+    probe = await session.probe("input", name="scope_guard")
+    assert probe.outcome == "answered"
+    assert len(service.requests) == 1
+
+
+def raising(error: BaseException, **kwargs: Any) -> Any:
+    @orbital(name="remote", calls_model=True, **kwargs)
+    async def remote(ctx):
+        raise error
+
+    return remote
+
+
+class HttpFailure(Exception):
+    def __init__(self, text: str, status_code: int) -> None:
+        super().__init__(text)
+        self.status_code = status_code
+
+
+class Wrapped(OSError):
+    def __init__(self, text: str, os_error: OSError) -> None:
+        super().__init__(text)
+        self.os_error = os_error
+
+
+def caused(error: Exception, cause: Exception) -> Exception:
+    error.__cause__ = cause
+    return error
+
+
+@pytest.mark.parametrize(
+    ("error", "outcome", "message"),
+    [
+        (RuntimeError(f"boom with {KEY}"), "failed", "The check failed with RuntimeError."),
+        (HttpFailure(f"denied {KEY}", 429), "http", "The service answered 429."),
+        (
+            Wrapped(f"cannot resolve {KEY}", socket.gaierror(8, "nodename nor servname provided")),
+            "unreachable",
+            "The address was not found.",
+        ),
+        (
+            caused(RuntimeError(f"wrapped {KEY}"), ConnectionRefusedError(61, "refused")),
+            "unreachable",
+            "The connection was refused.",
+        ),
+        (
+            # A framework wraps the error of its HTTP client, which wraps the socket's.
+            caused(
+                RuntimeError(f"model api {KEY}"),
+                caused(
+                    RuntimeError("connection error"),
+                    caused(RuntimeError("connect"), ConnectionRefusedError(61, "refused")),
+                ),
+            ),
+            "unreachable",
+            "The connection was refused.",
+        ),
+        # An answer the client could not read is not a refusal by the service.
+        (HttpFailure(f"not json {KEY}", 200), "failed", "The check failed with HttpFailure."),
+        (HttpFailure("moved", 302), "failed", "The check failed with HttpFailure."),
+        (OSError(f"network is down {KEY}"), "unreachable", "Could not connect."),
+        (
+            ChatomonConfigError("judge 'tone' has no connector"),
+            "failed",
+            "The check failed with ChatomonConfigError: judge 'tone' has no connector.",
+        ),
+    ],
+    ids=["other", "status", "dns", "cause", "deep", "unread", "moved", "os", "chatomon"],
+)
+async def test_how_a_check_failed_is_said_from_the_kind_of_error(error, outcome, message):
+    session = Session(make_atom(input_orbitals=[raising(error)]), source="app:atom")
+    probe = await session.probe("input", name="remote")
+    assert (probe.outcome, probe.message) == (outcome, message)
+    assert KEY not in json.dumps(probe.to_json())
+
+
+async def test_a_client_that_stops_waiting_first_is_not_given_the_orbitals_timeout():
+    session = Session(
+        make_atom(input_orbitals=[raising(TimeoutError(f"gave up {KEY}"), timeout=30)]),
+        source="app:atom",
+    )
+    probe = await session.probe("input", name="remote")
+    assert (probe.outcome, probe.message) == (
+        "timeout",
+        "The client stopped waiting before the orbital's timeout of 30 s.",
+    )
+
+
+class Careless(Orbital):
+    """An orbital whose check does not return a verdict."""
+
+    calls_model = True
+
+    async def check(self, ctx: OrbitalContext) -> Any:
+        return "allow"
+
+
+async def test_a_check_that_returns_no_verdict_is_a_failed_test():
+    session = Session(make_atom(input_orbitals=[Careless(name="careless")]), source="app:atom")
+    probe = await session.probe("input", name="careless")
+    assert (probe.outcome, probe.message) == ("failed", "The check failed with TypeError.")
+
+
+async def test_a_judge_is_tested_through_the_atoms_connector():
+    judge = JudgeOrbital(name="facts", model="test", instructions="Check.")
+    session = Session(make_atom(output_orbitals=[judge]), source="app:atom")
+    session.switch("output", "facts", False)  # off: the atom's build did not bind it
+    existing = await session.probe("output", name="facts")
+    assert (existing.outcome, existing.action, existing.reason) == (
+        "answered",
+        "allow",
+        "judge_allow",
+    )
+    new = await session.probe(
+        "input", kind="JudgeOrbital", settings={"model": "test", "instructions": "Be kind."}
+    )
+    assert new.outcome == "answered"
+    unknown = await session.probe(
+        "input", kind="JudgeOrbital", settings={"model": "nope:zzz", "instructions": "Be kind."}
+    )
+    # What the framework raises for a model it does not know changes with its version: the
+    # outcome names the kind of error, whatever it is, and nothing of its text.
+    assert unknown.outcome == "failed"
+    assert re.fullmatch(r"The check failed with \w+Error\.", unknown.message)
+
+
+async def test_what_cannot_be_tested_is_refused_with_the_reason():
+    reader = raising(RuntimeError("x"), reads=["first"])
+    first = ScriptedOrbital(Verdict.allow(annotations={"x": 1}), name="first")
+    session = Session(
+        make_atom(input_orbitals=[MessageLengthOrbital(max_words=3), first, reader]),
+        source="app:atom",
+    )
+    with pytest.raises(RefusedError) as plain:
+        await session.probe("input", name="message_length")
+    assert str(plain.value) == "'message_length' calls no model: there is nothing to test"
+    with pytest.raises(RefusedError) as reads:
+        await session.probe("input", name="remote")
+    assert str(reads.value) == (
+        "'remote' reads the annotations of 'first': it can be tried only in a turn"
+    )
+    with pytest.raises(RefusedError, match="'turn_limit' calls no model"):
+        await session.probe("input", kind="TurnLimitOrbital", settings={"max_turns": 3})
+    with pytest.raises(UnknownOrbitalError):
+        await session.probe("input", name="ghost")
+    with pytest.raises(RefusedError, match="Nope cannot be added from the studio"):
+        await session.probe("input", kind="Nope", settings={})
+    with pytest.raises(InvalidRequestError, match="side must be"):
+        await session.probe("sideways", name="remote")
+    with pytest.raises(InvalidRequestError, match="name the orbital to test"):
+        await session.probe("input")
+    with pytest.raises(InvalidRequestError, match="name the orbital to test"):
+        await session.probe("input", name="remote", kind="JudgeOrbital")
+
+
+async def test_one_test_at_a_time_and_a_turn_is_not_held_by_it():
+    gate = asyncio.Event()
+
+    @orbital(name="slow", calls_model=True)
+    async def slow(ctx):
+        await gate.wait()
+        return Verdict.allow(reason="done")
+
+    session = Session(make_atom(input_orbitals=[slow]), source="app:atom")
+    session.switch("input", "slow", False)
+    first = asyncio.ensure_future(session.probe("input", name="slow"))
+    await asyncio.sleep(0.05)
+    with pytest.raises(StudioBusyError, match="a test is running; wait for it to finish"):
+        await session.probe("input", name="slow")
+    # A turn, a change and the state do not wait for the test.
+    events = await drain(session.start_turn("hello"))
+    assert events[-1]["turn"]["reply"] == "Hi"
+    session.switch("input", "slow", True)
+    session.switch("input", "slow", False)
+    gate.set()
+    assert (await first).reason == "done"
+    assert (await session.probe("input", name="slow")).outcome == "answered"

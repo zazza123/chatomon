@@ -12,7 +12,7 @@ import pytest
 from orbitals.claim_extractor import AsyncClaimExtractor, Extractions
 
 from chatomon import OrbitalContext, Verdict, orbital
-from chatomon.orbitals.principled import ClaimExtractorOrbital
+from chatomon.orbitals.principled import ApiBackend, ClaimExtractorOrbital
 from chatomon.schemas import Message
 from tests.fakes import make_engine
 from tests.integration.conftest import INTEGRATION_TIMEOUT, require_env, warm_up
@@ -49,3 +49,19 @@ async def test_claims_from_a_real_reply_drive_a_regeneration():
     assert decision.kind == "regenerate"
     assert isinstance(turn.annotations["claims"], Extractions)
     assert turn.annotations["claims"].claims
+
+
+async def test_an_extractor_built_from_an_api_backend_extracts_claims():
+    backend = ApiBackend(
+        api_url=require_env("CHATOMON_CLAIM_EXTRACTOR_URL"),
+        model=os.environ.get("CHATOMON_CLAIM_EXTRACTOR_MODEL"),
+    )
+    claims = ClaimExtractorOrbital(name="claims", extractor=backend, timeout=INTEGRATION_TIMEOUT)
+    reply = OrbitalContext(
+        side="output", message="We are open 24 hours a day, 7 days a week.", turn_id="integration"
+    )
+    await warm_up(lambda: claims.check(reply))
+    verdict = await claims.check(reply)
+    assert verdict.action == "allow"
+    assert isinstance(verdict.annotations, Extractions)
+    assert verdict.annotations.claims

@@ -10,6 +10,7 @@ The studio is a local web page for trying an atom before it goes anywhere. You c
 
 - **Live turns** — the atom on stage shows every orbital deciding, and each turn keeps its report.
 - **Tuning** — switch orbitals on and off, change their settings, reorder them and add chatomon's own orbitals. Changes live in the studio session.
+- **Connections** — an orbital that calls a service is added with the address of the service and the name of the variable that holds its key, and tried with **Test connection** before a message is sent.
 - **Back to code** — the tuned orbitals as Python to paste into your atom, or as a preset file to load again later.
 - **Reload** — after a change to your code the atom is loaded again without a restart, and the session keeps your orbital changes and the conversation.
 - **Tests** — a turn, or the conversation up to it, saved as a pytest file that runs against the atom from your code.
@@ -20,7 +21,7 @@ The studio is a local web page for trying an atom before it goes anywhere. You c
 | Page | What it covers |
 |------|----------------|
 | [Reading the Screen](screen.md) | The atom drawer, the atom on stage, turns and their reports |
-| [Tuning Orbitals](tuning.md) | Editing settings, changing the order, adding and deleting orbitals, changes against the code |
+| [Tuning Orbitals](tuning.md) | Editing settings and blocks, changing the order, adding and deleting orbitals, testing a connection, changes against the code |
 | [Back to Code](export.md) | Copy as code, presets and the preset format |
 | [Reloading the Code](reload.md) | What a reload keeps, what it drops, and what needs a restart |
 | [Saving a Turn as a Test](testing.md) | What a saved test checks, offline and integration tests, where the file goes |
@@ -71,13 +72,14 @@ Model calls are real. With a real model, a turn in the studio costs what a turn 
 
 ## Security
 
-The studio shows conversation text and calls models with your credentials, so it protects itself in five ways:
+The studio shows conversation text and calls models with your credentials, so it protects itself in six ways:
 
 - It listens on `127.0.0.1`, which only your machine can reach.
 - The link it prints carries a key for this run. The page keeps it in a cookie; opened without it, the page asks for the link from the terminal. Treat the link like a password.
 - It answers only on its own address and accepts changes only from its own page, so other sites open in your browser cannot start turns or change orbitals.
 - Its pages run only the studio's own files and cannot be shown inside another page.
-- With `--host` and a network address it prints a warning: anyone who reaches that address with the link can read the conversation and use your models. Addresses that listen everywhere, such as `0.0.0.0`, are refused.
+- With `--host` and a network address it prints a warning: anyone who reaches that address with the link can read the conversation and use your models. There the page cannot say where an orbital connects: a connection is set in your code, or in a preset given when the studio starts, so the link gives no way to send a variable of that machine elsewhere. Addresses that listen everywhere, such as `0.0.0.0`, are refused.
+- A key never reaches the page, a preset or generated code. A connection names the environment variable that holds its key, and the orbital reads the value on the server. Since a preset can name a variable and an address, [apply only presets you trust](export.md#problems-and-notes).
 
 ## Limits of This Version
 

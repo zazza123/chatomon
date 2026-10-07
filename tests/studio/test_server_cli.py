@@ -86,7 +86,12 @@ def test_a_wildcard_host_is_refused(runs):
 def test_another_host_prints_a_warning(runs, capsys, monkeypatch):
     monkeypatch.setattr(server, "_check_port", lambda host, port: None)
     serve(make_atom(), host="192.168.1.10", port=8125, open_browser=False)
-    assert "warning" in capsys.readouterr().err
+    # The link gives no way to send a variable of the machine elsewhere: on a network
+    # address the page cannot say where an orbital connects.
+    assert (
+        "warning: the studio listens on a network address. Anyone who reaches it with this "
+        "link can read the conversation and call the atom's models.\n"
+    ) in capsys.readouterr().err
 
 
 def test_a_port_in_use_is_reported_before_starting(runs):
@@ -317,6 +322,18 @@ def preset(*, max_words: int | None = 80, atom: str = "t") -> str:
     return json.dumps({**session.export_preset(), "atom": atom}, indent=2)
 
 
+def connected_preset(model: str) -> str:
+    """A preset that adds a scope guard reached through a variable, with that model name."""
+    session = Session(tunable_atom(), source="app:atom")
+    backend = {"api_url": "https://scope.example", "api_key_env": "SCOPE_KEY", "model": model}
+    session.add(
+        "input",
+        "ScopeGuardOrbital",
+        {"guard": {"type": "ApiBackend", "fields": backend}, "description": "A courier."},
+    )
+    return json.dumps(session.export_preset(), indent=2)
+
+
 def broken_preset() -> str:
     """A preset with two problems: another atom's name and a value the orbital refuses."""
     data = json.loads(preset(atom="other"))
@@ -488,3 +505,21 @@ def test_an_empty_path_given_as_a_preset_is_named_as_such(project, runs, capsys)
     assert main(["studio", "cliapp:atom", "--preset", "", "--no-browser"]) == 1
     assert capsys.readouterr().err == "chatomon studio: cannot read the preset: the path is empty\n"
     assert "app" not in runs
+
+
+def test_a_note_that_quotes_the_preset_cannot_rewrite_the_terminal(
+    runs, capsys, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("SCOPE_KEY", "key-not-for-the-terminal")
+    file = tmp_path / "t.preset.json"
+    file.write_text(connected_preset("m" + chr(0x9B) + "2J"), encoding="utf-8")
+    serve(tunable_atom(), port=free_port(), open_browser=False, preset=file)
+    err = capsys.readouterr().err
+    assert chr(0x9B) not in err
+    assert "key-not-for-the-terminal" not in err
+    note = next(line for line in err.splitlines() if line.startswith("note: 'scope_guard' uses"))
+    assert note == (
+        "note: 'scope_guard' uses the environment variable SCOPE_KEY: "
+        'guard=ApiBackend(api_url="https://scope.example", api_key_env="SCOPE_KEY", '
+        'model="m\\x9b2J"). Check where it points before you send a message.'
+    )

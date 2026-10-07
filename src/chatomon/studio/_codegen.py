@@ -15,7 +15,7 @@ import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
 import chatomon.orbitals as library
 from chatomon.knowledge import Knowledge
@@ -23,6 +23,7 @@ from chatomon.orbitals.base import Orbital
 from chatomon.schemas import Side
 from chatomon.studio import _kinds as kinds
 from chatomon.studio._chains import SIDES, Chains, Entry
+from chatomon.studio._values import OPAQUE, Setting, ValueType, plain, represented
 
 WIDTH = 88
 OFF = "# Off in the studio:"
@@ -39,8 +40,16 @@ NO_NAME = (
 _BREAKS = {chr(code): f"\\u{code:04x}" for code in (0x85, 0x2028, 0x2029)}
 
 Import = tuple[str, str]
-Argument = tuple[str, str, str | None]
-"""A keyword, its text and a trailing comment."""
+
+
+class Argument(NamedTuple):
+    """A keyword, its text and a trailing comment."""
+
+    key: str
+    text: str
+    comment: str | None = None
+    laid: bool = False
+    """Whether the text is a call already laid out on its lines, not a text in parts."""
 
 
 @dataclass(frozen=True)
@@ -155,17 +164,125 @@ def _layout(name: str, args: list[Argument]) -> list[str]:
     Returns:
         The lines of the call, without indentation.
     """
-    simple = all(comment is None and "\n" not in text for _, text, comment in args)
-    one = f"{name}({', '.join(f'{key}={text}' for key, text, _ in args)})"
+    simple = all(arg.comment is None and "\n" not in arg.text for arg in args)
+    one = f"{name}({', '.join(f'{arg.key}={arg.text}' for arg in args)})"
     if simple and len(one) + 5 <= WIDTH:  # four spaces of indentation and the comma
         return [one]
     lines = [f"{name}("]
-    for key, text, comment in args:
-        if "\n" in text:
-            lines += [f"    {key}=(", *(f"        {part}" for part in text.split("\n")), "    ),"]
+    for arg in args:
+        parts = arg.text.split("\n")
+        if len(parts) == 1:
+            lines.append(
+                f"    {arg.key}={arg.text}," + (f"  # {arg.comment}" if arg.comment else "")
+            )
+        elif arg.laid:
+            lines += [f"    {arg.key}={parts[0]}", *(f"    {part}" for part in parts[1:-1])]
+            lines.append(f"    {parts[-1]},")
         else:
-            lines.append(f"    {key}={text}," + (f"  # {comment}" if comment else ""))
+            lines += [f"    {arg.key}=(", *(f"        {part}" for part in parts), "    ),"]
     return [*lines, ")"]
+
+
+def _bracketed(head: str, tail: str, items: list[list[str]], used: int) -> list[str]:
+    """Lay out a call or a list: on one line when it fits, otherwise one item per line.
+
+    Args:
+        head: What opens it, such as `ApiBackend(` or `[`.
+        tail: What closes it.
+        items: The arguments or the entries, each as its own lines.
+        used: The columns its first line has taken before it, with the comma after it.
+
+    Returns:
+        The lines, the first without indentation and the others relative to it.
+    """
+    one = head + ", ".join(item[0] for item in items) + tail
+    if all(len(item) == 1 for item in items) and used + len(one) <= WIDTH:
+        return [one]
+    lines = [head]
+    for item in items:
+        lines += [f"    {line}" for line in item[:-1]]
+        lines.append(f"    {item[-1]},")
+    return [*lines, tail]
+
+
+def _text(value: Any, flat: bool) -> list[str]:
+    """Write a plain value of a block; a text with line breaks, one literal per line.
+
+    Returns:
+        One literal, or the lines of several in parentheses, as for a plain setting.
+    """
+    if flat or not isinstance(value, str) or "\n" not in value:
+        return [literal(value)]
+    return ["(", *(f"    {part}" for part in text_literal(value).split("\n")), ")"]
+
+
+def _instance(
+    found: ValueType, value: Any, indent: int, lead: int, needs: set[Import], *, flat: bool = False
+) -> list[str]:
+    """Write a value type as a call: its required fields and those that differ from the default.
+
+    The fields are read from the object, not from its JSON form, so a text the
+    code gives where a list could be is written as that text.
+
+    Args:
+        found: The type as the studio reads it.
+        value: The instance.
+        indent: The indentation of the line the call starts on.
+        lead: The characters between that indentation and the call.
+        needs: The imports the code needs; the type's own is added.
+        flat: Whether the call is wanted on one line, whatever its texts hold.
+
+    Returns:
+        The lines of the call, relative to the line it starts on.
+    """
+    needs.add(_import(found.cls))
+    items: list[list[str]] = []
+    for item in found.fields:
+        raw = getattr(value, item.key)
+        if not item.required and raw == item.default:
+            continue
+        lines = _field(item, raw, indent + 4, len(item.key) + 1, needs, flat=flat)
+        items.append([f"{item.key}={lines[0]}", *lines[1:]])
+    # A field the studio does not read and that has no default has to be given, as it is here.
+    items += [[f"{name}={literal(given)}"] for name, given, passed in found.unread if passed]
+    return _bracketed(f"{found.cls.__name__}(", ")", items, indent + lead + 1)
+
+
+def _field(
+    item: Setting, raw: Any, indent: int, lead: int, needs: set[Import], *, flat: bool = False
+) -> list[str]:
+    """Write the value of one field: a plain value, or a list of texts and entries.
+
+    Returns:
+        The lines of the value, relative to the line it starts on.
+    """
+    if not isinstance(raw, list | tuple):
+        return _text(raw, flat)
+    entries: list[list[str]] = []
+    for entry in raw:
+        known = next((kind for kind in item.types if type(entry) is kind.cls), None)
+        if known is None:
+            entries.append(_text(entry, flat))
+        else:
+            entries.append(_instance(known, entry, indent + 4, 0, needs, flat=flat))
+    return _bracketed("[", "]", entries, indent + lead + 1)
+
+
+def written(setting: Setting, value: Any) -> str:
+    """Write a block on one line, as the argument Copy as code would write.
+
+    Args:
+        setting: The block.
+        value: What the orbital holds for it: a text or an instance of a value type.
+
+    Returns:
+        The argument, such as `guard=ApiBackend(api_url="https://…")`.
+    """
+    found = next((known for known in setting.types if type(value) is known.cls), None)
+    if found is None:
+        return f"{setting.key}={literal(value)}"
+    # An indentation far to the left: whatever its length, the call stays on one line.
+    return f"{setting.key}={_instance(found, value, -(10**6), 0, set(), flat=True)[0]}"
 
 
 @dataclass
@@ -217,29 +334,57 @@ class _Writer:
         needs: set[Import] = {_import(cls)}
         args: list[Argument] = []
         if orb.name != cls.default_name():
-            args.append(("name", literal(orb.name), None))
+            args.append(Argument("name", literal(orb.name)))
         for key in kind.order:
             if key == "name":
                 continue
             setting = kind.setting(key)
-            if setting is None:
+            if setting is not None and setting.type == "block":
+                more = self._block(orb, setting, args)
+            elif setting is None:
                 value = kinds.read(orb, key, self.chains.connector)
                 if value is None:
                     continue
                 text, comment, more = self._object(orb.name, key, value)
+                args.append(Argument(key, text, comment))
             else:
                 raw = getattr(orb, key)
-                if not setting.required and kinds.plain(raw) == kinds.plain(setting.default):
+                if not setting.required and plain(raw) == plain(setting.default):
                     continue
                 if isinstance(raw, Knowledge):
                     text, comment, more = self._object(orb.name, key, raw)
                 elif isinstance(raw, str):
                     text, comment, more = text_literal(raw), None, set()
                 else:
-                    text, comment, more = literal(kinds.plain(raw)), None, set()
-            args.append((key, text, comment))
+                    text, comment, more = literal(plain(raw)), None, set()
+                args.append(Argument(key, text, comment))
             needs |= more
         return _layout(cls.__name__, args), needs
+
+    def _block(self, orb: Orbital, setting: Setting, args: list[Argument]) -> set[Import]:
+        """Write a block: the code's own object by its name, a text, or a call of its type.
+
+        Returns:
+            The imports the argument needs; nothing is added for a block that is none.
+        """
+        value = getattr(orb, setting.key)
+        if value is None:
+            return set()
+        found = next((known for known in setting.types if type(value) is known.cls), None)
+        nameless = id(value) not in self.known
+        if isinstance(value, str) and nameless:
+            # One text, written as the text of a plain setting is: a literal per line.
+            args.append(Argument(setting.key, text_literal(value)))
+            return set()
+        if found is None or not nameless or represented(setting, value) is OPAQUE:
+            # A name in the module, or an object the studio cannot write.
+            text, comment, more = self._object(orb.name, setting.key, value)
+            args.append(Argument(setting.key, text, comment))
+            return more
+        needs: set[Import] = set()
+        lines = _instance(found, value, 8, len(setting.key) + 1, needs)
+        args.append(Argument(setting.key, "\n".join(lines), laid=True))
+        return needs
 
 
 def _side(side: Side, rendered: list[tuple[Entry, list[str], str | None]]) -> list[str]:
@@ -306,6 +451,18 @@ def _assignments(writer: _Writer, taken: set[str]) -> tuple[list[str], set[Impor
     return lines, needs
 
 
+def _imported(module: str, names: list[str]) -> str:
+    """Write one import: on one line when it fits, otherwise one name per line.
+
+    Returns:
+        The import statement.
+    """
+    one = f"from {module} import {', '.join(names)}"
+    if len(one) <= WIDTH:
+        return one
+    return "\n".join([f"from {module} import (", *(f"    {name}," for name in names), ")"])
+
+
 def generate(chains: Chains, namespace: Mapping[str, object] | None) -> Code:
     """Write the session's orbitals as the atom's two lists.
 
@@ -330,7 +487,7 @@ def generate(chains: Chains, namespace: Mapping[str, object] | None) -> Code:
             blocks.append("\n".join(_side(side, rendered)))
     modules = sorted({module for module, _ in needs})
     imports = "\n".join(
-        f"from {module} import {', '.join(sorted(n for m, n in needs if m == module))}"
+        _imported(module, sorted(name for found, name in needs if found == module))
         for module in modules
     )
     notes: list[str] = []

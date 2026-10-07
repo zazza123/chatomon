@@ -3,13 +3,17 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
+from orbitals.scope_guard_v2 import AsyncScopeGuardV2
+from orbitals.types import AIServiceDescriptionV2
 from pydantic_ai.models.test import TestModel
 
 from chatomon import Atom, ChatomonConfigError, Knowledge, Verdict
 from chatomon._version import __version__
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
+from chatomon.errors import MissingExtraError
 from chatomon.orbitals import JudgeOrbital, MessageLengthOrbital, TurnLimitOrbital
 from chatomon.orbitals.base import Orbital
+from chatomon.orbitals.principled import ScopeGuardOrbital
 from chatomon.schemas import Side
 from chatomon.studio import _kinds as kinds
 from chatomon.studio._chains import Chains, RefusedError
@@ -96,7 +100,7 @@ def test_exporting_and_importing_restores_the_session(change: Callable[[Session]
     change(first)
     text = json.dumps(first.export_preset())
     second = make_session()
-    assert second.import_preset(text) == []
+    assert second.import_preset(text) == ([], [])
     assert snapshot(second) == snapshot(first)
 
 
@@ -361,7 +365,7 @@ def test_a_preset_from_other_code_is_applied_with_notes():
     old.switch("input", "scope", False)
     text = json.dumps(old.export_preset())
     new = make_session(context="Open 9-17.", extra=[ScriptedOrbital(name="new_guard")])
-    assert new.import_preset(text) == [
+    assert new.import_preset(text).warnings == [
         "'new_guard' is in your code but not in the preset: it was added at the end, turned on.",
         "'faithfulness' differs from the exported preset: your code or chatomon changed since.",
     ]
@@ -403,7 +407,7 @@ def test_an_instance_in_both_chains_takes_one_set_of_settings():
     assert preset["input_orbitals"][0]["settings"] == {"max_words": 80}
     assert preset["output_orbitals"][0]["settings"] == {"max_words": 80}
     second = shared_session()
-    assert second.import_preset(json.dumps(preset)) == []
+    assert second.import_preset(json.dumps(preset)) == ([], [])
     assert snapshot(second) == snapshot(first)
     preset["output_orbitals"][0]["settings"] = {"max_words": 90}
     with pytest.raises(InvalidPresetError) as caught:
@@ -841,3 +845,299 @@ def test_an_orbital_of_both_chains_that_left_one_keeps_its_changes_on_the_other(
         "what the studio changed on it there was dropped."
     ]
     assert changes(result) == ["message_length.max_words changed"]
+
+
+# --- Blocks: connections and service descriptions -----------------------------
+
+KEY = "key-0123456789-not-for-the-preset"
+BACKEND = {
+    "type": "ApiBackend",
+    "fields": {"api_url": "https://scope.example", "api_key_env": "SCOPE_KEY"},
+}
+PAIRS = {
+    "type": "AIServiceDescriptionV2",
+    "fields": {
+        "identity_role": "Courier",
+        "context": "Italy",
+        "predefined_responses": [
+            {
+                "type": "PredefinedResponse",
+                "fields": {"trigger": "phone", "response": "800 123 456"},
+            },
+            "Greet the user back.",
+        ],
+    },
+}
+NOTE = (
+    "'hosted' uses the environment variable SCOPE_KEY: "
+    'guard=ApiBackend(api_url="https://scope.example", api_key_env="SCOPE_KEY"). '
+    "Check where it points before you send a message."
+)
+UNNAMED = (
+    "'claim_extractor' names no environment variable for its key: "
+    'extractor=ApiBackend(api_url="https://claims.example"). Its client can still send a key it '
+    "reads from the environment on its own. Check where it points before you send a message."
+)
+
+
+@pytest.fixture
+def key(monkeypatch):
+    monkeypatch.setenv("SCOPE_KEY", KEY)
+    return monkeypatch
+
+
+def service_session(preset: str | None = None) -> Session:
+    """A session on code whose scope guard has a client and a description of its own."""
+    client = AsyncScopeGuardV2(backend="api", api_url="http://scope-guard.test", api_key="k")
+    described = AIServiceDescriptionV2(
+        identity_role="Courier", context="Italy", constraints="No refunds"
+    )
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(TestModel(custom_output_text="Hi")),
+        input_orbitals=[ScopeGuardOrbital(name="scope", guard=client, description=described)],
+    )
+    return Session(atom, source="app:atom", preset=preset)
+
+
+def with_services(session: Session) -> None:
+    session.add(
+        "input", "ScopeGuardOrbital", {"name": "hosted", "guard": BACKEND, "description": PAIRS}
+    )
+    session.add(
+        "output",
+        "ClaimExtractorOrbital",
+        {"extractor": {"type": "ApiBackend", "fields": {"api_url": "https://claims.example"}}},
+    )
+    shown = session.state()["orbitals"]["input"][0]["settings"][0]["value"]
+    shown["fields"]["context"] = "Italy and France"
+    session.edit("input", "scope", {"description": shown})
+
+
+def test_exporting_and_importing_restores_a_session_with_blocks(key):
+    first = service_session()
+    with_services(first)
+    exported = first.export_preset()
+    text = json.dumps(exported)
+    assert KEY not in text
+    second = service_session()
+    # Where each orbital connects is said apart from what differs from the exported session.
+    assert second.import_preset(text) == ([NOTE, UNNAMED], [])
+    assert snapshot(second) == snapshot(first)
+    started = service_session(preset=text)
+    assert snapshot(started) == snapshot(first)
+    assert started.notes == [NOTE, UNNAMED]
+    # The page shows, when it opens, where a preset given at the start makes orbitals connect.
+    assert started.state()["studio"]["preset_connections"] == [NOTE, UNNAMED]
+    assert second.state()["studio"]["preset_connections"] == []
+
+
+def test_a_preset_writes_a_block_whole_with_the_fields_that_differ_from_the_default(key):
+    session = service_session()
+    with_services(session)
+    preset = session.export_preset()
+    scope, hosted = preset["input_orbitals"]
+    # An orbital from code carries the setting that changed, whole.
+    assert scope["settings"] == {
+        "description": {
+            "type": "AIServiceDescriptionV2",
+            "fields": {
+                "identity_role": "Courier",
+                "context": "Italy and France",
+                "constraints": ["No refunds"],
+            },
+        }
+    }
+    assert (hosted["settings"]["guard"], hosted["settings"]["description"]) == (BACKEND, PAIRS)
+    claims = preset["output_orbitals"][0]
+    assert claims["settings"]["extractor"] == {
+        "type": "ApiBackend",
+        "fields": {"api_url": "https://claims.example"},
+    }
+    assert claims["settings"]["description"] is None
+
+
+def added(**settings: Any) -> str:
+    preset = service_session().export_preset()
+    entry = {
+        "name": "hosted",
+        "kind": "ScopeGuardOrbital",
+        "from": "studio",
+        "enabled": True,
+        "settings": {"guard": BACKEND, "description": "A courier.", **settings},
+        "fingerprint": "sha256:x",
+    }
+    preset["input_orbitals"].append(entry)
+    return json.dumps(preset)
+
+
+@pytest.mark.parametrize(
+    ("settings", "problem"),
+    [
+        (
+            {"guard": {"type": "Tunnel", "fields": {}}},
+            "'hosted': `guard` must be an ApiBackend",
+        ),
+        (
+            {"guard": {"type": "ApiBackend", "fields": {"api_url": "https://a", "port": 1}}},
+            "'hosted': `ApiBackend` has no field `port`",
+        ),
+        (
+            {"guard": {"type": "ApiBackend", "fields": {"api_url": "a"}}},
+            "'hosted': api_url must start with http:// or https:// and name a host",
+        ),
+        (
+            {
+                "description": {
+                    "type": "AIServiceDescription",
+                    "fields": {"identity_role": "r", "context": "c"},
+                }
+            },
+            "'hosted': ScopeGuard V2 needs an AIServiceDescriptionV2 (or a string) as description",
+        ),
+        (
+            {"description": {"type": "AIServiceDescriptionV2", "fields": {"identity_role": "r"}}},
+            "'hosted': `context` needs a value",
+        ),
+    ],
+)
+def test_a_block_a_preset_gets_wrong_is_a_problem(key, settings, problem):
+    session = service_session()
+    before = snapshot(session)
+    with pytest.raises(InvalidPresetError) as caught:
+        session.import_preset(added(**settings))
+    assert caught.value.problems == [problem]
+    assert snapshot(session) == before
+
+
+def test_a_variable_that_is_not_set_is_a_problem_of_the_preset(monkeypatch):
+    monkeypatch.delenv("SCOPE_KEY", raising=False)
+    session = service_session()
+    before = snapshot(session)
+    with pytest.raises(InvalidPresetError) as caught:
+        session.import_preset(added())
+    assert caught.value.problems == ["'hosted': the environment variable SCOPE_KEY is not set"]
+    assert snapshot(session) == before
+    with pytest.raises(InvalidPresetError):
+        service_session(preset=added())
+
+
+def test_a_class_whose_module_lacks_its_extra_is_a_problem_that_names_the_extra(key):
+    text = added()
+    session = make_session()
+    real = kinds.importlib.import_module
+
+    def fake(name: str, package: str | None = None) -> Any:
+        if name == "chatomon.orbitals.principled":
+            raise MissingExtraError("principled", "orbitals")
+        return real(name, package)
+
+    key.setattr(kinds.importlib, "import_module", fake)
+    kinds._library.cache_clear()
+    try:
+        with pytest.raises(InvalidPresetError) as caught:
+            session.import_preset(text.replace('"scope"', '"message_length"'))
+    finally:
+        key.undo()
+        kinds._library.cache_clear()
+    assert (
+        "'hosted': ScopeGuardOrbital is not an orbital this studio can add. The orbitals of "
+        "chatomon.orbitals.principled need: pip install 'chatomon[principled]'."
+    ) in caught.value.problems
+
+
+def test_a_connection_that_names_no_variable_is_noted_too(key):
+    # Without a name the client reads a key from the environment on its own, as the
+    # library's does with PRINCIPLED_API_KEY: the address a preset sets is always said.
+    session = service_session()
+    plain = {"type": "ApiBackend", "fields": {"api_url": "https://scope.example"}}
+    assert session.import_preset(added(guard=plain)).connections == [
+        "'hosted' names no environment variable for its key: "
+        'guard=ApiBackend(api_url="https://scope.example"). Its client can still send a key it '
+        "reads from the environment on its own. Check where it points before you send a message."
+    ]
+
+
+def test_a_block_that_is_not_a_connection_gives_no_note(key):
+    session = service_session()
+    preset = session.export_preset()
+    preset["input_orbitals"][0]["settings"] = {"description": "A courier."}
+    notes = session.import_preset(json.dumps(preset))
+    assert notes.connections == []
+    assert notes.warnings == [
+        "'scope' differs from the exported preset: your code or chatomon changed since."
+    ]
+
+
+class TokenOrbital(ScriptedOrbital):
+    """The name of a variable as a parameter of its own: no built-in orbital has one yet."""
+
+    def __init__(self, *, token_env: str | None = None, name: str | None = None) -> None:
+        super().__init__(name=name)
+        self.token_env = token_env
+
+    def config(self) -> dict[str, Any]:
+        return {**super().config(), "token_env": self.token_env}
+
+
+def test_a_plain_setting_that_names_a_variable_is_noted_like_a_connection(monkeypatch):
+    builtin = kinds.is_builtin
+    monkeypatch.setattr(kinds, "is_builtin", lambda cls: cls is TokenOrbital or builtin(cls))
+
+    def session() -> Session:
+        atom = Atom(
+            name="speedypack",
+            instructions="Be brief.",
+            connector=PydanticAIConnector(TestModel(custom_output_text="Hi")),
+            input_orbitals=[TokenOrbital(name="token")],
+        )
+        return Session(atom, source="app:atom")
+
+    first = session()
+    first.edit("input", "token", {"token_env": "SOME_TOKEN"})
+    assert session().import_preset(json.dumps(first.export_preset())) == (
+        [
+            "'token' uses the environment variable SOME_TOKEN: token_env=\"SOME_TOKEN\". "
+            "Check where it points before you send a message."
+        ],
+        [],
+    )
+
+
+def test_a_connection_note_writes_letters_that_are_not_ascii_as_escapes(key):
+    # An address with a letter of another alphabet can look like one the developer trusts.
+    session = service_session()
+    lookalike = {
+        "type": "ApiBackend",
+        "fields": {"api_url": "https://sc\u043epe.example", "api_key_env": "SCOPE_KEY"},
+    }
+    (note,) = session.import_preset(added(guard=lookalike)).connections
+    assert 'api_url="https://sc\\u043epe.example"' in note
+    assert note.isascii()
+
+
+def test_blocks_are_carried_over_code_that_was_loaded_again(key):
+    session = service_session()
+    with_services(session)
+    before = [entry.orbital.fingerprint() for entry in session.chains.work["input"]]
+    result, dropped = carried(session.chains, service_session().chains)
+    assert dropped == []
+    assert [entry.orbital.fingerprint() for entry in result.work["input"]] == before
+    assert changes(result) == [
+        "scope.description changed",
+        "hosted added",
+        "claim_extractor added",
+    ]
+
+
+def test_an_added_orbital_whose_variable_is_gone_is_dropped_and_said(key):
+    session = service_session()
+    with_services(session)
+    key.delenv("SCOPE_KEY")
+    result, dropped = carried(session.chains, service_session().chains)
+    assert dropped == [
+        "'hosted', added in the studio, was dropped: the environment variable SCOPE_KEY is not set"
+    ]
+    assert names(result) == ["scope"]
+    assert changes(result) == ["scope.description changed", "claim_extractor added"]

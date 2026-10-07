@@ -59,6 +59,7 @@ A change that no longer applies is dropped, and the card lists it under **No lon
 | An orbital you had changed is now of another class | What you had changed on it |
 | An orbital now has the name of one you added in the studio | The one you added: your code's takes its place |
 | The values your code has now refuse a setting you had changed | What you had changed on that orbital |
+| The environment variable of a connection you added is no longer set | The orbital you added, with the name of the variable |
 
 An orbital you had not touched and that left your code is not listed: nothing of the studio's was lost.
 

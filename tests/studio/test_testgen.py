@@ -1245,3 +1245,45 @@ def test_the_names_of_a_frameworks_lines_leave_out_strings_and_comments():
     names = lines.names()
     assert {"configure", "mode", "fast", "greeting", "prefix", "agent", "result"} <= names
     assert not {"single", "quoted", "words", "comment", "with", "output", "run_sync"} & names
+
+
+async def test_a_turn_checked_by_an_orbital_added_with_a_connection_is_an_integration_test(
+    service, monkeypatch
+):
+    from pydantic_ai.models.test import TestModel
+
+    from chatomon import Atom
+    from chatomon.connectors.pydantic_ai import PydanticAIConnector
+    from chatomon.orbitals import MessageLengthOrbital
+
+    key = "key-0123456789-not-for-the-test-file"
+    monkeypatch.setenv("SCOPE_KEY", key)
+    service.key = key
+    service.scope_class = "Restricted"
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(TestModel(custom_output_text="Hi")),
+        input_orbitals=[MessageLengthOrbital(max_words=8, reply="Too long.")],
+    )
+    session = Session(atom, source="app:atom")
+    backend = {"api_url": service.url, "api_key_env": "SCOPE_KEY"}
+    session.add(
+        "input",
+        "ScopeGuardOrbital",
+        {"guard": {"type": "ApiBackend", "fields": backend}, "description": "A courier."},
+    )
+    for message in ("I want a refund", "one two three four five six seven eight nine"):
+        queue = session.start_turn(message)
+        while await queue.get() is not None:
+            pass
+
+    stopped_by_the_service = session.saved_test(1)
+    assert stopped_by_the_service["integration"] is True
+    assert (
+        "@pytest.mark.integration  # scope_guard calls a real model"
+        in (stopped_by_the_service["code"])
+    )
+    assert key not in stopped_by_the_service["code"]
+    # The length limit answered before the guard ran: no model is needed for that turn.
+    assert session.saved_test(2, alone=True)["integration"] is False

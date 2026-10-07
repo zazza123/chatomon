@@ -107,7 +107,8 @@ def _start(
     session = _session(atom, source, namespace, preset)
     _check_port(host, port)
     for note in session.notes:
-        print(f"note: {note}", file=sys.stderr)
+        # A note can quote a preset file, which may come from someone else.
+        print(f"note: {_plain(note)}", file=sys.stderr)
     token = new_token()
     shown = f"[{host}]" if ":" in host else host
     url = f"http://{shown}:{port}/?token={token}"

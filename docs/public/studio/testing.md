@@ -84,7 +84,7 @@ Each replayed turn is a real call, so a long conversation makes a slow test. **N
 
 A test runs offline only when no model is needed: in every turn the input chain produced the reply, and no orbital that ran calls a model. Such a test puts a stand-in in place of the nucleus: PydanticAI's test model, or for the other frameworks a small one the test defines. The nucleus then needs no credentials, the stand-in calls none of the atom's tools, and a change in your code that lets the message through fails the test instead of calling a model. The module of your atom must still import without credentials for the test to run with none.
 
-Every other test is marked `integration`, with a comment that names what calls real models. Register the marker in your pytest configuration, and leave these tests out where there are no credentials:
+Every other test is marked `integration`, with a comment that names what calls real models. An orbital that connects to a service calls one, whether your code defines it or you added it in the studio; where such a test runs, the variable that holds the key must be set, because the orbital reads it when your atom is built. Register the marker in your pytest configuration, and leave these tests out where there are no credentials:
 
 ```toml
 [tool.pytest.ini_options]

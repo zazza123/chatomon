@@ -24,16 +24,21 @@ from chatomon.errors import ChatomonConfigError, ChatomonError
 from chatomon.studio._chains import InvalidRequestError, UnknownOrbitalError
 from chatomon.studio._events import Event
 from chatomon.studio._files import InvalidPathError, OwnFileExistsError
-from chatomon.studio._kinds import InvalidSettingError
 from chatomon.studio._presets import InvalidPresetError
 from chatomon.studio._security import LOOPBACK, Guard
 from chatomon.studio._session import Session, StudioBusyError, UnknownTurnError
+from chatomon.studio._values import InvalidSettingError
 
 _STATIC = files("chatomon.studio") / "static"
 _NO_STORE = {"Cache-Control": "no-store"}
 
 
 _PATCH_HELP = 'send {"side": "input", "name": "..."} and one of "enabled", "settings" or "position"'
+
+_PROBE_HELP = (
+    'send {"side": "input", "name": "..."} to test an orbital of the session, or '
+    '{"side": "input", "kind": "...", "settings": {...}} to test one before it is added'
+)
 
 _TEST_HELP = (
     'send {"path": "tests/studio/test_turn.py", "turn": "<the id the test came with>"}; '
@@ -101,6 +106,8 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
     Returns:
         The Starlette app, guarded by Host, Origin and token checks.
     """
+    # On a network address the session refuses a connection that comes from the page.
+    session.local = host in LOOPBACK
 
     def state() -> dict[str, Any]:
         current = session.state()
@@ -161,6 +168,25 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
         except ChatomonError as exc:
             return _refusal(exc)
         return JSONResponse(state())
+
+    async def post_probe(request: Request) -> Response:
+        body = await _body(request) or {}
+        side, name, kind = body.get("side"), body.get("name"), body.get("kind")
+        settings = body.get("settings", {})
+        named = isinstance(name, str) and kind is None and "settings" not in body
+        new = isinstance(kind, str) and name is None and isinstance(settings, dict)
+        if not isinstance(side, str) or named == new:
+            return _error(422, "InvalidBody", _PROBE_HELP)
+        try:
+            # The body names an orbital or gives its settings: what is sent to the
+            # service, and the sentence that says how it went, are computed here.
+            if named:
+                result = await session.probe(side, name=name)
+            else:
+                result = await session.probe(side, kind=kind, settings=settings)
+        except ChatomonError as exc:
+            return _refusal(exc)
+        return JSONResponse(result.to_json(), headers=_NO_STORE)
 
     async def delete_orbital(request: Request) -> Response:
         body = await _body(request) or {}
@@ -239,10 +265,12 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
         if not isinstance(text, str):
             return _error(422, "InvalidBody", 'send {"text": "<the preset>"}')
         try:
-            warnings = session.import_preset(text)
+            noted = session.import_preset(text)
         except ChatomonError as exc:
             return _refusal(exc)
-        return JSONResponse({"state": state(), "warnings": warnings})
+        return JSONResponse(
+            {"state": state(), "connections": noted.connections, "warnings": noted.warnings}
+        )
 
     async def post_reload(request: Request) -> Response:
         try:
@@ -282,6 +310,7 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
         Route("/api/orbitals", patch_orbital, methods=["PATCH"]),
         Route("/api/orbitals", post_orbital, methods=["POST"]),
         Route("/api/orbitals", delete_orbital, methods=["DELETE"]),
+        Route("/api/orbitals/probe", post_probe, methods=["POST"]),
         Route("/api/orbitals/reset", reset_orbitals, methods=["POST"]),
         Route("/api/orbitals/undo", undo, methods=["POST"]),
         Route("/api/conversation/reset", post_reset, methods=["POST"]),

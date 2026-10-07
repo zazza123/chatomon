@@ -31,6 +31,8 @@ export const reloadAtom = () => send("POST", "/api/reload", {});
 export const patchOrbital = (side, name, change) => send("PATCH", "/api/orbitals", { side, name, ...change });
 export const addOrbital = (side, kind, settings) => send("POST", "/api/orbitals", { side, kind, settings });
 export const deleteOrbital = (side, name) => send("DELETE", "/api/orbitals", { side, name });
+/** One check of an orbital on a sample message: `{ name }` for one of the session, `{ kind, settings }` for a new one. */
+export const probeOrbital = (side, target) => send("POST", "/api/orbitals/probe", { side, ...target });
 export const resetOrbitals = (target = {}) => send("POST", "/api/orbitals/reset", target);
 export const undoOrbitals = () => send("POST", "/api/orbitals/undo", {});
 export const getCode = () => send("GET", "/api/code");

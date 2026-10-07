@@ -6,8 +6,10 @@ import asyncio
 import contextlib
 import json
 import os
+import socket
 import sys
 import threading
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,14 +22,16 @@ from pydantic_core import to_json
 from chatomon._version import __version__
 from chatomon.atom import Atom
 from chatomon.errors import ChatomonConfigError, ChatomonError
-from chatomon.schemas import Side, TurnReport
+from chatomon.orbitals.base import Orbital
+from chatomon.schemas import OrbitalContext, Side, TurnReport, Verdict
 from chatomon.studio import _codegen as codegen
 from chatomon.studio import _files as files
 from chatomon.studio import _kinds as kinds
 from chatomon.studio import _loading as loading
 from chatomon.studio import _presets as presets
 from chatomon.studio import _testgen as testgen
-from chatomon.studio._chains import SIDES, Chains, Entry, RefusedError
+from chatomon.studio import _values as values
+from chatomon.studio._chains import SIDES, Chains, Entry, InvalidRequestError, RefusedError
 from chatomon.studio._events import Event, EventProcessor
 from chatomon.studio._runners import Runner, runner_for
 
@@ -88,6 +92,112 @@ def _in_thread(function: Callable[[], _T]) -> asyncio.Future[_T]:
 
     threading.Thread(target=run, name="chatomon-studio-reload", daemon=True).start()
     return future
+
+
+def _elapsed(started: float) -> float:
+    return round((time.perf_counter() - started) * 1000, 1)
+
+
+def _notes(runner: Runner, atom: Atom[Any]) -> list[str]:
+    """Return what the developer should know at start: about the atom, then about the library."""
+    return [*runner.notes(atom.connector), *kinds.import_notes()]
+
+
+SAMPLE = "Hello"
+"""The message a test of an orbital sends. The server writes it: the page sends no text."""
+
+_HINTS = {
+    401: " It did not accept the credentials.",
+    403: " It did not accept the credentials.",
+    404: " Check the address.",
+}
+
+
+@dataclass(frozen=True)
+class Probe:
+    """How one check of an orbital on a sample message went."""
+
+    outcome: str
+    """`answered`, `timeout`, `http`, `unreachable` or `failed`."""
+    message: str
+    duration_ms: float
+    action: str | None = None
+    reason: str | None = None
+    status: int | None = None
+
+    def to_json(self) -> dict[str, Any]:
+        """Return the outcome as the page receives it."""
+        data: dict[str, Any] = {
+            "outcome": self.outcome,
+            "message": self.message,
+            "duration_ms": self.duration_ms,
+        }
+        if self.outcome == "answered":
+            data.update(action=self.action, reason=self.reason)
+        if self.status is not None:
+            data["status"] = self.status
+        return data
+
+
+def _links(exc: BaseException) -> list[BaseException]:
+    """Return an exception and what caused it, a few links down.
+
+    A framework wraps the error of its HTTP client, which wraps the socket's: the
+    refused connection is three or four links below what the check raises.
+    """
+    found: list[BaseException] = []
+    queue: list[Any] = [exc]
+    while queue and len(found) < 12:
+        link = queue.pop(0)
+        if not isinstance(link, BaseException) or any(link is seen for seen in found):
+            continue
+        found.append(link)
+        queue += [link.__cause__, link.__context__, getattr(link, "os_error", None)]
+    return found
+
+
+def _failure(exc: BaseException, timeout: float, waited: float) -> tuple[str, str, int | None]:
+    """Say how a check failed, from the kind of exception and never from its text.
+
+    A client's error can quote the request it made, and so a key: the sentence is
+    the studio's own. Exceptions are told apart by Python's base classes and by
+    the attributes HTTP clients share, so no client is imported here.
+
+    Args:
+        exc: What the check raised.
+        timeout: The orbital's timeout, in seconds.
+        waited: How long the check ran, in seconds.
+
+    Returns:
+        The outcome, its sentence and the HTTP status when there is one.
+    """
+    if isinstance(exc, TimeoutError):
+        if waited < timeout * 0.9:
+            # The client has a timeout of its own, shorter than the orbital's.
+            early = f"The client stopped waiting before the orbital's timeout of {timeout:g} s."
+            return "timeout", early, None
+        wait = f"No answer within {timeout:g} s. A service that is starting can take longer."
+        return "timeout", wait, None
+    if isinstance(exc, ChatomonError):
+        return "failed", f"The check failed with {type(exc).__name__}: {exc}.", None
+    for held in (getattr(exc, "status", None), getattr(exc, "status_code", None)):
+        # A status below 400 on an error is an answer the client could not use, not a refusal.
+        if isinstance(held, int) and not isinstance(held, bool) and 400 <= held <= 599:
+            return "http", f"The service answered {held}.{_HINTS.get(held, '')}", held
+    errors = [link for link in _links(exc) if isinstance(link, OSError)]
+    if any(isinstance(error, ConnectionRefusedError) for error in errors):
+        return "unreachable", "The connection was refused.", None
+    if any(isinstance(error, socket.gaierror) for error in errors):
+        return "unreachable", "The address was not found.", None
+    if errors:
+        return "unreachable", "Could not connect.", None
+    return "failed", f"The check failed with {type(exc).__name__}.", None
+
+
+NETWORK = (
+    "the studio listens on a network address: where an orbital connects is set in your code, "
+    "or in a preset given when the studio starts, not from the page"
+)
 
 
 class StudioBusyError(ChatomonError):
@@ -190,9 +300,15 @@ class Session:
         self.provider.add_span_processor(self.processor)
         self.conversation: Any = None
         self.turns: list[TurnRecord] = []
-        self.notes: list[str] = runner.notes(atom.connector)
+        self.notes: list[str] = _notes(runner, atom)
+        self.preset_connections: list[str] = []
+        """Where the preset given at the start makes orbitals connect: the page shows it."""
+        self.local = True
+        """Whether the studio listens only on this machine: the app says so. On a network
+        address the page cannot say where an orbital connects."""
         self._task: asyncio.Task[None] | None = None
         self._reload: asyncio.Task[Reloaded] | None = None
+        self._probing = False
         self.reloads = 0
         self._running: TurnRecord | None = None
         self._report: TurnReport | None = None
@@ -200,7 +316,9 @@ class Session:
         self._undo: tuple[Chains, str] | None = None
         self._agent: Any = self._build(atom, self.chains)
         if preset is not None:
-            self.notes = [*self.notes, *self.import_preset(preset)]
+            noted = self.import_preset(preset)
+            self.notes = [*self.notes, *noted.connections, *noted.warnings]
+            self.preset_connections = list(noted.connections)
             # The session starts here: there is no earlier state of it to go back to.
             self._undo = None
 
@@ -254,6 +372,8 @@ class Session:
             ChatomonConfigError: If the atom would be invalid; nothing changes.
         """  # noqa: DOC502 - raised by the helpers
         self._require_idle()
+        where, index = self.chains.find(side, name)
+        self._keep_connections(type(self.chains.work[where][index].orbital), settings, new=False)
         self._adopt(self.chains.edited(side, name, settings))
 
     def move(self, side: str, name: str, position: int) -> None:
@@ -278,6 +398,7 @@ class Session:
             ChatomonConfigError: If the atom would be invalid; nothing changes.
         """  # noqa: DOC502 - raised by the helpers
         self._require_idle()
+        self._keep_connections(kind, settings, new=True)
         self._adopt(self.chains.added(side, kind, settings))
 
     def delete(self, side: str, name: str) -> None:
@@ -317,6 +438,116 @@ class Session:
             raise RefusedError("nothing to undo")
         self._adopt(self._undo[0])
 
+    async def probe(
+        self,
+        side: str,
+        *,
+        name: str | None = None,
+        kind: str | None = None,
+        settings: Mapping[str, Any] | None = None,
+    ) -> Probe:
+        """Run one check of an orbital on a sample message, and keep nothing of it.
+
+        The orbital is one of the session, named by `name`, or one that is not
+        added yet, built from `kind` and `settings` as an addition would build
+        it. The check is not a turn: it does not go through the engine, and it
+        leaves the chains, the conversation and the turns as they were.
+
+        Args:
+            side: `"input"` or `"output"`.
+            name: The name of an orbital of the session.
+            kind: The class name of an orbital to build for the test.
+            settings: Its settings, when `kind` is given.
+
+        Returns:
+            How the check went: an answer, or why there was none.
+
+        Raises:
+            StudioBusyError: While another test runs.
+            UnknownOrbitalError: If the session has no orbital with that name.
+            InvalidRequestError: If the side does not exist, or neither or both of
+                `name` and `kind` are given.
+            InvalidSettingError: If the orbital to build is refused, as when the
+                environment variable it names is not set.
+            RefusedError: If the class cannot be added, the orbital calls no model,
+                or it reads the annotations of other orbitals.
+        """  # noqa: DOC502 - raised by the helpers
+        if self._probing:
+            raise StudioBusyError("a test is running; wait for it to finish")
+        orb = self._probed(side, name, kind, settings)
+        if not orb.calls_model:
+            raise RefusedError(f"{orb.name!r} calls no model: there is nothing to test")
+        if orb.reads:
+            read = " and ".join(repr(other) for other in orb.reads)
+            raise RefusedError(
+                f"{orb.name!r} reads the annotations of {read}: it can be tried only in a turn"
+            )
+        self._probing = True
+        started = time.perf_counter()
+        try:
+            # As Atom.build() does: a judge reaches its model through the atom's connector.
+            orb.bind(self.atom.connector)
+            ctx = OrbitalContext(side=self.chains.find_side(side), message=SAMPLE, turn_id="probe")
+            verdict = await asyncio.wait_for(orb.check(ctx), timeout=orb.timeout)
+        except Exception as exc:
+            waited = time.perf_counter() - started
+            outcome, message, status = _failure(exc, orb.timeout, waited)
+            return Probe(outcome, message, _elapsed(started), status=status)
+        finally:
+            self._probing = False
+        if not isinstance(verdict, Verdict):
+            # In a turn the engine raises a TypeError for a check that returns anything else.
+            return Probe("failed", "The check failed with TypeError.", _elapsed(started))
+        return Probe(
+            "answered",
+            "The orbital answered.",
+            _elapsed(started),
+            action=verdict.action,
+            reason=verdict.reason,
+        )
+
+    def _keep_connections(
+        self, cls: type[Orbital] | str, settings: Mapping[str, Any], *, new: bool
+    ) -> None:
+        """Refuse a connection the page gives while the studio listens on a network address.
+
+        Whoever has the link could otherwise have a variable of this machine sent to
+        an address of their choice, with a test or a turn.
+
+        Args:
+            cls: The orbital's class, or the name of one that can be added.
+            settings: What the page sent.
+            new: Whether the orbital is being created: it may leave a connection out.
+
+        Raises:
+            InvalidSettingError: Naming the setting that says where the orbital connects.
+        """
+        if self.local:
+            return
+        if isinstance(cls, str):
+            found = next((k for k in kinds.addable() if k.cls.__name__ == cls), None)
+        else:
+            found = kinds.describe(cls)
+        if found is None:
+            return
+        for key, value in settings.items():
+            setting = found.setting(key)
+            if setting is not None and values.connects(setting) and not (new and value is None):
+                raise values.InvalidSettingError(NETWORK, setting=key)
+
+    def _probed(
+        self, side: str, name: str | None, kind: str | None, settings: Mapping[str, Any] | None
+    ) -> Orbital:
+        if (name is None) == (kind is None):
+            raise InvalidRequestError("name the orbital to test, or the class to build for it")
+        if name is not None:
+            where, index = self.chains.find(side, name)
+            return self.chains.work[where][index].orbital
+        # Built as an addition would build it, on chains that are never adopted.
+        self._keep_connections(kind or "", settings or {}, new=True)
+        candidate = self.chains.added(side, kind or "", settings or {})
+        return candidate.work[self.chains.find_side(side)][-1].orbital
+
     def code(self) -> dict[str, Any]:
         """Return Copy as code: the text, the changes, the placeholders and the notes."""
         result = codegen.generate(self.chains, self.namespace)
@@ -331,26 +562,29 @@ class Session:
         """Return the session's orbital changes as a preset."""
         return presets.exported(self.chains, atom=self.atom.name)
 
-    def import_preset(self, text: str) -> list[str]:
+    def import_preset(self, text: str) -> presets.Notes:
         """Replace the session's orbital changes with a preset's; it can be undone.
 
         Args:
             text: The preset, as JSON text.
 
         Returns:
-            The warnings: what differs from the exported session.
+            Where the preset makes an orbital connect, and the warnings: what
+            differs from the exported session.
 
         Raises:
             StudioBusyError: While a turn runs.
             InvalidPresetError: With every problem; nothing changes.
         """  # noqa: DOC502 - raised by the helpers
         self._require_idle()
-        candidate, warnings = presets.applied(text, self.chains, atom=self.atom.name)
+        candidate, noted = presets.applied(text, self.chains, atom=self.atom.name)
+        if noted.connections and not self.local:
+            raise presets.InvalidPresetError([NETWORK])
         try:
             self._adopt(candidate, undo="Preset imported")
         except ChatomonConfigError as exc:
             raise presets.InvalidPresetError([str(exc)]) from exc
-        return warnings
+        return noted
 
     def signature(self, *, code: bool = False) -> tuple[tuple[str, str, str, bool], ...]:
         """Return what identifies the session's orbitals now.
@@ -575,7 +809,7 @@ class Session:
             atom=atom,
             namespace=loading.namespace(self.source),
             runner=runner,
-            notes=runner.notes(atom.connector),
+            notes=_notes(runner, atom),
             chains=candidate,
             agent=agent,
             dropped=dropped,
@@ -682,6 +916,10 @@ class Session:
                 "capture_content": "full",
                 # Without a module the studio does not know what to import again.
                 "reload": self.namespace is not None,
+                # The extras that would bring more orbitals to add.
+                "extras": [{"module": module, "extra": extra} for module, extra in kinds.extras()],
+                # The terminal has them too, but the page is what the developer looks at.
+                "preset_connections": list(self.preset_connections),
             },
             "atom": {
                 "name": a.name,
@@ -703,10 +941,13 @@ class Session:
                     "kind": kind.cls.__name__,
                     "sides": sorted(kind.cls.sides),
                     "summary": kinds.summary(kind.cls),
+                    "calls_model": kind.cls.calls_model,
                     "name": self.chains.free_name(kind.cls),
                     "settings": [setting.schema() for setting in kind.settings],
                 }
                 for kind in kinds.addable()
+                # On a network address a class that needs a connection is added in code.
+                if self.local or not any(s.required and values.connects(s) for s in kind.settings)
             ],
             "changes": [change.to_json() for change in self.chains.changes()],
             "undo": self._undo[1] if self._undo is not None else None,
@@ -732,12 +973,14 @@ class Session:
                 {
                     **setting.schema(),
                     "value": now[setting.key],
-                    "changed": now[setting.key] != before[setting.key],
+                    "changed": now[setting.key] != before.get(setting.key),
                 }
                 for setting in kind.settings
+                if setting.key in now
             ]
             known = codegen.names(self.namespace)
-            for key in kind.objects:
+            # A block that holds an object of the developer's is listed with the objects.
+            for key in (name for name in kind.order if name in {*kind.objects, *kinds.opaque(orb)}):
                 value = kinds.read(orb, key, self.atom.connector)
                 if value is not None:
                     # The class name only: an object's repr could carry a secret.
@@ -749,6 +992,7 @@ class Session:
             "kind": type(orb).__name__,
             "side": side,
             "enabled": entry.enabled,
+            "calls_model": orb.calls_model,
             "config": orb.config(),
             "fingerprint": orb.fingerprint(),
             "origin": entry.origin,

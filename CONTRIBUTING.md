@@ -342,13 +342,17 @@ down too:
      `calls_model` says whether `check` calls a model or another remote
      service, and has no default;
    - it keeps to the studio's convention, so the studio edits it with no studio
-     code: a parameter annotated with a plain type is a setting, any other
-     parameter is an object, and each is kept in a public attribute of the same
-     name. A secret is never a plain parameter: it reaches the orbital inside
-     an object, such as a client, because the studio shows, exports and
-     writes to code every setting. The constructor is cheap and has no side
-     effects: the studio calls it when it starts and on every change. A
-     sample of its arguments in `tests/studio/test_kinds.py` passes;
+     code: a parameter annotated with a plain type is a setting, a parameter
+     that accepts a dataclass or a pydantic model made of plain fields is a
+     block, any other parameter is an object, and each is kept in a public
+     attribute of the same name. A secret is never a plain parameter or a
+     field, because the studio shows, exports and writes to code every
+     setting: a parameter or a field whose name ends in `_env` holds the name
+     of an environment variable, which the orbital reads when it is built, and
+     any other secret reaches the orbital inside an object, such as a client.
+     The constructor is cheap and has no side effects: the studio calls it
+     when it starts and on every change. A sample of its arguments in
+     `tests/studio/test_kinds.py` passes;
    - unit tests in `tests/unit/` cover its verdicts with no network; tests
      against a real service go in `tests/integration/`;
    - `docs/public/orbitals/` has a page for it, listed in the `nav` of

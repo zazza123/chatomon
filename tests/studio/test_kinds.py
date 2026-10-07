@@ -1,19 +1,40 @@
+import importlib
 import inspect
 import math
 from typing import Any
 
 import pytest
+from orbitals.claim_extractor import AsyncClaimExtractor
+from orbitals.scope_guard_v2 import AsyncScopeGuardV2
+from orbitals.types import (
+    AIServiceDescription,
+    AIServiceDescriptionV2,
+    PredefinedResponse,
+    Principle,
+)
 
-import chatomon.orbitals as library
 from chatomon import Knowledge, Verdict, orbital
+from chatomon.errors import MissingExtraError
 from chatomon.orbitals import FunctionOrbital, JudgeOrbital, MessageLengthOrbital, TurnLimitOrbital
 from chatomon.orbitals.base import Orbital
+from chatomon.orbitals.principled import ApiBackend, ClaimExtractorOrbital, ScopeGuardOrbital
 from chatomon.schemas import OrbitalContext
 from chatomon.studio import _kinds as kinds
-from chatomon.studio._kinds import InvalidSettingError
+from chatomon.studio import _values as values
+from chatomon.studio._values import InvalidSettingError
 from tests.fakes import FakeConnector, ScriptedOrbital
 
 CONNECTOR = FakeConnector()
+CLIENT = AsyncScopeGuardV2(backend="api", api_url="http://scope-guard.test", api_key="k")
+SERVICE = AIServiceDescriptionV2(
+    identity_role="Parcel tracking assistant",
+    context="SpeedyPack, an Italian courier",
+    constraints=["Never discuss refunds"],
+    predefined_responses=[
+        PredefinedResponse(trigger="The user asks for the phone number", response="800 123 456"),
+        "Greet the user back.",
+    ],
+)
 
 # Constructor arguments for every orbital class the library exports. A new class
 # needs an entry here: the studio must be able to rebuild it from what it reads.
@@ -46,16 +67,37 @@ SAMPLES: dict[type[Orbital], list[dict[str, Any]]] = {
         },
     ],
     FunctionOrbital: [],  # read-only by decision
+    ScopeGuardOrbital: [
+        {"guard": ApiBackend(api_url="https://scope.example"), "description": "A courier."},
+        {
+            "guard": CLIENT,
+            "description": SERVICE,
+            "mapping": {"Chit Chat": Verdict.block()},
+            "history_window": 2,
+            "name": "scope",
+        },
+    ],
+    ClaimExtractorOrbital: [
+        {"extractor": ApiBackend(api_url="https://claims.example", model="claims-q")},
+        {
+            "extractor": AsyncClaimExtractor(backend="api", api_url="http://claims.test"),
+            "description": AIServiceDescription(
+                identity_role="Parcel tracking assistant",
+                context="SpeedyPack",
+                principles=[
+                    Principle(title="Honest", description="No guesses", supporting_materials=None),
+                    "Be brief.",
+                ],
+            ),
+            "intents_only": True,
+            "reads": ["scope"],
+        },
+    ],
 }
 
 
 def exported() -> list[type[Orbital]]:
-    found = []
-    for name in library.__all__:
-        value = getattr(library, name)
-        if isinstance(value, type) and issubclass(value, Orbital) and not inspect.isabstract(value):
-            found.append(value)
-    return found
+    return [cls for cls in kinds.classes() if not inspect.isabstract(cls)]
 
 
 def shapes(cls: type[Orbital]) -> dict[str, tuple[str, bool, bool]]:
@@ -111,12 +153,76 @@ def test_defaults_options_and_summaries_are_read_not_copied():
     assert reads is not None and reads.schema()["default"] == []
 
 
-def test_the_classes_that_can_be_added_are_those_built_from_plain_values():
+def test_the_classes_are_found_by_walking_the_modules_of_the_library():
+    # Those of `chatomon.orbitals` first, in the order it exports them, then the other modules'.
+    assert [cls.__name__ for cls in kinds.classes()] == [
+        "FunctionOrbital",
+        "JudgeOrbital",
+        "MessageLengthOrbital",
+        "Orbital",
+        "TurnLimitOrbital",
+        "ClaimExtractorOrbital",
+        "ScopeGuardOrbital",
+    ]
+    assert (kinds.extras(), kinds.import_notes()) == ((), ())
+
+
+def test_the_classes_that_can_be_added_are_those_built_from_settings_and_blocks():
+    assert [kind.cls for kind in kinds.addable()] == [
+        JudgeOrbital,
+        MessageLengthOrbital,
+        TurnLimitOrbital,
+        ClaimExtractorOrbital,
+        ScopeGuardOrbital,
+    ]
+
+
+@pytest.fixture
+def without(monkeypatch):
+    """Make the import of one module of the library fail, and forget what was found."""
+
+    def fail(module: str, error: Exception) -> None:
+        real = importlib.import_module
+
+        def fake(name: str, package: str | None = None) -> Any:
+            if name == module:
+                raise error
+            return real(name, package)
+
+        monkeypatch.setattr(kinds.importlib, "import_module", fake)
+        kinds._library.cache_clear()
+
+    yield fail
+    monkeypatch.undo()
+    kinds._library.cache_clear()
+
+
+def test_a_module_that_needs_an_extra_is_remembered_with_it(without):
+    without("chatomon.orbitals.principled", MissingExtraError("principled", "orbitals"))
     assert [kind.cls for kind in kinds.addable()] == [
         JudgeOrbital,
         MessageLengthOrbital,
         TurnLimitOrbital,
     ]
+    assert kinds.extras() == (("chatomon.orbitals.principled", "principled"),)
+    assert kinds.import_notes() == ()
+    assert kinds.unknown("ScopeGuardOrbital") == (
+        "ScopeGuardOrbital is not an orbital this studio can add. The orbitals of "
+        "chatomon.orbitals.principled need: pip install 'chatomon[principled]'."
+    )
+
+
+def test_a_module_that_fails_to_import_is_a_note(without):
+    without("chatomon.orbitals.principled", RuntimeError("broken install"))
+    assert ScopeGuardOrbital not in kinds.classes()
+    assert kinds.extras() == ()
+    assert kinds.import_notes() == (
+        "chatomon.orbitals.principled could not be imported: RuntimeError: broken install",
+    )
+
+
+def test_a_class_the_studio_does_not_know_is_refused_plainly():
+    assert kinds.unknown("Nope") == "Nope cannot be added from the studio: add it in your code"
 
 
 def test_every_exported_orbital_has_a_sample():
@@ -135,6 +241,48 @@ def test_an_orbital_rebuilt_from_what_the_studio_reads_is_the_same(cls, argument
     twin = cls(**kinds.arguments(original, CONNECTOR))
     assert twin is not original
     assert twin.fingerprint() == original.fingerprint()
+
+
+@pytest.mark.parametrize(
+    ("cls", "arguments"),
+    [(cls, arguments) for cls, samples in SAMPLES.items() for arguments in samples],
+    ids=lambda value: value.__name__ if isinstance(value, type) else None,
+)
+def test_a_block_the_studio_shows_is_built_and_shown_the_same_again(cls, arguments):
+    # Through the JSON the page gets and sends, with nothing held to fall back on.
+    original = cls(**arguments)
+    for setting in kinds.describe(cls).settings:
+        if setting.type != "block":
+            continue
+        held = getattr(original, setting.key)
+        shown = values.represented(setting, held)
+        if any(type(held) is known.cls for known in setting.types):
+            assert shown is not values.OPAQUE, setting.key
+        if shown is values.OPAQUE or shown is None:
+            continue
+        values.check_shape(setting, shown)
+        assert values.represented(setting, values.built(setting, shown)) == shown
+
+
+class TokenOrbital(Orbital):
+    """An orbital that takes the name of a variable as a parameter of its own."""
+
+    calls_model = True
+
+    def __init__(self, *, name: str = "token", token_env: str | None = None) -> None:
+        super().__init__(name=name)
+        self.token_env = token_env
+
+    async def check(self, ctx: OrbitalContext) -> Verdict:
+        return Verdict.allow()
+
+
+def test_a_parameter_whose_name_ends_in_env_names_a_variable():
+    setting = kinds.describe(TokenOrbital).setting("token_env")
+    assert setting is not None
+    assert (setting.type, setting.optional) == ("env", True)
+    reply = kinds.describe(MessageLengthOrbital).setting("reply")
+    assert reply is not None and reply.type == "text"
 
 
 def test_a_judge_keeps_its_own_connector_and_drops_the_atoms():
@@ -287,50 +435,229 @@ def test_creating_an_orbital_asks_for_what_is_required():
         kinds.created(kinds.describe(MessageLengthOrbital), "len", {})
 
 
-def test_principled_orbitals_are_read_through_their_instances():
-    pytest.importorskip("orbitals")
-    from orbitals.claim_extractor import AsyncClaimExtractor
-    from orbitals.scope_guard_v2 import AsyncScopeGuardV2
-
-    from chatomon.orbitals.principled import ClaimExtractorOrbital, ScopeGuardOrbital
-
-    client = AsyncScopeGuardV2(backend="api", api_url="http://scope-guard.test", api_key="k")
-    guard = ScopeGuardOrbital(guard=client, description="Parcel tracking")
+def test_a_scope_guard_is_read_with_its_blocks():
     assert shapes(ScopeGuardOrbital) == {
+        "guard": ("block", False, True),
+        "description": ("block", False, True),
         "history_window": ("int", False, False),
         "timeout": ("number", False, False),
         "on_error": ("choice", False, False),
     }
-    assert kinds.describe(ScopeGuardOrbital).objects == (
-        "guard",
-        "description",
-        "mapping",
-        "headers",
+    kind = kinds.describe(ScopeGuardOrbital)
+    assert (kind.objects, kind.addable) == (("mapping", "headers"), True)
+    guard, description = kind.setting("guard"), kind.setting("description")
+    assert guard is not None and description is not None
+    assert (guard.text, [found.cls for found in guard.types]) == (False, [ApiBackend])
+    assert (description.text, [found.cls for found in description.types]) == (
+        True,
+        [AIServiceDescription, AIServiceDescriptionV2],
     )
-    assert kinds.describe(ScopeGuardOrbital).addable is False
-    assert kinds.read_only(guard, CONNECTOR) is None
-    assert kinds.arguments(guard, CONNECTOR)["mapping"] is None
-    overrides: dict[Any, Any] = {"Chit Chat": Verdict.block()}
-    strict = ScopeGuardOrbital(guard=client, description="Parcel tracking", mapping=overrides)
-    assert kinds.read_only(strict, CONNECTOR) is None
-    # Every argument is read from the attribute named like it: the developer's own dict.
-    assert kinds.arguments(strict, CONNECTOR)["mapping"] is overrides
-    shorter = kinds.rebuilt(strict, {"history_window": 2}, CONNECTOR)
-    assert isinstance(shorter, ScopeGuardOrbital)
-    assert (shorter.guard, shorter.rules, shorter.history_window) == (client, strict.rules, 2)
+    connection = guard.types[0]
+    assert [(field.key, field.type, field.required) for field in connection.fields] == [
+        ("api_url", "text", True),
+        ("api_key_env", "env", False),
+        ("model", "text", False),
+    ]
 
-    extractor = ClaimExtractorOrbital(
-        extractor=AsyncClaimExtractor(backend="api", api_url="http://claims.test", api_key="k")
-    )
+
+def test_a_claim_extractor_is_read_with_its_blocks():
+    kind = kinds.describe(ClaimExtractorOrbital)
+    assert (kind.objects, kind.addable) == (("headers",), True)
+    assert shapes(ClaimExtractorOrbital)["extractor"] == ("block", False, True)
+    assert shapes(ClaimExtractorOrbital)["description"] == ("block", True, False)
     assert shapes(ClaimExtractorOrbital)["intents_only"] == ("bool", False, False)
-    assert kinds.read_only(extractor, CONNECTOR) is None
+    description = kind.setting("description")
+    assert description is not None
+    principles = description.types[0].field("principles")
+    assert principles is not None and (principles.type, principles.text) == ("items", True)
+    # `supporting_materials` has no default and accepts none: the studio gives none.
+    assert principles.types[0].unread == (("supporting_materials", None, True),)
+
+
+def test_a_client_from_code_is_an_object_and_a_description_is_a_block():
+    overrides: dict[Any, Any] = {"Chit Chat": Verdict.block()}
+    guard = ScopeGuardOrbital(guard=CLIENT, description=SERVICE, mapping=overrides)
+    assert kinds.read_only(guard, CONNECTOR) is None
+    assert kinds.opaque(guard) == ("guard",)
+    read = kinds.values(guard)
+    assert "guard" not in read
+    assert read["description"]["type"] == "AIServiceDescriptionV2"
+    assert read["description"]["fields"]["predefined_responses"] == [
+        {
+            "type": "PredefinedResponse",
+            "fields": {"trigger": "The user asks for the phone number", "response": "800 123 456"},
+        },
+        "Greet the user back.",
+    ]
+    # Every argument is read from the attribute named like it: the developer's own objects.
+    assert kinds.arguments(guard, CONNECTOR)["mapping"] is overrides
+    assert kinds.arguments(guard, CONNECTOR)["guard"] is CLIENT
+    shorter = kinds.rebuilt(guard, {"history_window": 2}, CONNECTOR)
+    assert isinstance(shorter, ScopeGuardOrbital)
+    assert (shorter.guard, shorter.description, shorter.rules, shorter.history_window) == (
+        CLIENT,
+        SERVICE,
+        guard.rules,
+        2,
+    )
+    with pytest.raises(InvalidSettingError) as caught:
+        kinds.rebuilt(
+            guard, {"guard": {"type": "ApiBackend", "fields": {"api_url": "http://a"}}}, CONNECTOR
+        )
+    assert (str(caught.value), caught.value.setting) == (
+        "`guard` is an object from your code: change it there",
+        "guard",
+    )
+    with pytest.raises(InvalidSettingError, match="`mapping` is an object from your code"):
+        kinds.rebuilt(guard, {"mapping": {}}, CONNECTOR)
+
+
+def test_a_block_is_edited_whole_and_untouched_fields_keep_their_values():
+    text = AIServiceDescriptionV2(
+        identity_role="Courier", context="Italy", constraints="No refunds"
+    )
+    guard = ScopeGuardOrbital(guard=CLIENT, description=text)
+    shown = kinds.values(guard)["description"]
+    assert shown["fields"]["constraints"] == ["No refunds"]
+    shown["fields"]["context"] = "Italy and France"
+    edited = kinds.rebuilt(guard, {"description": shown}, CONNECTOR)
+    assert isinstance(edited, ScopeGuardOrbital) and edited.description is not text
+    assert isinstance(edited.description, AIServiceDescriptionV2)
+    # Shown as lines, the text is still the text the code has.
+    assert (edited.description.context, edited.description.constraints) == (
+        "Italy and France",
+        "No refunds",
+    )
+    assert edited.fingerprint() != guard.fingerprint()
+
+    shown["fields"]["context"] = "Italy"
+    back = kinds.rebuilt(edited, {"description": shown}, CONNECTOR, base=guard)
+    assert isinstance(back, ScopeGuardOrbital) and back.description is text
+
+    as_text = kinds.rebuilt(guard, {"description": "A courier."}, CONNECTOR)
+    assert isinstance(as_text, ScopeGuardOrbital) and as_text.description == "A courier."
+
+
+def test_a_block_the_constructors_refuse_carries_their_messages():
+    guard = ScopeGuardOrbital(guard=ApiBackend(api_url="https://scope.example"), description="x")
+    cases = [
+        ({"guard": {"type": "ApiBackend", "fields": {}}}, "`api_url` needs a value"),
+        (
+            {"guard": {"type": "ApiBackend", "fields": {"api_url": "scope.example"}}},
+            "api_url must start with http:// or https:// and name a host",
+        ),
+        (
+            {
+                "description": {
+                    "type": "AIServiceDescription",
+                    "fields": {"identity_role": "r", "context": "c"},
+                }
+            },
+            "ScopeGuard V2 needs an AIServiceDescriptionV2 (or a string) as description",
+        ),
+        (
+            {"description": 3},
+            "`description` must be text, an AIServiceDescription or an AIServiceDescriptionV2",
+        ),
+    ]
+    for changes, message in cases:
+        with pytest.raises(InvalidSettingError) as caught:
+            kinds.rebuilt(guard, changes, CONNECTOR)
+        assert (str(caught.value), caught.value.setting) == (message, next(iter(changes)))
+
+
+def test_creating_an_orbital_with_blocks(monkeypatch):
+    kind = kinds.describe(ScopeGuardOrbital)
+    backend = {"type": "ApiBackend", "fields": {"api_url": "https://scope.example"}}
+    with pytest.raises(InvalidSettingError) as caught:
+        kinds.created(kind, "scope_guard", {"guard": backend})
+    assert (str(caught.value), caught.value.setting) == (
+        "`description` needs a value",
+        "description",
+    )
+    made = kinds.created(
+        kind,
+        "scope_guard",
+        {
+            "guard": backend,
+            "description": {
+                "type": "AIServiceDescriptionV2",
+                "fields": {
+                    "identity_role": "Courier",
+                    "context": "Italy",
+                    "predefined_responses": [
+                        {"type": "PredefinedResponse", "fields": {"trigger": "t", "response": "r"}}
+                    ],
+                },
+            },
+        },
+    )
+    assert isinstance(made, ScopeGuardOrbital)
+    assert made.guard == ApiBackend(api_url="https://scope.example")
+    assert made.description == AIServiceDescriptionV2(
+        identity_role="Courier",
+        context="Italy",
+        predefined_responses=[PredefinedResponse(trigger="t", response="r")],
+    )
+    assert kinds.read_only(made, CONNECTOR) is None and kinds.opaque(made) == ()
+
+    # What the type of a block refuses is said under that block; what the orbital refuses
+    # once it has every value belongs to no setting.
+    with pytest.raises(InvalidSettingError) as typed:
+        kinds.created(
+            kind,
+            "scope_guard",
+            {"guard": {"type": "ApiBackend", "fields": {"api_url": "x"}}, "description": "x"},
+        )
+    assert (str(typed.value), typed.value.setting) == (
+        "api_url must start with http:// or https:// and name a host",
+        "guard",
+    )
+    old = {"type": "AIServiceDescription", "fields": {"identity_role": "r", "context": "c"}}
+    with pytest.raises(InvalidSettingError) as whole:
+        kinds.created(kind, "scope_guard", {"guard": backend, "description": old})
+    assert whole.value.setting is None
+
+    monkeypatch.delenv("SCOPE_KEY", raising=False)
+    named = {
+        "type": "ApiBackend",
+        "fields": {"api_url": "https://scope.example", "api_key_env": "SCOPE_KEY"},
+    }
+    with pytest.raises(InvalidSettingError, match="the environment variable SCOPE_KEY is not set"):
+        kinds.created(kind, "scope_guard", {"guard": named, "description": "A courier."})
+
+    extractor = kinds.created(
+        kinds.describe(ClaimExtractorOrbital),
+        "claims",
+        {
+            "extractor": {"type": "ApiBackend", "fields": {"api_url": "https://claims.example"}},
+            "description": {
+                "type": "AIServiceDescription",
+                "fields": {
+                    "identity_role": "Courier",
+                    "context": "Italy",
+                    "principles": [
+                        {
+                            "type": "Principle",
+                            "fields": {"title": "Honest", "description": "No guesses"},
+                        }
+                    ],
+                },
+            },
+        },
+    )
+    assert isinstance(extractor, ClaimExtractorOrbital)
+    assert isinstance(extractor.description, AIServiceDescription)
+    assert extractor.description.principles == [
+        Principle(title="Honest", description="No guesses", supporting_materials=None)
+    ]
 
 
 def test_a_switch_takes_true_or_false():
-    flag = kinds.Setting("intents_only", "bool", False, False, False)
-    kinds.check_shape(flag, True)
-    kinds.check_shape(flag, False)
+    flag = values.Setting("intents_only", "bool", False, False, False)
+    values.check_shape(flag, True)
+    values.check_shape(flag, False)
     for value in ("yes", 1, 0):
         with pytest.raises(InvalidSettingError) as caught:
-            kinds.check_shape(flag, value)
+            values.check_shape(flag, value)
         assert str(caught.value) == "`intents_only` must be true or false"

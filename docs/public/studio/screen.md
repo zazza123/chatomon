@@ -14,6 +14,8 @@ Clicking an orbital opens its card. Clicking the atom or the nucleus opens the a
 
 The atom's card also has **Reload from code**, which loads the atom from your code again after you changed it: see [Reloading the Code](reload.md).
 
+The card of an orbital that calls a model has **Test connection**, which runs one check on a sample message and shows how it went: see [Testing a Connection](tuning.md#testing-a-connection).
+
 The foot of the drawer counts the changes against your code and holds **Copy as code** and the preset buttons, described in [Back to Code](export.md).
 
 ## The Atom on Stage

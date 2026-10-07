@@ -42,6 +42,28 @@ An orbital that your code puts in both chains is one object. When the studio wri
 
 An orbital that is off stays in its place as a comment. An argument that is an object is written with its variable's name when the module has one, otherwise as `...`. The card lists every `...` it wrote, so nothing is left out silently.
 
+A [block](tuning.md#blocks) is written as a call of its type, with the fields that differ from the type's defaults and the import of the type. A block your code holds in a variable is written with that name for as long as you did not change it.
+
+```{.python test="skip"}
+# Imports
+from chatomon.orbitals.principled import ApiBackend, ScopeGuardOrbital
+from orbitals.types import AIServiceDescriptionV2
+
+# Inside Atom(...)
+input_orbitals=[
+    ScopeGuardOrbital(
+        guard=ApiBackend(api_url="https://scope.example.run.app", api_key_env="SCOPE_KEY"),
+        description=AIServiceDescriptionV2(
+            identity_role="Customer assistant of SpeedyPack",
+            context="Customers ask about their shipments.",
+            constraints=["Never discuss refunds"],
+        ),
+    ),
+],
+```
+
+The code names the variable that holds a key, never the key. What the studio cannot edit, such as a `mapping` or a `headers` provider, is added by hand next to the block.
+
 Two situations produce more of them:
 
 - **The studio was started with `serve()`.** It has no module to look names up in, so `@orbital` functions and objects from your code cannot be named. Start it with the `chatomon studio` command to get names.
@@ -53,7 +75,7 @@ After pasting the lists, [reload the code](reload.md): what your code now has is
 
 ## Presets
 
-A preset is a JSON file with the session's changes: which orbitals are on, their order, the settings you changed on the orbitals from your code, and the orbitals you added. It holds no clients, no connectors and no credentials. It does hold the text you typed, such as a judge's instructions.
+A preset is a JSON file with the session's changes: which orbitals are on, their order, the settings you changed on the orbitals from your code, and the orbitals you added. It holds no clients, no connectors and no credentials: a connection is saved with the address of its service and the name of the environment variable that holds the key. It does hold the text you typed, such as a judge's instructions.
 
 **Export preset** shows the file, copies it, or downloads it as `<atom name>.preset.json`. **Import preset** takes a file or pasted text and replaces the changes of the session with the preset's; **Undo** brings them back.
 
@@ -89,8 +111,21 @@ Applying a preset starts from the atom as your code defines it now. Settings the
 | `name`, `kind` | The orbital's name and class |
 | `from` | `code` for an orbital your code defines, `studio` for one added in the studio |
 | `enabled` | Whether the orbital is on |
-| `settings` | For `code`, only the settings that differ from your code; for `studio`, every setting. Optional |
+| `settings` | For `code`, only the settings that differ from your code; for `studio`, every setting. Optional. A value is plain or a block |
 | `fingerprint` | The orbital's fingerprint when the preset was exported |
+
+A [block](tuning.md#blocks) is written whole: one text as a string, a value with fields of its own as its `type` and the `fields` that differ from the type's defaults. For an orbital from your code, changing one component of a description saves the whole description.
+
+```json
+{"name": "scope_guard", "kind": "ScopeGuardOrbital", "from": "studio", "enabled": true,
+ "settings": {
+   "guard": {"type": "ApiBackend",
+             "fields": {"api_url": "https://scope.example.run.app", "api_key_env": "SCOPE_KEY"}},
+   "description": {"type": "AIServiceDescriptionV2",
+                   "fields": {"identity_role": "…", "context": "…"}},
+   "history_window": 6, "timeout": 30.0, "on_error": "block"},
+ "fingerprint": "sha256:…"}
+```
 
 ### Problems and Notes
 
@@ -103,6 +138,10 @@ A preset that cannot be applied is refused whole: nothing changes, and the card 
 | A malformed entry | A missing field, a field of the wrong kind, a key the format does not have |
 | An orbital your code no longer defines | A `code` entry whose name is gone, or is now another class |
 | An orbital that cannot be added | A `studio` entry of a class that needs objects, or on a side it does not support |
+| An orbital whose extra is not installed | A `studio` entry of a class the studio does not find; the message names the extra to install |
+| A block that does not fit | A type the argument does not accept, or a field the type does not have |
+| A variable that is not set | A connection that names an environment variable the studio's environment does not have |
+| A connection, on a network address | A preset imported in the page that sets where an orbital connects, while the studio listens on a network address: give it when the studio starts |
 | A name or a value that is not accepted | A name used twice, a setting the orbital does not have, a value its constructor refuses |
 | A chain the atom refuses | An orbital turned off while another reads its annotations |
 
@@ -110,6 +149,13 @@ A preset that can be applied but does not reproduce the exported session is appl
 
 - **An orbital differs from the exported one.** Its fingerprint is not the one in the file: your code, or chatomon, changed since the export. The preset's own settings were applied.
 - **An orbital of your code is not in the preset.** It was added to the code after the export. It is placed at the end of its chain and left on: a guardrail in your code stays active until you turn it off.
+
+A preset that sets where an orbital connects is applied with a note for each connection, listed apart from the others. The note shows the whole connection, as Copy as code would write it; a letter that is not ASCII is written as an escape, so an address cannot be made to look like another.
+
+- **The connection names an environment variable.** `'scope_guard' uses the environment variable SCOPE_KEY: guard=ApiBackend(api_url="https://…", api_key_env="SCOPE_KEY"). Check where it points before you send a message.`
+- **The connection names no variable.** `'scope_guard' names no environment variable for its key: guard=ApiBackend(api_url="https://…"). Its client can still send a key it reads from the environment on its own. Check where it points before you send a message.` The client of the `orbitals` library does so: it sends `PRINCIPLED_API_KEY` when that variable is set.
+
+A preset decides where a key and the conversation are sent. A file that gives an address makes the studio send there, at the first turn, the messages the orbital reads and the key of the variable it names, or `PRINCIPLED_API_KEY` when it names none. Apply only presets you trust, as you would run only code you trust, and read these notes when a preset comes from someone else: in the page they are in the card that follows the import. At a start with `--preset` they are printed in the terminal before the link, and the page shows them in a card when it opens, until those notes have been read in that browser.
 
 ### Starting with a Preset
 
@@ -126,7 +172,7 @@ The preset goes through the same checks as an import in the page, and the answer
 | The preset | What happens |
 |------------|--------------|
 | Has problems | The studio does not start. The command prints one line per problem and exits with code 1; `serve` raises a `ChatomonConfigError` with the same lines |
-| Is applied with notes | The studio starts, and each note is printed before the link |
+| Is applied with notes | The studio starts, and each note is printed before the link. The notes about connections are also shown by the page when it opens |
 | Cannot be read | The studio does not start: the file is missing, or is not UTF-8 text |
 
 The session begins with the preset's changes: the drawer counts them against your code, and there is nothing to undo yet. **Reset to code** goes back to your code as always, and **Undo** then brings the preset's changes back.

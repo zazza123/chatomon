@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import http.client
 import json
+import re
 import signal
 import socket
 import subprocess
@@ -23,13 +24,15 @@ from playwright.sync_api import Page, expect
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from chatomon import Atom, Verdict
+from chatomon import Atom, OrbitalContext, Verdict, orbital
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
-from chatomon.orbitals import MessageLengthOrbital
+from chatomon.errors import MissingExtraError
+from chatomon.orbitals import JudgeOrbital, MessageLengthOrbital
 from chatomon.studio import _kinds as kinds
 from chatomon.studio._app import create_app
 from chatomon.studio._loading import load, namespace
 from chatomon.studio._session import Session
+from tests.fake_service import FakeService, closed_url
 from tests.fakes import ScriptedOrbital
 from tests.studio import frameworks
 
@@ -71,10 +74,14 @@ class Studio:
 
 @contextlib.contextmanager
 def running(
-    atom: Atom, *, source: str = "tests:atom", namespace: dict[str, object] | None = None
+    atom: Atom,
+    *,
+    source: str = "tests:atom",
+    namespace: dict[str, object] | None = None,
+    preset: str | None = None,
 ) -> Iterator[Studio]:
     port = free_port()
-    session = Session(atom, source=source, namespace=namespace)
+    session = Session(atom, source=source, namespace=namespace, preset=preset)
     app = create_app(session, token=TOKEN, host="127.0.0.1", port=port)
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, access_log=False)
     server = uvicorn.Server(config)
@@ -388,6 +395,29 @@ def test_a_page_that_is_out_of_date_reloads_the_state(page: Page, tunable: Studi
     row(page, "turn_limit").get_by_role("switch").click()
     expect(page.locator("#toast")).to_contain_text("no input orbital named 'turn_limit'")
     expect(row(page, "turn_limit")).to_have_count(0)
+
+
+def test_a_refused_setting_keeps_its_refusal_when_the_card_is_drawn_again(
+    page: Page, tunable: Studio
+):
+    open_studio(page, tunable)
+    open_card(page, "message_length")
+    words = card(page).get_by_label("max_words")
+    words.fill("1.5")
+    words.press("Tab")
+    error = card(page).locator("#f-max_words-err")
+    expect(error).to_have_text("max_words must be a whole number")
+    # The switch draws the card again: what was typed and its refusal are still there.
+    card(page).locator("#card-switch").click()
+    expect(card(page).locator(".sw-label")).to_have_text("Off")
+    expect(card(page).get_by_label("max_words")).to_have_value("1.5")
+    expect(card(page).get_by_label("max_words")).to_have_attribute("aria-invalid", "true")
+    expect(error).to_have_text("max_words must be a whole number")
+    expect(error.locator("code")).to_have_text("max_words")
+    # A reset is there to discard it.
+    card(page).get_by_role("button", name="Reset to code").click()
+    expect(card(page).get_by_label("max_words")).to_have_value("60")
+    expect(error).to_be_hidden()
 
 
 def test_deleting_an_added_orbital_and_undoing(page: Page, tunable: Studio):
@@ -773,16 +803,28 @@ class TriOrbital(ScriptedOrbital):
         return {**super().config(), "mode": self.mode, "careful": self.careful}
 
 
+class TokenOrbital(ScriptedOrbital):
+    """The name of a variable as a parameter of its own: no built-in orbital has one yet."""
+
+    def __init__(self, *, token_env: str | None = None, name: str | None = None) -> None:
+        super().__init__(name=name)
+        self.token_env = token_env
+
+    def config(self) -> dict[str, Any]:
+        return {**super().config(), "token_env": self.token_env}
+
+
 @pytest.fixture
 def optional(monkeypatch) -> Iterator[Studio]:
-    """A studio that reads TriOrbital as one of chatomon's own, so its card can be edited."""
+    """A studio that reads two test orbitals as chatomon's own, so their cards can be edited."""
     builtin = kinds.is_builtin
-    monkeypatch.setattr(kinds, "is_builtin", lambda cls: cls is TriOrbital or builtin(cls))
+    own = (TriOrbital, TokenOrbital)
+    monkeypatch.setattr(kinds, "is_builtin", lambda cls: cls in own or builtin(cls))
     atom = Atom(
         name="speedypack",
         instructions="Be brief.",
         connector=PydanticAIConnector(FunctionModel(respond)),
-        input_orbitals=[TriOrbital(mode="strict", careful=True)],
+        input_orbitals=[TriOrbital(mode="strict", careful=True), TokenOrbital(name="token")],
     )
     with running(atom) as handle:
         yield handle
@@ -811,6 +853,30 @@ def test_a_choice_and_a_switch_that_may_be_none(page: Page, optional: Studio):
     expect(card(page).locator(".field.changed")).to_have_count(2)
     page.wait_for_function("() => document.querySelectorAll('[aria-invalid]').length === 0")
     assert values() == {"mode": "loose", "careful": False}
+
+
+def test_a_setting_that_names_a_variable_is_one_line_kept_as_text(page: Page, optional: Studio):
+    open_studio(page, optional)
+    open_card(page, "token")
+    variable = card(page).get_by_label("token_env")
+    expect(variable).to_have_js_property("tagName", "INPUT")
+    expect(card(page)).to_contain_text(
+        "The name of an environment variable. Its value stays on the server."
+    )
+    # What looks like a number is still a name: the server gets the text.
+    variable.fill("123")
+    variable.press("Tab")
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    state = page.request.get(f"{optional.url}/api/state").json()
+    assert state["orbitals"]["input"][1]["settings"][0] == {
+        "key": "token_env",
+        "type": "env",
+        "optional": True,
+        "required": False,
+        "default": None,
+        "value": "123",
+        "changed": True,
+    }
 
 
 LONG = "one two three four five six"
@@ -1255,3 +1321,522 @@ def test_what_the_card_says_when_a_reload_cannot_be_done(page: Page, reloading, 
     # Nothing is known of the atom any more: the card does not say that it is still running.
     expect(outcome(page)).to_have_count(0)
     expect(reload_button(page)).to_be_enabled()
+
+
+# --- Orbitals that connect to a service -----------------------------------------
+
+SCOPE_KEY = "key-0123456789-not-for-the-page"
+
+
+@orbital(name="remote_check", calls_model=True)
+def remote_check(ctx: OrbitalContext) -> Verdict:
+    """A function of the developer's that says it calls a model: read-only in the studio."""
+    return Verdict.allow(reason="checked remotely")
+
+
+@pytest.fixture
+def connected(service: FakeService, monkeypatch) -> Iterator[tuple[Studio, FakeService]]:
+    """A studio next to the fake services, with the key they ask for in `SCOPE_KEY`."""
+    monkeypatch.setenv("SCOPE_KEY", SCOPE_KEY)
+    monkeypatch.delenv("NOT_SET_ANYWHERE", raising=False)
+    service.key = SCOPE_KEY
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(FunctionModel(respond)),
+        input_orbitals=[MessageLengthOrbital(max_words=60)],
+        output_orbitals=[
+            JudgeOrbital(name="facts", model="test", instructions="Check facts."),
+            remote_check,
+        ],
+    )
+    with running(atom) as handle:
+        yield handle, service
+
+
+def block_of(page: Page, key: str):
+    return card(page).locator(f'.block[data-block="{key}"]')
+
+
+def shown(page: Page):
+    return card(page).locator("#probe-out")
+
+
+def open_scope_guard_form(page: Page, studio: Studio) -> None:
+    open_studio(page, studio)
+    page.locator('#drawer [data-act="add"][data-side="input"]').click()
+    card(page).get_by_role("button", name="ScopeGuardOrbital").click()
+    expect(card(page).locator("#dlg-title")).to_have_text("Add ScopeGuardOrbital")
+
+
+def add_scope_guard(page: Page, studio: Studio, service: FakeService) -> None:
+    open_scope_guard_form(page, studio)
+    block_of(page, "guard").get_by_label("api_url").fill(service.url)
+    block_of(page, "guard").get_by_label("api_key_env").fill("SCOPE_KEY")
+    block_of(page, "description").locator("[data-blk-text]").fill("A courier.")
+    card(page).get_by_role("button", name="Add", exact=True).click()
+    expect(card(page).locator("#card-title")).to_have_text("scope_guard")
+
+
+def test_a_scope_guard_is_tested_and_then_added_through_its_form(page: Page, connected):
+    studio, service = connected
+    open_scope_guard_form(page, studio)
+    guard, description = block_of(page, "guard"), block_of(page, "description")
+    expect(guard.locator("legend")).to_have_text("guard · ApiBackend")
+    expect(description.get_by_label("given as")).to_have_value("text")
+    expect(shown(page)).to_have_text("Not tested yet")
+
+    card(page).get_by_role("button", name="Add", exact=True).click()
+    expect(guard.locator(".field-err")).to_have_text("api_url needs a value")
+    expect(guard.get_by_label("api_url")).to_be_focused()
+    assert input_order(page) == ["message_length"]
+
+    guard.get_by_label("api_url").fill(closed_url())
+    description.locator("[data-blk-text]").fill("A courier.")
+    test = card(page).get_by_role("button", name="Test connection")
+    test.click()
+    expect(shown(page)).to_have_text("The connection was refused.")
+
+    guard.get_by_label("api_url").fill(service.url)
+    guard.get_by_label("api_key_env").fill("NOT_SET_ANYWHERE")
+    test.click()
+    expect(shown(page)).to_have_text("the environment variable NOT_SET_ANYWHERE is not set")
+    assert service.requests == []
+
+    guard.get_by_label("api_key_env").fill("SCOPE_KEY")
+    test.click()
+    expect(shown(page).locator(".pill")).to_have_text("allow")
+    expect(shown(page)).to_contain_text("Directly Supported")
+    expect(shown(page)).to_contain_text("ms")
+    expect(test).to_be_enabled()
+    # A test adds nothing: the chain is the code's, and the service was called once.
+    assert input_order(page) == ["message_length"]
+    assert len(service.requests) == 1
+    assert service.requests[0]["body"]["conversation"][-1]["content"] == "Hello"
+
+    card(page).get_by_role("button", name="Add", exact=True).click()
+    expect(card(page).locator("#card-title")).to_have_text("scope_guard")
+    expect(row(page, "scope_guard")).to_contain_text("added in the studio")
+    expect(block_of(page, "guard").get_by_label("api_key_env")).to_have_value("SCOPE_KEY")
+    card(page).get_by_role("button", name="Done").click()
+
+    message_box(page).fill("Where is my parcel?")
+    page.get_by_role("button", name="Send").click()
+    expect(page.locator(".msg.bot .bubble").last).to_have_text(REPLY)
+    assert len(service.requests) == 2
+    assert SCOPE_KEY not in page.content()
+
+
+def test_a_description_by_components_with_lines_and_a_pair(page: Page, connected):
+    studio, service = connected
+    open_scope_guard_form(page, studio)
+    guard, description = block_of(page, "guard"), block_of(page, "description")
+    guard.get_by_label("api_url").fill(service.url)
+    guard.get_by_label("api_key_env").fill("SCOPE_KEY")
+    description.locator("[data-blk-text]").fill("Gone once the form changes.")
+    description.get_by_label("given as").select_option("AIServiceDescriptionV2")
+    description.get_by_label("identity_role").fill("Courier")
+    description.get_by_label("context").fill("Italy")
+
+    # Where a list is written one entry per line, Enter starts the next entry.
+    constraints = description.get_by_label("constraints")
+    constraints.click()
+    page.keyboard.type("Never discuss refunds")
+    page.keyboard.press("Enter")
+    page.keyboard.type("Never give legal advice")
+    expect(constraints).to_have_value("Never discuss refunds\nNever give legal advice")
+    assert input_order(page) == ["message_length"]  # Enter did not send the form
+
+    responses = description.locator('[data-f="predefined_responses"]')
+    responses.get_by_role("button", name="Add PredefinedResponse").click()
+    expect(responses.get_by_label("trigger", exact=True)).to_be_focused()
+    responses.get_by_label("trigger", exact=True).fill("The user asks for the phone number")
+    responses.get_by_label("response", exact=True).fill("800 123 456")
+    responses.get_by_role("button", name="Add a sentence").click()
+    responses.get_by_label("Sentence").fill("Greet the user back.")
+    expect(responses.locator(".item")).to_have_count(2)
+    responses.get_by_role("button", name="Remove entry 2 of predefined_responses").click()
+    expect(responses.locator(".item")).to_have_count(1)
+    # The focus stays in the block: on the button that adds an entry.
+    expect(responses.get_by_role("button", name="Add PredefinedResponse")).to_be_focused()
+
+    card(page).get_by_role("button", name="Add", exact=True).click()
+    expect(card(page).locator("#card-title")).to_have_text("scope_guard")
+    shown = block_of(page, "description")
+    expect(shown.get_by_label("given as")).to_have_value("AIServiceDescriptionV2")
+    expect(shown.get_by_label("constraints")).to_have_value(
+        "Never discuss refunds\nNever give legal advice"
+    )
+    expect(shown.get_by_label("trigger", exact=True)).to_have_value(
+        "The user asks for the phone number"
+    )
+    card(page).get_by_role("button", name="Done").click()
+
+    page.get_by_role("button", name="Copy as code").click()
+    code = card(page).locator("pre.code")
+    expect(code).to_contain_text('guard=ApiBackend(api_url="')
+    expect(code).to_contain_text('api_key_env="SCOPE_KEY"')
+    expect(code).to_contain_text(
+        'constraints=["Never discuss refunds", "Never give legal advice"],'
+    )
+    expect(code).to_contain_text('trigger="The user asks for the phone number",')
+    expect(code).to_contain_text(
+        "from orbitals.types import AIServiceDescriptionV2, PredefinedResponse"
+    )
+    assert SCOPE_KEY not in page.content()
+
+
+def test_a_refusal_goes_under_its_block_or_under_the_form(page: Page, connected):
+    studio, service = connected
+    open_scope_guard_form(page, studio)
+    block_of(page, "guard").get_by_label("api_url").fill(service.url)
+    description = block_of(page, "description")
+    description.get_by_label("given as").select_option("AIServiceDescription")
+    description.get_by_label("identity_role").fill("Courier")
+    description.get_by_label("context").fill("Italy")
+    card(page).get_by_role("button", name="Add", exact=True).click()
+    # The orbital refuses the pair of them, so the refusal belongs to the form, not to a block.
+    expect(card(page).locator("#add-err")).to_have_text(
+        "ScopeGuard V2 needs an AIServiceDescriptionV2 (or a string) as description"
+    )
+    assert input_order(page) == ["message_length"]
+    block_of(page, "guard").get_by_label("api_url").fill("scope.example")
+    card(page).get_by_role("button", name="Add", exact=True).click()
+    expect(block_of(page, "guard").locator(":scope > .block-body > .field-err")).to_have_text(
+        "api_url must start with http:// or https:// and name a host"
+    )
+    expect(block_of(page, "guard").get_by_label("api_url")).to_be_focused()
+
+
+def test_a_block_of_a_card_is_applied_when_it_is_left_and_before_a_test(page: Page, connected):
+    studio, service = connected
+    add_scope_guard(page, studio, service)
+    guard = block_of(page, "guard")
+    state = guard.locator(":scope > .block-body > .block-state")
+    fingerprint = card(page).locator("#card-fp")
+    first = fingerprint.get_attribute("title") or ""
+    expect(state).to_be_hidden()
+
+    # Typing does not apply it; leaving the block does.
+    guard.get_by_label("api_url").fill(closed_url())
+    expect(state).to_be_visible()
+    expect(guard).to_have_class(re.compile(r"\bdirty\b"))
+    guard.get_by_label("api_key_env").click()
+    expect(state).to_be_visible()
+    expect(fingerprint).to_have_attribute("title", first)
+    card(page).get_by_label("history_window").click()
+    expect(state).to_be_hidden()
+    expect(fingerprint).not_to_have_attribute("title", first)
+
+    # Pressed while the block is edited, Test connection applies the block first.
+    guard.get_by_label("api_url").fill(service.url)
+    card(page).get_by_role("button", name="Test connection").click()
+    expect(shown(page).locator(".pill")).to_have_text("allow")
+    expect(state).to_be_hidden()
+    expect(fingerprint).to_have_attribute("title", first)
+    calls = len(service.requests)
+
+    # A block the orbital refuses keeps what was typed, and there is nothing to test.
+    guard.get_by_label("api_url").fill("")
+    guard.get_by_label("api_url").press("Enter")
+    refusal = guard.locator(":scope > .block-body > .field-err")
+    expect(refusal).to_have_text("api_url needs a value")
+    expect(state).to_be_visible()
+    card(page).get_by_role("button", name="Test connection").click()
+    expect(refusal).to_have_text("api_url needs a value")
+    assert len(service.requests) == calls
+    expect(fingerprint).to_have_attribute("title", first)
+
+    # Enter applies a block from a one-line field.
+    guard.get_by_label("api_url").fill(service.url)
+    guard.get_by_label("api_key_env").fill("")
+    guard.get_by_label("api_key_env").press("Enter")
+    expect(state).to_be_hidden()
+    expect(refusal).to_be_hidden()
+
+
+def leave_to_nowhere(page: Page, block) -> None:
+    """Press on a block's legend and lose the focus, as a browser that gives it to nothing does."""
+    block.locator("legend").dispatch_event("pointerdown")
+    page.evaluate("document.activeElement.blur()")
+
+
+def test_a_block_left_for_nowhere_is_applied_before_a_test_and_when_the_card_closes(
+    page: Page, connected
+):
+    studio, service = connected
+    add_scope_guard(page, studio, service)
+    guard = block_of(page, "guard")
+    state = guard.locator(":scope > .block-body > .block-state")
+    guard.get_by_label("api_url").fill(closed_url())
+    leave_to_nowhere(page, guard)
+    expect(state).to_be_visible()
+    card(page).get_by_role("button", name="Test connection").click()
+    expect(shown(page)).to_have_text("The connection was refused.")
+    expect(state).to_be_hidden()
+
+    guard.get_by_label("api_url").fill(service.url)
+    leave_to_nowhere(page, guard)
+    expect(state).to_be_visible()
+    card(page).get_by_role("button", name="Done").click()
+    expect(page.locator("dialog[open]")).to_have_count(0)
+    open_card(page, "scope_guard")
+    expect(block_of(page, "guard").get_by_label("api_url")).to_have_value(service.url)
+    card(page).get_by_role("button", name="Test connection").click()
+    expect(shown(page).locator(".pill")).to_have_text("allow")
+
+
+def test_a_refused_block_keeps_its_refusal_when_the_card_is_drawn_again(page: Page, connected):
+    studio, service = connected
+    add_scope_guard(page, studio, service)
+    guard = block_of(page, "guard")
+    refusal = guard.locator(":scope > .block-body > .field-err")
+    guard.get_by_label("api_url").fill("")
+    guard.get_by_label("api_key_env").fill("ANOTHER_KEY")
+    guard.get_by_label("api_key_env").press("Enter")
+    expect(refusal).to_have_text("api_url needs a value")
+    expect(guard).to_have_attribute("aria-invalid", "true")
+
+    # The switch draws the card again: what was typed and its refusal are still there.
+    card(page).locator("#card-switch").click()
+    expect(card(page).locator(".sw-label")).to_have_text("Off")
+    guard = block_of(page, "guard")
+    expect(guard.locator(":scope > .block-body > .field-err")).to_have_text("api_url needs a value")
+    expect(guard).to_have_attribute("aria-invalid", "true")
+    expect(guard.get_by_label("api_url")).to_have_value("")
+    expect(guard.get_by_label("api_key_env")).to_have_value("ANOTHER_KEY")
+    expect(guard.locator(":scope > .block-body > .block-state")).to_be_visible()
+    # Put right, it is applied, and nothing says it was refused.
+    guard.get_by_label("api_url").fill(service.url)
+    guard.get_by_label("api_key_env").fill("SCOPE_KEY")
+    guard.get_by_label("api_key_env").press("Enter")
+    expect(guard.locator(":scope > .block-body > .block-state")).to_be_hidden()
+    expect(guard).not_to_have_attribute("aria-invalid", "true")
+
+
+def test_the_outcome_of_a_test_reaches_a_card_drawn_again_meanwhile(page: Page, connected):
+    studio, service = connected
+    add_scope_guard(page, studio, service)
+    service.delay = 1.0
+    test = card(page).get_by_role("button", name=re.compile("Test"))
+    test.click()
+    expect(test).to_have_text("Testing…")
+    card(page).locator("#card-switch").click()
+    expect(card(page).locator(".sw-label")).to_have_text("Off")
+    expect(test).to_have_text("Testing…")
+    expect(test).to_be_disabled()
+    expect(shown(page).locator(".pill")).to_have_text("allow")
+    expect(test).to_have_text("Test connection")
+    expect(test).to_be_enabled()
+
+
+def test_choosing_again_the_form_a_block_has_shows_what_is_applied(page: Page, connected):
+    studio, service = connected
+    add_scope_guard(page, studio, service)
+    description = block_of(page, "description")
+    given_as = description.get_by_label("given as")
+    given_as.select_option("AIServiceDescriptionV2")
+    given_as.select_option("text")
+    expect(description.locator("[data-blk-text]")).to_have_value("A courier.")
+
+    given_as.select_option("AIServiceDescriptionV2")
+    description.get_by_label("identity_role").fill("Courier")
+    description.get_by_label("context").fill("Italy")
+    card(page).get_by_label("history_window").click()
+    expect(description.locator(":scope > .block-body > .block-state")).to_be_hidden()
+    # After a form the orbital would refuse, the way back is the form it has.
+    given_as.select_option("AIServiceDescription")
+    given_as.select_option("AIServiceDescriptionV2")
+    expect(description.get_by_label("identity_role")).to_have_value("Courier")
+    expect(description.get_by_label("context")).to_have_value("Italy")
+    # Another form starts empty: only what is applied comes back.
+    given_as.select_option("text")
+    expect(description.locator("[data-blk-text]")).to_have_value("")
+
+
+def test_a_preset_says_where_an_orbital_connects_apart_from_what_differs(page: Page, connected):
+    studio, service = connected
+    open_studio(page, studio)
+    preset = page.request.get(f"{studio.url}/api/preset").json()
+    preset["input_orbitals"][0]["fingerprint"] = "sha256:another"
+    preset["input_orbitals"].append(
+        {
+            "name": "hosted",
+            "kind": "ScopeGuardOrbital",
+            "from": "studio",
+            "enabled": True,
+            "settings": {
+                "guard": {"type": "ApiBackend", "fields": {"api_url": service.url}},
+                "description": "A courier.",
+            },
+            "fingerprint": "sha256:x",
+        }
+    )
+    page.get_by_role("button", name="Import preset").click()
+    card(page).get_by_label("Preset JSON").fill(json.dumps(preset))
+    card(page).get_by_role("button", name="Apply preset").click()
+    expect(card(page)).to_contain_text("Preset applied")
+    connections = card(page).locator("#preset-connections")
+    expect(connections).to_contain_text("This preset decides where an orbital connects:")
+    expect(connections.locator("li")).to_have_text(
+        [re.compile(r"^'hosted' names no environment variable for its key: guard=ApiBackend\(")]
+    )
+    differences = card(page).locator("#preset-warnings")
+    expect(differences).to_contain_text("The session is not exactly the one that was exported:")
+    expect(differences.locator("li")).to_have_count(2)
+    assert service.requests == []
+
+
+def test_a_preset_given_at_the_start_says_in_the_page_where_orbitals_connect(
+    page: Page, service: FakeService, monkeypatch
+):
+    monkeypatch.setenv("SCOPE_KEY", SCOPE_KEY)
+
+    def atom() -> Atom:
+        return Atom(
+            name="speedypack",
+            instructions="Be brief.",
+            connector=PydanticAIConnector(FunctionModel(respond)),
+            input_orbitals=[MessageLengthOrbital(max_words=60)],
+        )
+
+    tuned = Session(atom(), source="tests:atom")
+    guard = {"type": "ApiBackend", "fields": {"api_url": service.url, "api_key_env": "SCOPE_KEY"}}
+    tuned.add("input", "ScopeGuardOrbital", {"guard": guard, "description": "A courier."})
+    with running(atom(), preset=json.dumps(tuned.export_preset())) as studio:
+        page.goto(f"{studio.url}/?token={TOKEN}")
+        # The terminal has the note too, but the browser is what the developer is looking at.
+        expect(card(page).locator("#dlg-title")).to_have_text("Started with a preset")
+        expect(card(page).locator("#preset-connections")).to_contain_text(
+            "This preset decides where an orbital connects:"
+        )
+        expect(card(page).locator("#preset-connections li")).to_have_text(
+            [
+                re.compile(
+                    r"^'scope_guard' uses the environment variable SCOPE_KEY: guard=ApiBackend\("
+                )
+            ]
+        )
+        card(page).get_by_role("button", name="Done").click()
+        expect(page.locator("dialog[open]")).to_have_count(0)
+        # Once read, these notes do not come back with the page; others would. A dialog
+        # says it has closed a moment after it does: the page remembers then.
+        deadline = time.monotonic() + 5
+        while page.evaluate("localStorage.getItem('chatomon-studio-preset-connections')") is None:
+            assert time.monotonic() < deadline, "the page did not remember the notes were read"
+            time.sleep(0.05)
+        page.reload()
+        expect(page.locator("#app")).to_have_class(re.compile(r"\bready\b"))
+        expect(row(page, "scope_guard")).to_have_count(1)
+        expect(page.locator("dialog[open]")).to_have_count(0)
+        page.evaluate(
+            """localStorage.setItem("chatomon-studio-preset-connections", '["another note"]')"""
+        )
+        page.reload()
+        expect(card(page).locator("#dlg-title")).to_have_text("Started with a preset")
+        card(page).get_by_role("button", name="Done").click()
+        assert SCOPE_KEY not in page.content()
+        assert service.requests == []
+
+
+def test_on_a_network_address_the_picker_says_where_connections_are_added(
+    page: Page, tunable: Studio
+):
+    open_studio(page, tunable)
+    page.locator('#drawer [data-act="add"][data-side="input"]').click()
+    expect(card(page)).to_contain_text("are added in code")
+    expect(card(page)).not_to_contain_text("network address")
+    card(page).get_by_role("button", name="Cancel").click()
+
+    def remote(route) -> None:
+        response = route.fetch()
+        state = response.json()
+        state["studio"]["local"] = False
+        route.fulfill(response=response, json=state)
+
+    page.route("**/api/state", remote)
+    page.reload()
+    expect(page.locator("#app")).to_have_class(re.compile(r"\bready\b"))
+    page.locator('#drawer [data-act="add"][data-side="input"]').click()
+    expect(card(page)).to_contain_text(
+        "While the studio listens on a network address, orbitals that connect to a service "
+        "are added in your code."
+    )
+
+
+def test_every_orbital_that_calls_a_model_can_be_tested_from_its_card(page: Page, connected):
+    studio, _ = connected
+    open_studio(page, studio)
+    open_card(page, "facts")
+    card(page).get_by_role("button", name="Test connection").click()
+    expect(shown(page).locator(".pill")).to_have_text("allow")
+    expect(shown(page)).to_contain_text("judge_allow")
+    card(page).get_by_role("button", name="Done").click()
+    # A card the studio does not edit has the row too.
+    open_card(page, "remote_check")
+    expect(card(page)).to_contain_text("Written with @orbital")
+    card(page).get_by_role("button", name="Test connection").click()
+    expect(shown(page)).to_contain_text("checked remotely")
+    card(page).get_by_role("button", name="Done").click()
+    open_card(page, "message_length")
+    expect(card(page).get_by_role("button", name="Test connection")).to_have_count(0)
+
+
+def test_the_picker_names_the_extra_that_would_bring_more_orbitals(page: Page, monkeypatch):
+    real = kinds.importlib.import_module
+
+    def fake(name: str, package: str | None = None) -> Any:
+        if name == "chatomon.orbitals.principled":
+            raise MissingExtraError("principled", "orbitals")
+        return real(name, package)
+
+    monkeypatch.setattr(kinds.importlib, "import_module", fake)
+    kinds._library.cache_clear()
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(FunctionModel(respond)),
+    )
+    try:
+        with running(atom) as studio:
+            open_studio(page, studio)
+            page.locator('#drawer [data-act="add"][data-side="input"]').click()
+            expect(card(page)).to_contain_text(
+                "More orbitals with pip install 'chatomon[principled]'"
+            )
+            expect(card(page).get_by_role("button", name="ScopeGuardOrbital")).to_have_count(0)
+            expect(card(page).get_by_role("button", name="JudgeOrbital")).to_have_count(1)
+    finally:
+        monkeypatch.undo()
+        kinds._library.cache_clear()
+
+
+def test_the_form_of_a_scope_guard_fits_a_phone(page: Page, connected):
+    studio, _ = connected
+    page.set_viewport_size({"width": 400, "height": 800})
+    open_studio(page, studio)
+    page.locator("#drawer-btn").click()
+    page.locator('#drawer [data-act="add"][data-side="input"]').click()
+    card(page).get_by_role("button", name="ScopeGuardOrbital").click()
+    description = block_of(page, "description")
+    description.get_by_label("given as").select_option("AIServiceDescriptionV2")
+    description.get_by_role("button", name="Add PredefinedResponse").click()
+    body = card(page).locator("#dlg-body")
+    assert body.evaluate("el => el.scrollWidth <= el.clientWidth")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+
+def test_a_block_of_fields_leaves_the_marks_of_a_blocking_orbital_as_they_were(page: Page, saving):
+    # `block` is the class of a block of fields and of what marks a blocking decision:
+    # the legend's sample, the dash in a turn's trail and the one in its report.
+    open_studio(page, saving)
+    send(page, LONG, "Too long.")
+    marks = [
+        (page.locator(".legend .lg.block"), "14px"),
+        (page.locator("article.turn .trail i.block").first, "11px"),
+    ]
+    open_report(page, 1)
+    marks.append((card(page).locator(".res-dash.block").first, "12px"))
+    for mark, width in marks:
+        expect(mark).to_have_css("width", width)
+        expect(mark).to_have_css("height", "5px")

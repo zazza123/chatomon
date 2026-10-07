@@ -1,5 +1,7 @@
+import dataclasses
 from typing import Any
 
+import aiohttp
 import pytest
 from orbitals.claim_extractor import AsyncClaimExtractor, Claim, ClaimExtractorOutput, Extractions
 from orbitals.scope_guard import AsyncScopeGuard, ScopeGuardOutput
@@ -12,10 +14,12 @@ from chatomon.orbitals.principled import (
     CHIT_CHAT_GUIDANCE,
     OUT_OF_SCOPE_GUIDANCE,
     V2_OUTPUT_FIELDS,
+    ApiBackend,
     ClaimExtractorOrbital,
     ScopeGuardOrbital,
 )
 from chatomon.schemas import Message, OrbitalContext
+from tests.fake_service import CLAIM_EXTRACTOR, SCOPE_GUARD, closed_url
 from tests.fakes import FakeConnector
 
 DESCRIPTION = AIServiceDescriptionV2(
@@ -338,3 +342,288 @@ def test_scope_guard_keeps_the_mapping_it_was_given():
 def test_the_principled_orbitals_call_a_model():
     assert ScopeGuardOrbital.calls_model is True
     assert ClaimExtractorOrbital.calls_model is True
+
+
+# --- ApiBackend: a service named by plain values ------------------------------
+
+KEY = "key-0123456789-not-for-the-page"
+
+
+def test_api_backend_is_a_frozen_value_with_keyword_arguments():
+    backend = ApiBackend(api_url="https://scope.example", api_key_env="SCOPE_KEY", model="m")
+    assert (backend.api_url, backend.api_key_env, backend.model) == (
+        "https://scope.example",
+        "SCOPE_KEY",
+        "m",
+    )
+    assert backend == ApiBackend(
+        api_url="https://scope.example", api_key_env="SCOPE_KEY", model="m"
+    )
+    assert ApiBackend(api_url="http://127.0.0.1:8080").api_key_env is None
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        backend.api_url = "https://other.example"  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        ApiBackend("https://scope.example")  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match", "secret"),
+    [
+        ({"api_url": "scope.example"}, "must start with http:// or https://", "scope.example"),
+        ({"api_url": "ftp://scope.example"}, "must start with http:// or https://", "ftp"),
+        ({"api_url": "https://"}, "name a host", None),
+        ({"api_url": "http://host:port"}, "name a host", "port"),
+        ({"api_url": "https://scope.example/a b"}, "name a host", "a b"),
+        ({"api_url": "https://scope.example/\x1b[2J"}, "name a host", "2J"),
+        ({"api_url": 8080}, "must start with http:// or https://", None),
+        ({"api_url": "https://user:hunter2@scope.example"}, "user or a password", "hunter2"),
+        ({"api_url": "ftp://user:hunter2@scope.example"}, "user or a password", "hunter2"),
+        ({"api_url": "https://scope.example", "api_key_env": KEY}, "name of an", KEY),
+        ({"api_url": "https://scope.example", "api_key_env": ""}, "name of an", None),
+        ({"api_url": "https://scope.example", "api_key_env": 3}, "name of an", None),
+        ({"api_url": "https://scope.example", "model": 3}, "model must be text", None),
+    ],
+)
+def test_api_backend_refuses_without_quoting_what_it_refuses(kwargs, match, secret):
+    with pytest.raises(ChatomonConfigError, match=match) as info:
+        ApiBackend(**kwargs)
+    if secret is not None:
+        assert secret not in str(info.value)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message", "secret"),
+    [
+        (
+            # A port that is not a number does not hide the user and the password.
+            {"api_url": "http://user:hunter2@scope.example:abc"},
+            "api_url must not hold a user or a password: "
+            "name an environment variable in api_key_env",
+            "hunter2",
+        ),
+        (
+            # It could not work, the client writes its path after it, and it would be shown.
+            {"api_url": "https://scope.example/api?code=hunter2"},
+            "api_url must not hold a query or a fragment",
+            "hunter2",
+        ),
+        (
+            {"api_url": "https://scope.example/api#hunter2"},
+            "api_url must not hold a query or a fragment",
+            "hunter2",
+        ),
+        (
+            {"api_url": " https://scope.example"},
+            "api_url must not start or end with a space",
+            None,
+        ),
+        (
+            {"api_url": "https://scope.example\n"},
+            "api_url must not start or end with a space",
+            None,
+        ),
+        (
+            {"api_url": "https://scope.example", "api_key_env": "SCOPE_KEY "},
+            "api_key_env must not start or end with a space",
+            None,
+        ),
+    ],
+    ids=["port", "query", "fragment", "before", "after", "name"],
+)
+def test_api_backend_says_what_is_wrong_with_what_it_refuses(kwargs, message, secret):
+    with pytest.raises(ChatomonConfigError) as info:
+        ApiBackend(**kwargs)
+    assert str(info.value) == message
+    if secret is not None:
+        assert secret not in str(info.value)
+
+
+def test_a_name_that_is_not_set_is_named_also_when_it_is_a_key_written_there(monkeypatch):
+    """Pins a limit: a key that reads like a name cannot be told from one, and is repeated."""
+    pasted = "a3f9c0d1e5b7"
+    monkeypatch.delenv(pasted, raising=False)
+    with pytest.raises(ChatomonConfigError) as info:
+        ScopeGuardOrbital(
+            guard=ApiBackend(api_url="https://scope.example", api_key_env=pasted),
+            description="A courier.",
+        )
+    assert str(info.value) == f"the environment variable {pasted} is not set"
+
+
+async def test_a_predefined_answer_of_the_service_is_the_orbitals_reply(service, monkeypatch):
+    monkeypatch.setenv("SCOPE_KEY", KEY)
+    service.key = KEY
+    service.scope_class = "Predefined Answer"
+    service.suggested_response = "800 123 456"
+    orb = ScopeGuardOrbital(
+        guard=ApiBackend(api_url=service.url, api_key_env="SCOPE_KEY"), description=DESCRIPTION
+    )
+    verdict = await orb.check(ctx("What is your phone number?"))
+    assert (verdict.action, verdict.reason, verdict.reply) == (
+        "respond",
+        "Predefined Answer",
+        "800 123 456",
+    )
+
+
+def test_api_backend_does_not_read_the_environment(monkeypatch):
+    monkeypatch.delenv("SCOPE_KEY", raising=False)
+    assert ApiBackend(api_url="https://scope.example", api_key_env="SCOPE_KEY").api_key_env
+
+
+async def test_scope_guard_built_from_an_api_backend_calls_the_service(service, monkeypatch):
+    monkeypatch.setenv("SCOPE_KEY", KEY)
+    service.key = KEY
+    service.scope_class = "Chit Chat"
+    backend = ApiBackend(api_url=service.url, api_key_env="SCOPE_KEY", model="scope-guard-q")
+    orb = ScopeGuardOrbital(guard=backend, description=DESCRIPTION)
+    assert orb.guard is backend
+    assert orb.is_v2 is True
+    verdict = await orb.check(ctx("Hi"))
+    assert (verdict.action, verdict.reason, verdict.guidance) == (
+        "allow",
+        "Chit Chat",
+        CHIT_CHAT_GUIDANCE,
+    )
+    request = service.requests[0]
+    assert request["path"] == SCOPE_GUARD
+    assert request["headers"]["X-API-Key"] == KEY
+    assert request["body"]["model"] == "scope-guard-q"
+    assert request["body"]["ai_service_description"] == DESCRIPTION.model_dump()
+    assert request["body"]["conversation"][-1] == {"role": "user", "content": "Hi"}
+
+
+async def test_the_variable_is_read_when_the_orbital_is_built(service, monkeypatch):
+    monkeypatch.setenv("SCOPE_KEY", KEY)
+    service.key = KEY
+    orb = ScopeGuardOrbital(
+        guard=ApiBackend(api_url=service.url, api_key_env="SCOPE_KEY"), description="A courier."
+    )
+    monkeypatch.delenv("SCOPE_KEY")
+    assert (await orb.check(ctx())).action == "allow"
+
+
+@pytest.mark.parametrize("value", [None, ""])
+@pytest.mark.parametrize("kind", ["scope_guard", "claim_extractor"])
+def test_a_variable_that_is_not_set_is_refused_by_name(monkeypatch, value, kind):
+    if value is None:
+        monkeypatch.delenv("SCOPE_KEY", raising=False)
+    else:
+        monkeypatch.setenv("SCOPE_KEY", value)
+    backend = ApiBackend(api_url="https://scope.example", api_key_env="SCOPE_KEY")
+    with pytest.raises(ChatomonConfigError, match="the environment variable SCOPE_KEY is not set"):
+        if kind == "scope_guard":
+            ScopeGuardOrbital(guard=backend, description="A courier.")
+        else:
+            ClaimExtractorOrbital(extractor=backend)
+
+
+async def test_without_a_variable_the_client_behaves_as_the_library_does(service, monkeypatch):
+    monkeypatch.delenv("PRINCIPLED_API_KEY", raising=False)
+    plain = ScopeGuardOrbital(guard=ApiBackend(api_url=service.url), description="A courier.")
+    await plain.check(ctx())
+    assert "X-API-Key" not in service.requests[0]["headers"]
+    assert "model" not in service.requests[0]["body"]
+    monkeypatch.setenv("PRINCIPLED_API_KEY", KEY)
+    library = ScopeGuardOrbital(guard=ApiBackend(api_url=service.url), description="A courier.")
+    await library.check(ctx())
+    assert service.requests[1]["headers"]["X-API-Key"] == KEY
+
+
+def test_an_api_backend_gives_the_fingerprint_of_a_hand_made_client(monkeypatch):
+    monkeypatch.setenv("SCOPE_KEY", KEY)
+    url = "https://scope.example"
+    backend = ApiBackend(api_url=url, api_key_env="SCOPE_KEY", model="scope-guard-q")
+    short = ScopeGuardOrbital(guard=backend, description=DESCRIPTION)
+    by_hand = ScopeGuardOrbital(
+        guard=AsyncScopeGuardV2(backend="api", api_url=url, model="scope-guard-q", api_key="other"),
+        description=DESCRIPTION,
+    )
+    assert short.fingerprint() == by_hand.fingerprint()
+    assert short.config()["guard"] == {
+        "type": "AsyncAPIScopeGuardV2",
+        "model": "scope-guard-q",
+        "api_url": url,
+    }
+    written = str(short.config())
+    assert KEY not in written and "SCOPE_KEY" not in written
+    renamed = ScopeGuardOrbital(
+        guard=ApiBackend(api_url=url, model="scope-guard-q"), description=DESCRIPTION
+    )
+    assert renamed.fingerprint() == short.fingerprint()
+
+
+async def test_headers_and_mapping_work_next_to_an_api_backend(service):
+    service.scope_class = "Chit Chat"
+    orb = ScopeGuardOrbital(
+        guard=ApiBackend(api_url=service.url),
+        description="A courier.",
+        headers=lambda: {"Authorization": "Bearer token-1"},
+        mapping={"Chit Chat": Verdict.block("Only parcels.")},
+    )
+    verdict = await orb.check(ctx("Hi"))
+    assert (verdict.action, verdict.reply) == ("block", "Only parcels.")
+    assert service.requests[0]["headers"]["Authorization"] == "Bearer token-1"
+
+
+def test_an_api_backend_is_a_v2_guard():
+    with pytest.raises(ChatomonConfigError, match="AIServiceDescriptionV2"):
+        ScopeGuardOrbital(
+            guard=ApiBackend(api_url="https://scope.example"),
+            description=AIServiceDescription(identity_role="x", context="y"),
+        )
+
+
+def test_a_guard_that_is_neither_a_client_nor_a_backend_is_refused():
+    with pytest.raises(ChatomonConfigError, match="or an ApiBackend, got str"):
+        ScopeGuardOrbital(guard="https://scope.example", description="x")  # type: ignore[arg-type]
+    with pytest.raises(ChatomonConfigError, match="or an ApiBackend, got str"):
+        ClaimExtractorOrbital(extractor="https://claims.example")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("model", [None, "claims-q"])
+async def test_claim_extractor_built_from_an_api_backend(service, monkeypatch, model):
+    # Without a model the library's own default is used, whatever name it maps it to.
+    sent = model or AsyncClaimExtractor(backend="api", api_url=service.url).default_model
+    monkeypatch.setenv("CLAIMS_KEY", KEY)
+    service.key = KEY
+    backend = ApiBackend(api_url=service.url, api_key_env="CLAIMS_KEY", model=model)
+    orb = ClaimExtractorOrbital(extractor=backend, description="A courier.")
+    assert orb.extractor is backend
+    verdict = await orb.check(ctx("We are open 24/7.", side="output"))
+    assert verdict.action == "allow"
+    assert isinstance(verdict.annotations, Extractions)
+    assert verdict.annotations.claims[0].content == "Open 24/7"
+    request = service.requests[0]
+    assert request["path"] == CLAIM_EXTRACTOR
+    assert request["headers"]["X-API-Key"] == KEY
+    assert request["body"]["model"] == sent
+    assert request["body"]["ai_service_description"] == "A courier."
+    assert orb.config()["extractor"] == {
+        "type": "AsyncAPIClaimExtractor",
+        "model": sent,
+        "api_url": service.url,
+    }
+
+
+async def test_the_text_of_a_refused_key_does_not_quote_the_key(service, monkeypatch):
+    """Pins what the studio relies on: the client's error text holds no key."""
+    monkeypatch.setenv("SCOPE_KEY", KEY)
+    service.key = "another-key"
+    orb = ScopeGuardOrbital(
+        guard=ApiBackend(api_url=service.url, api_key_env="SCOPE_KEY"), description="A courier."
+    )
+    with pytest.raises(aiohttp.ClientResponseError) as info:
+        await orb.check(ctx())
+    assert info.value.status == 401
+    assert KEY not in str(info.value)
+
+
+async def test_the_text_of_a_refused_connection_does_not_quote_the_key(monkeypatch):
+    monkeypatch.setenv("SCOPE_KEY", KEY)
+    orb = ScopeGuardOrbital(
+        guard=ApiBackend(api_url=closed_url(), api_key_env="SCOPE_KEY"), description="A courier."
+    )
+    with pytest.raises(OSError) as info:
+        await orb.check(ctx())
+    assert KEY not in str(info.value) and KEY not in repr(info.value)
