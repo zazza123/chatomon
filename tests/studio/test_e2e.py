@@ -393,6 +393,29 @@ def test_a_page_that_is_out_of_date_reloads_the_state(page: Page, tunable: Studi
     expect(row(page, "turn_limit")).to_have_count(0)
 
 
+def test_a_refused_setting_keeps_its_refusal_when_the_card_is_drawn_again(
+    page: Page, tunable: Studio
+):
+    open_studio(page, tunable)
+    open_card(page, "message_length")
+    words = card(page).get_by_label("max_words")
+    words.fill("1.5")
+    words.press("Tab")
+    error = card(page).locator("#f-max_words-err")
+    expect(error).to_have_text("max_words must be a whole number")
+    # The switch draws the card again: what was typed and its refusal are still there.
+    card(page).locator("#card-switch").click()
+    expect(card(page).locator(".sw-label")).to_have_text("Off")
+    expect(card(page).get_by_label("max_words")).to_have_value("1.5")
+    expect(card(page).get_by_label("max_words")).to_have_attribute("aria-invalid", "true")
+    expect(error).to_have_text("max_words must be a whole number")
+    expect(error.locator("code")).to_have_text("max_words")
+    # A reset is there to discard it.
+    card(page).get_by_role("button", name="Reset to code").click()
+    expect(card(page).get_by_label("max_words")).to_have_value("60")
+    expect(error).to_be_hidden()
+
+
 def test_deleting_an_added_orbital_and_undoing(page: Page, tunable: Studio):
     page.goto(f"{tunable.url}/?token={TOKEN}")
     page.request.post(

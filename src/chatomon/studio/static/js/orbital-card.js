@@ -254,12 +254,13 @@ function draw(state) {
 
 /**
  * A change that redraws the whole card: the switch, a move, a reset. The blocks are settled
- * first, and one the orbital refused comes back as it was typed, with its refusal: only a
- * reset, which is there to discard, leaves it behind.
+ * first, and what the orbital refused, a field or a block, comes back as it was typed, with
+ * its refusal: only a reset, which is there to discard, leaves it behind.
  */
 async function act(request, focus, { keeping = true } = {}) {
   if (keeping) await applied();
   const refused = keeping ? $$("fieldset.block.dirty", dlg).map((fs) => ({ key: fs.dataset.block, typed: readBlock(fs), refusal: fs._refusal })) : [];
+  const fields = keeping ? $$('[data-key][aria-invalid="true"]', dlg).map((el) => ({ id: el.id, typed: el.dataset.type === "names" ? read(el) : el.value, refusal: errorOf(el).innerHTML })) : [];
   try {
     draw(await ctx.apply(request));
   } catch (error) {
@@ -278,6 +279,16 @@ async function act(request, focus, { keeping = true } = {}) {
     touch(fs);
     fs._unsent = false;
     mark(fs, refusal);
+  }
+  for (const { id, typed, refusal } of fields) {
+    const el = $(`#${CSS.escape(id)}`, dlg);
+    if (!el) continue;
+    if (el.dataset.type === "names") $$("input", el).forEach((box) => { box.checked = typed.includes(box.value); });
+    else el.value = typed;
+    // The message is the one already shown: it was written as the page writes a refusal.
+    errorOf(el).innerHTML = refusal;
+    errorOf(el).hidden = false;
+    el.setAttribute("aria-invalid", "true");
   }
   if (focus) $(focus, dlg)?.focus();
 }
