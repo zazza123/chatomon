@@ -776,16 +776,28 @@ class TriOrbital(ScriptedOrbital):
         return {**super().config(), "mode": self.mode, "careful": self.careful}
 
 
+class TokenOrbital(ScriptedOrbital):
+    """The name of a variable as a parameter of its own: no built-in orbital has one yet."""
+
+    def __init__(self, *, token_env: str | None = None, name: str | None = None) -> None:
+        super().__init__(name=name)
+        self.token_env = token_env
+
+    def config(self) -> dict[str, Any]:
+        return {**super().config(), "token_env": self.token_env}
+
+
 @pytest.fixture
 def optional(monkeypatch) -> Iterator[Studio]:
-    """A studio that reads TriOrbital as one of chatomon's own, so its card can be edited."""
+    """A studio that reads two test orbitals as chatomon's own, so their cards can be edited."""
     builtin = kinds.is_builtin
-    monkeypatch.setattr(kinds, "is_builtin", lambda cls: cls is TriOrbital or builtin(cls))
+    own = (TriOrbital, TokenOrbital)
+    monkeypatch.setattr(kinds, "is_builtin", lambda cls: cls in own or builtin(cls))
     atom = Atom(
         name="speedypack",
         instructions="Be brief.",
         connector=PydanticAIConnector(FunctionModel(respond)),
-        input_orbitals=[TriOrbital(mode="strict", careful=True)],
+        input_orbitals=[TriOrbital(mode="strict", careful=True), TokenOrbital(name="token")],
     )
     with running(atom) as handle:
         yield handle
@@ -814,6 +826,30 @@ def test_a_choice_and_a_switch_that_may_be_none(page: Page, optional: Studio):
     expect(card(page).locator(".field.changed")).to_have_count(2)
     page.wait_for_function("() => document.querySelectorAll('[aria-invalid]').length === 0")
     assert values() == {"mode": "loose", "careful": False}
+
+
+def test_a_setting_that_names_a_variable_is_one_line_kept_as_text(page: Page, optional: Studio):
+    open_studio(page, optional)
+    open_card(page, "token")
+    variable = card(page).get_by_label("token_env")
+    expect(variable).to_have_js_property("tagName", "INPUT")
+    expect(card(page)).to_contain_text(
+        "The name of an environment variable. Its value stays on the server."
+    )
+    # What looks like a number is still a name: the server gets the text.
+    variable.fill("123")
+    variable.press("Tab")
+    expect(page.locator("#changes-text")).to_have_text("1 change vs code")
+    state = page.request.get(f"{optional.url}/api/state").json()
+    assert state["orbitals"]["input"][1]["settings"][0] == {
+        "key": "token_env",
+        "type": "env",
+        "optional": True,
+        "required": False,
+        "default": None,
+        "value": "123",
+        "changed": True,
+    }
 
 
 LONG = "one two three four five six"

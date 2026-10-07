@@ -1,8 +1,8 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from chatomon.errors import ChatomonConfigError
 from chatomon.studio import _values as values
@@ -55,6 +55,46 @@ class Client:
 
 class Longer(Address):
     pass
+
+
+@dataclass(frozen=True, kw_only=True)
+class Listed:
+    title: str
+    tags: list[str] = field(default_factory=list)
+
+
+class ListedModel(BaseModel):
+    title: str
+    tags: list[str] = Field(default_factory=list)
+
+
+@dataclass
+class Ping:
+    title: str
+    pongs: Any = None
+
+
+@dataclass
+class Pong:
+    title: str
+    pings: list[Ping] | None = None
+
+
+# Two types that hold each other: the first says so once the second exists.
+Ping.__init__.__annotations__["pongs"] = list[Pong] | None
+
+
+class Chapter(BaseModel):
+    title: str
+    rules: list[Rule] | None = None
+
+
+class Book(BaseModel):
+    title: str
+    chapters: list[Chapter] | None = None
+
+
+RULE = {"title": "T", "text": "X"}
 
 
 def block(annotation: Any, *, required: bool = True) -> values.Setting:
@@ -308,6 +348,14 @@ def test_the_constructor_of_a_type_refuses_with_its_own_message():
             },
             "`Rule` has no field `n`",
         ),
+        *[
+            (
+                Address,
+                {"type": "Address", "fields": {"url": "http://a", "tags": tags}},
+                "every entry of `tags` must be one line of text, with no space around it",
+            )
+            for tags in (["a "], [" a"], ["a", ""], ["a\nb"])
+        ],
     ],
 )
 def test_a_block_of_the_wrong_shape_is_refused_by_the_studio(annotation, value, message):
@@ -328,6 +376,102 @@ def test_a_block_of_the_right_shape_passes():
         {"type": "Sheet", "fields": {"role": "r", "notes": [], "rules": ["plain"]}},
     ):
         values.check_shape(setting, value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "One text.",
+        "Two\nlines, and a space after them. ",
+        {"type": "Sheet", "fields": {"role": "r"}},
+        {"type": "Sheet", "fields": {"role": " r ", "notes": ["first", "second one"]}},
+        {
+            "type": "Sheet",
+            "fields": {
+                "role": "r",
+                "rules": [" a sentence\nof two lines ", {"type": "Rule", "fields": RULE}],
+            },
+        },
+        {"type": "Address", "fields": {"url": "http://a", "tags": ["a", "b c"], "retries": 0}},
+        {"type": "Address", "fields": {"url": "http://a", "token_env": "TOKEN", "mode": "fast"}},
+    ],
+)
+def test_what_the_studio_accepts_it_can_show_and_build_again(value):
+    # A value the studio built and cannot show would become an object "from code".
+    setting = block(str | Sheet | Address | None, required=False)
+    values.check_shape(setting, value)
+    made = values.built(setting, value)
+    shown = values.represented(setting, made)
+    assert shown is not OPAQUE
+    assert values.built(setting, shown) == made
+
+
+@pytest.mark.parametrize("cls", [Listed, ListedModel])
+def test_a_default_made_by_a_factory_is_read(cls):
+    found = values.value_type(cls)
+    assert found is not None
+    assert ([f.default for f in found.fields], found.unread) == ([None, []], ())
+    setting = block(cls)
+    made = values.built(setting, {"type": cls.__name__, "fields": {"title": "t"}})
+    shown = {"type": cls.__name__, "fields": {"title": "t", "tags": []}}
+    assert values.represented(setting, made) == shown
+    assert values.compact(setting, shown) == {"type": cls.__name__, "fields": {"title": "t"}}
+
+
+def test_a_block_with_a_default_shows_it():
+    setting = values.block("value", Address | Client, False, Address(url="http://a"))
+    assert setting is not None
+    assert setting.schema()["default"] == {
+        "type": "Address",
+        "fields": {"url": "http://a", "token_env": None, "retries": 3, "mode": "safe", "tags": []},
+    }
+    # A default the studio cannot write, such as a client, is not shown.
+    unwritable = values.block("value", Address | Client, False, Client("http://a"))
+    assert unwritable is not None and unwritable.default is None
+
+
+def test_types_that_hold_each_other_are_read_the_same_whatever_is_read_first():
+    def read(cls: type) -> list[tuple[str, str, tuple[tuple[str, ...], ...]]]:
+        found = values.value_type(cls)
+        assert found is not None
+        return [
+            (f.key, f.type, tuple(tuple(inner.key for inner in t.fields) for t in f.types))
+            for f in found.fields
+        ]
+
+    values._outermost.cache_clear()
+    ping_first = {cls: read(cls) for cls in (Ping, Pong)}
+    values._outermost.cache_clear()
+    pong_first = {cls: read(cls) for cls in (Pong, Ping)}
+    assert ping_first == pong_first
+    # The type that would close the circle is read without the field that closes it.
+    assert ping_first[Ping] == [("title", "text", ()), ("pongs", "items", (("title",),))]
+    assert ping_first[Pong] == [("title", "text", ()), ("pings", "items", (("title",),))]
+
+
+def test_an_entry_with_entries_of_its_own_is_left_to_the_code():
+    # The page draws the entries of a list, not the lists inside an entry.
+    found = values.value_type(Book)
+    assert found is not None
+    assert [f.key for f in found.fields] == ["title"]
+    assert [name for name, _default, _given in found.unread] == ["chapters"]
+    setting = block(Book)
+    plain = {"type": "Book", "fields": {"title": "t"}}
+    assert values.represented(setting, Book(title="t")) == plain
+    assert values.represented(setting, Book(title="t", chapters=[Chapter(title="c")])) is OPAQUE
+
+
+def test_a_field_left_out_keeps_a_held_value_that_reads_as_the_default():
+    # In code an empty list where the default is none: a preset leaves the field out,
+    # and what is built from it must be the object the code gives.
+    setting = block(Sheet)
+    held = Sheet(role="r", notes=[])
+    edited = {"type": "Sheet", "fields": {"role": "other", "notes": []}}
+    changed = values.built(setting, edited, held)
+    preset = values.compact(setting, values.represented(setting, changed))
+    assert preset == {"type": "Sheet", "fields": {"role": "other"}}
+    again = values.built(setting, preset, held)
+    assert again == changed and again.notes == []
 
 
 def test_a_preset_leaves_out_the_fields_that_hold_their_default():

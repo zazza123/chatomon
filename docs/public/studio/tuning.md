@@ -28,6 +28,7 @@ Two details are worth knowing:
 
 - **A judge's `context` is edited as text.** While you leave it alone, the judge keeps the `Knowledge` object from your code; once you change it, the judge has its own text and no longer follows the atom's knowledge.
 - **An orbital that your code puts in both chains is one orbital.** A change to its settings applies to both sides; its switch and its position are per chain.
+- **A setting whose name ends in `_env` holds the name of an environment variable.** It is a one-line field: the name is what you type, what is saved and what is written to code, and the value stays on the server.
 
 ## Blocks
 
@@ -38,7 +39,7 @@ Some arguments take a value that has fields of its own: the `ApiBackend` that sa
 | A text | A text field |
 | The name of an environment variable: a field whose name ends in `_env` | A one-line field. The name is what you type, what is saved and what is written to code; the value stays on the server |
 | A list of texts | A text field, one entry per line |
-| A list of entries with fields of their own, such as the trigger and the response of a predefined response | One group of fields per entry, added and removed with its buttons. Where the type allows it, an entry can also be a plain sentence |
+| A list of entries with fields of their own, such as the trigger and the response of a predefined response | One group of fields per entry, added and removed with its buttons. Where the type allows it, an entry can also be a plain sentence. A list of entries inside an entry is not edited: it stays as your code gives it |
 
 When an argument accepts more than one form, **given as** chooses among them: a description is one text, or one of the description types with its components. Every type the argument accepts is listed, and the orbital has the last word: a ScopeGuard V2 given a V1 description refuses it with its own message.
 

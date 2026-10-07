@@ -1067,6 +1067,41 @@ def test_a_block_that_is_not_a_connection_gives_no_note(key):
     ]
 
 
+class TokenOrbital(ScriptedOrbital):
+    """The name of a variable as a parameter of its own: no built-in orbital has one yet."""
+
+    def __init__(self, *, token_env: str | None = None, name: str | None = None) -> None:
+        super().__init__(name=name)
+        self.token_env = token_env
+
+    def config(self) -> dict[str, Any]:
+        return {**super().config(), "token_env": self.token_env}
+
+
+def test_a_plain_setting_that_names_a_variable_is_noted_like_a_connection(monkeypatch):
+    builtin = kinds.is_builtin
+    monkeypatch.setattr(kinds, "is_builtin", lambda cls: cls is TokenOrbital or builtin(cls))
+
+    def session() -> Session:
+        atom = Atom(
+            name="speedypack",
+            instructions="Be brief.",
+            connector=PydanticAIConnector(TestModel(custom_output_text="Hi")),
+            input_orbitals=[TokenOrbital(name="token")],
+        )
+        return Session(atom, source="app:atom")
+
+    first = session()
+    first.edit("input", "token", {"token_env": "SOME_TOKEN"})
+    assert session().import_preset(json.dumps(first.export_preset())) == (
+        [
+            "'token' uses the environment variable SOME_TOKEN: token_env=\"SOME_TOKEN\". "
+            "Check where it points before you send a message."
+        ],
+        [],
+    )
+
+
 def test_a_connection_note_writes_letters_that_are_not_ascii_as_escapes(key):
     # An address with a letter of another alphabet can look like one the developer trusts.
     session = service_session()

@@ -214,6 +214,9 @@ def _field(name: str, annotation: Any, required: bool, default: Any) -> Setting 
     known = tuple(found for found in found_types if found is not None)
     if not known or len(known) != len(found_types):
         return None
+    if any(inner.type == "items" for found in known for inner in found.fields):
+        # The page draws the entries of a list, not the lists inside an entry.
+        return None
     return Setting(name, "items", optional, required, default, text=str in entries, types=known)
 
 
@@ -223,10 +226,9 @@ def _is_plain_default(value: Any) -> bool:
     return value is None or isinstance(value, bool | int | float | str)
 
 
-_reading: set[type] = set()
+_reading: list[type] = []
 
 
-@cache
 def value_type(cls: Any) -> ValueType | None:
     """Read a dataclass or a pydantic model whose fields are plain.
 
@@ -245,11 +247,45 @@ def value_type(cls: Any) -> ValueType | None:
     if cls in _reading:
         # A type that holds itself has no end to read.
         return None
-    _reading.add(cls)
+    # Inside another type the reading can be cut where a circle closes, so only a
+    # type read from the outside is remembered: the order of the calls changes nothing.
+    return _guarded(cls) if _reading else _outermost(cls)
+
+
+@cache
+def _outermost(cls: type) -> ValueType | None:
+    return _guarded(cls)
+
+
+def _guarded(cls: type) -> ValueType | None:
+    _reading.append(cls)
     try:
         return _read(cls)
     finally:
-        _reading.discard(cls)
+        _reading.pop()
+
+
+def _default(cls: type, parameter: inspect.Parameter) -> Any:
+    """Return a parameter's default, also when the type makes it with a factory.
+
+    Returns:
+        What an instance holds when the argument is left out; the signature's
+        own default when the factory cannot be called without arguments.
+    """
+    factory: Any = None
+    if dataclasses.is_dataclass(cls):
+        declared = {found.name: found for found in dataclasses.fields(cls)}.get(parameter.name)
+        if declared is not None and declared.default_factory is not dataclasses.MISSING:
+            factory = declared.default_factory
+    elif issubclass(cls, BaseModel):
+        info = cls.model_fields.get(parameter.name)
+        factory = info.default_factory if info is not None else None
+    if factory is None:
+        return parameter.default
+    try:
+        return factory()
+    except Exception:
+        return parameter.default
 
 
 def _read(cls: type) -> ValueType | None:
@@ -264,12 +300,12 @@ def _read(cls: type) -> ValueType | None:
             return None
         required = parameter.default is inspect.Parameter.empty
         annotation = hint(cls, parameter.annotation)
-        default = None if required else parameter.default
+        default = None if required else _default(cls, parameter)
         found = _field(parameter.name, annotation, required, default)
         if found is not None and _is_plain_default(default):
             fields.append(found)
         elif not required:
-            unread.append((parameter.name, parameter.default, False))
+            unread.append((parameter.name, default, False))
         elif members(annotation)[1]:
             # No default, but none is accepted: the studio gives none.
             unread.append((parameter.name, None, True))
@@ -278,22 +314,27 @@ def _read(cls: type) -> ValueType | None:
     return ValueType(cls, tuple(fields), tuple(unread)) if fields else None
 
 
-def block(name: str, annotation: Any, required: bool) -> Setting | None:
+def block(name: str, annotation: Any, required: bool, default: Any = None) -> Setting | None:
     """Read a parameter that accepts a value made of plain fields.
 
     Args:
         name: The parameter's name.
         annotation: Its annotation, resolved.
         required: Whether it has no default.
+        default: Its default, when it has one.
 
     Returns:
-        A setting of type `block`, or `None` when the annotation admits no value type.
+        A setting of type `block`, or `None` when the annotation admits no value
+        type. Its default is the JSON form of the parameter's; none when the
+        studio could not write that default back, as for a client.
     """
     admitted, optional = members(annotation)
     found = tuple(known for member in admitted if (known := value_type(member)) is not None)
     if not found:
         return None
-    return Setting(name, "block", optional, required, None, text=str in admitted, types=found)
+    setting = Setting(name, "block", optional, required, None, text=str in admitted, types=found)
+    shown = represented(setting, default)
+    return setting if shown is OPAQUE else dataclasses.replace(setting, default=shown)
 
 
 def _fields_of(value: Any) -> Mapping[str, Any]:
@@ -452,7 +493,9 @@ def compact(setting: Setting, value: Any) -> Any:
 
 
 def variables(setting: Setting, value: Any) -> list[str]:
-    """Return the environment variables a block's JSON names, at any depth."""
+    """Return the environment variables a setting's JSON names; for a block, at any depth."""
+    if setting.type == "env":
+        return [value] if isinstance(value, str) and value else []
     found = named(setting, value)
     if found is None:
         return []
@@ -517,6 +560,13 @@ def _check_fields(found: ValueType, fields: Mapping[str, Any], owner: str, *, en
         elif not _fits(field, value):
             expected = _EXPECTED.get(field.type) or f"one of: {', '.join(field.options)}"
             raise InvalidSettingError(f"`{field.key}` must be {expected}", setting=owner)
+        elif field.type == "lines" and not all(_is_line(item) for item in value):
+            # The page writes these one per line: an entry it could not show again
+            # would turn the whole block into an object the studio cannot edit.
+            raise InvalidSettingError(
+                f"every entry of `{field.key}` must be one line of text, with no space around it",
+                setting=owner,
+            )
 
 
 def _check_items(field: Setting, value: Any, owner: str) -> None:
@@ -593,11 +643,14 @@ def _known(setting: Setting, value: Any) -> ValueType:
 def _instance(found: ValueType, fields: Mapping[str, Any], current: Any) -> Any:
     arguments: dict[str, Any] = {}
     for field in found.fields:
+        held = getattr(current, field.key, OPAQUE) if current is not None else OPAQUE
         if field.key not in fields:
-            # Left out, as in a preset: the type's own default.
+            # Left out, as in a preset: the type's own default, or the value held when it
+            # reads the same, such as an empty list where the default is none.
+            if held is not OPAQUE and _field_json(field, held) == _field_json(field, field.default):
+                arguments[field.key] = held
             continue
         incoming = fields[field.key]
-        held = getattr(current, field.key, OPAQUE) if current is not None else OPAQUE
         if held is not OPAQUE and _field_json(field, held) == incoming:
             # Untouched: a text shown as lines stays the text it is.
             arguments[field.key] = held

@@ -85,13 +85,13 @@ def describe(cls: type[Orbital]) -> Kind:
         required = parameter.default is inspect.Parameter.empty
         annotation = _values.hint(init, parameter.annotation)
         shape = _SETTINGS.get((cls, parameter.name)) or _values.shape(annotation)
+        default = None if required else parameter.default
         if shape is not None:
-            default = None if required else parameter.default
-            settings.append(
-                Setting(parameter.name, shape[0], shape[1], required, default, shape[2])
-            )
+            # As for a field of a value type: a name that ends in `_env` is a variable's.
+            kind = "env" if shape[0] == "text" and parameter.name.endswith("_env") else shape[0]
+            settings.append(Setting(parameter.name, kind, shape[1], required, default, shape[2]))
             continue
-        block = _values.block(parameter.name, annotation, required)
+        block = _values.block(parameter.name, annotation, required, default)
         if block is not None:
             settings.append(block)
             continue

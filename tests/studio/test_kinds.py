@@ -243,6 +243,48 @@ def test_an_orbital_rebuilt_from_what_the_studio_reads_is_the_same(cls, argument
     assert twin.fingerprint() == original.fingerprint()
 
 
+@pytest.mark.parametrize(
+    ("cls", "arguments"),
+    [(cls, arguments) for cls, samples in SAMPLES.items() for arguments in samples],
+    ids=lambda value: value.__name__ if isinstance(value, type) else None,
+)
+def test_a_block_the_studio_shows_is_built_and_shown_the_same_again(cls, arguments):
+    # Through the JSON the page gets and sends, with nothing held to fall back on.
+    original = cls(**arguments)
+    for setting in kinds.describe(cls).settings:
+        if setting.type != "block":
+            continue
+        held = getattr(original, setting.key)
+        shown = values.represented(setting, held)
+        if any(type(held) is known.cls for known in setting.types):
+            assert shown is not values.OPAQUE, setting.key
+        if shown is values.OPAQUE or shown is None:
+            continue
+        values.check_shape(setting, shown)
+        assert values.represented(setting, values.built(setting, shown)) == shown
+
+
+class TokenOrbital(Orbital):
+    """An orbital that takes the name of a variable as a parameter of its own."""
+
+    calls_model = True
+
+    def __init__(self, *, name: str = "token", token_env: str | None = None) -> None:
+        super().__init__(name=name)
+        self.token_env = token_env
+
+    async def check(self, ctx: OrbitalContext) -> Verdict:
+        return Verdict.allow()
+
+
+def test_a_parameter_whose_name_ends_in_env_names_a_variable():
+    setting = kinds.describe(TokenOrbital).setting("token_env")
+    assert setting is not None
+    assert (setting.type, setting.optional) == ("env", True)
+    reply = kinds.describe(MessageLengthOrbital).setting("reply")
+    assert reply is not None and reply.type == "text"
+
+
 def test_a_judge_keeps_its_own_connector_and_drops_the_atoms():
     own = FakeConnector()
     judge = JudgeOrbital(model="m", instructions="i", connector=own)

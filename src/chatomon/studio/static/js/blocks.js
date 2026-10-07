@@ -8,7 +8,7 @@ import { $, $$, esc, rich } from "./util.js";
 
 export const TRASH = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>`;
 
-const HELP = {
+export const HELP = {
   env: "The name of an environment variable. Its value stays on the server.",
   lines: "One per line.",
 };

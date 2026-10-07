@@ -1,6 +1,6 @@
 import { $, $$, esc, fmtMs, rich, shortFp } from "./util.js";
 import { addOrbital, patchOrbital, probeOrbital, resetOrbitals } from "./api.js";
-import { TRASH, block, breaksLine, handle, hydrate, keep, mark, read as readBlock } from "./blocks.js";
+import { HELP, TRASH, block, breaksLine, handle, hydrate, keep, mark, read as readBlock } from "./blocks.js";
 import { closeDialog, kv, openDialog } from "./cards.js";
 
 const dlg = $("#dlg");
@@ -31,14 +31,16 @@ function control(s, value, names) {
   }
   const none = s.optional ? ' placeholder="None"' : "";
   if (s.type === "text") return `<textarea ${attrs} rows="1"${none}>${esc(value ?? "")}</textarea>`;
+  if (s.type === "env") return `<input type="text" class="mono" ${attrs} value="${esc(value ?? "")}" autocapitalize="none" autocomplete="off" spellcheck="false"${none}>`;
   // A text field, not a number field: whatever is typed reaches the server, which says if it is a number.
   return `<input type="text" inputmode="${s.type === "int" ? "numeric" : "decimal"}" autocomplete="off" ${attrs} value="${esc(value ?? "")}"${none}>`;
 }
 
 function field(s, value, names, changed = false) {
-  const wide = s.type === "text" || s.type === "names";
+  const wide = ["text", "names", "env"].includes(s.type);
   const label = s.type === "names" ? "" : `<label for="${fieldId(s.key)}">${esc(s.key)}</label>`;
-  return `<div class="field${wide ? " wide" : ""}${changed ? " changed" : ""}">${label}${control(s, value, names)}<p class="field-err" id="${fieldId(s.key)}-err" role="alert" hidden></p></div>`;
+  const help = s.type === "env" ? `<span class="help">${HELP.env}</span>` : "";
+  return `<div class="field${wide ? " wide" : ""}${changed ? " changed" : ""}">${label}${control(s, value, names)}${help}<p class="field-err" id="${fieldId(s.key)}-err" role="alert" hidden></p></div>`;
 }
 
 const nameField = (value) => `<div class="field wide"><label for="f-name">name</label><input type="text" id="f-name" data-key="name" data-type="name" value="${esc(value)}" autocapitalize="none" autocomplete="off" spellcheck="false" aria-describedby="f-name-err"><p class="field-err" id="f-name-err" role="alert" hidden></p></div>`;
@@ -51,7 +53,7 @@ function read(el) {
   if (type === "names") return $$("input:checked", el).map((box) => box.value);
   if (type === "choice" || type === "name") return el.value;
   if (el.value.trim() === "") return null;
-  if (type === "text") return el.value;
+  if (type === "text" || type === "env") return el.value;
   const number = Number(el.value.trim());
   return Number.isFinite(number) ? number : el.value;
 }

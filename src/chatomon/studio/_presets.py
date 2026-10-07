@@ -243,7 +243,7 @@ def _connections(result: Chains, side: Side, raw: dict[str, Any]) -> list[str]:
     notes: list[str] = []
     for key, value in (raw.get("settings") or {}).items():
         setting = kind.setting(key)
-        if setting is None or setting.type != "block":
+        if setting is None or setting.type not in ("block", "env"):
             continue
         # A letter of another alphabet can make an address look like one the developer
         # trusts: whatever is not ASCII is written as an escape.
