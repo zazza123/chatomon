@@ -108,7 +108,7 @@ One setting, `Atom(capture_content=...)`, governs every piece of conversation co
 |-------|--------|
 | `"none"` (default) | No content is recorded |
 | `"hash"` | Only SHA-256 digests, useful to correlate without storing text |
-| `"full"` | Full content, passed through `redactor` when one is configured; if the redactor fails the marker `[redaction failed]` is recorded, and unserializable data becomes `[unserializable]` |
+| `"full"` | Full content, passed through `redactor` when one is configured; if the redactor fails, or returns something that is not text, the marker `[redaction failed]` is recorded, and unserializable data becomes `[unserializable]` |
 
 The policy is implemented by `ContentPolicy` in `src/chatomon/observability.py`.
 

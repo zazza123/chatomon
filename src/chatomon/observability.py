@@ -32,7 +32,7 @@ TRACER_NAME = "chatomon"
 """Instrumentation scope name of every chatomon span."""
 
 REDACTION_FAILED = "[redaction failed]"
-"""Recorded instead of a text when the redactor raises."""
+"""Recorded instead of a text when the redactor raises or returns no text."""
 
 UNSERIALIZABLE = "[unserializable]"
 """Recorded instead of structured data that cannot be serialized to JSON."""
@@ -125,8 +125,8 @@ class ContentPolicy:
     def text(self, value: str | None) -> str | None:
         """Return what may be recorded for a text.
 
-        Never raises: if the redactor fails, the marker `"[redaction failed]"` is
-        recorded instead of the text.
+        Never raises: if the redactor fails, or returns something that is not a
+        text, the marker `"[redaction failed]"` is recorded instead of the text.
 
         Args:
             value: The text, or `None`.
@@ -141,9 +141,11 @@ class ContentPolicy:
         if self._redactor is None:
             return value
         try:
-            return self._redactor(value)
+            redacted = self._redactor(value)
         except Exception:
             return REDACTION_FAILED
+        # Whatever is not a text cannot be recorded: the redactor failed there too.
+        return redacted if isinstance(redacted, str) else REDACTION_FAILED
 
     def data(self, value: Any) -> str | None:
         """Return what may be recorded for structured data, as JSON.
