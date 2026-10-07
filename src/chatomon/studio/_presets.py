@@ -5,6 +5,11 @@ settings the studio changed on the orbitals from code, and the orbitals added
 in the studio. Applying it starts from the atom's own chains, so the code stays
 the source of truth for whatever the preset does not mention.
 
+A setting that is a block is written whole, as its type and the fields that
+differ from the type's defaults. It never holds a secret: a block names the
+environment variable that does, and a preset that names one is applied with a
+note that shows the block.
+
 The same layer takes a session's changes over code that was loaded again:
 [carried][chatomon.studio._presets.carried] applies it entry by entry and
 drops, instead of refusing, what no longer applies.
@@ -18,7 +23,9 @@ from typing import Any
 from chatomon._version import __version__
 from chatomon.errors import ChatomonError
 from chatomon.schemas import Side
+from chatomon.studio import _codegen as codegen
 from chatomon.studio import _kinds as kinds
+from chatomon.studio import _values as values
 from chatomon.studio._chains import SIDES, Chains, Entry, RefusedError, UnknownOrbitalError
 
 VERSION = 1
@@ -64,10 +71,17 @@ def _entry(chains: Chains, entry: Entry) -> dict[str, Any]:
         "enabled": entry.enabled,
     }
     if chains.note(entry) is None:
+        kind = kinds.describe(type(orb))
         now = kinds.values(orb)
         # An orbital from code carries what differs from the code; an added one, everything.
         before = kinds.values(entry.base) if entry.base is not None else None
-        settings = {k: v for k, v in now.items() if before is None or v != before[k]}
+        settings: dict[str, Any] = {}
+        for key, value in now.items():
+            if before is not None and value == before.get(key):
+                continue
+            setting = kind.setting(key)
+            block = setting is not None and setting.type == "block"
+            settings[key] = values.compact(setting, value) if setting and block else value
         if settings:
             data["settings"] = settings
     data["fingerprint"] = orb.fingerprint()
@@ -198,6 +212,33 @@ def _entry_applied(
     return result if raw["enabled"] else result.switched(side, name, False)
 
 
+def _connections(result: Chains, side: Side, raw: dict[str, Any]) -> list[str]:
+    """Say which environment variables an entry's blocks name, showing each block.
+
+    A preset decides where the value of a variable is sent: the note shows the
+    block as Copy as code writes it, so the developer sees all of it.
+
+    Returns:
+        One sentence per variable; none for an entry that names no variable.
+    """
+    name = raw["name"]
+    where, index = result.find(side, name)
+    orb = result.work[where][index].orbital
+    kind = kinds.describe(type(orb))
+    notes: list[str] = []
+    for key, value in (raw.get("settings") or {}).items():
+        setting = kind.setting(key)
+        if setting is None or setting.type != "block":
+            continue
+        shown = codegen.written(setting, getattr(orb, key))
+        notes += [
+            f"{name!r} uses the environment variable {variable}: {shown}. "
+            "Check where it points before you send a message."
+            for variable in values.variables(setting, value)
+        ]
+    return notes
+
+
 def applied(text: str, chains: Chains, *, atom: str) -> tuple[Chains, list[str]]:
     """Apply a preset to the atom's own chains.
 
@@ -207,8 +248,9 @@ def applied(text: str, chains: Chains, *, atom: str) -> tuple[Chains, list[str]]
         atom: The loaded atom's name.
 
     Returns:
-        The new chains and the warnings: orbitals that differ from the exported
-        ones, and orbitals from code the preset does not mention.
+        The new chains and the warnings: the environment variables the preset
+        names, orbitals from code the preset does not mention, and orbitals
+        that differ from the exported ones.
 
     Raises:
         InvalidPresetError: With every problem found; nothing is applied.
@@ -222,6 +264,7 @@ def applied(text: str, chains: Chains, *, atom: str) -> tuple[Chains, list[str]]
     result = chains.initial()
     wanted: dict[Side, list[str]] = {"input": [], "output": []}
     expected: list[tuple[Side, str, str]] = []
+    connected: list[tuple[Side, dict[str, Any]]] = []
     shared: dict[int, dict[str, Any]] = {}
     for side in SIDES:
         entries = data.get(f"{side}_orbitals", [])
@@ -247,9 +290,12 @@ def applied(text: str, chains: Chains, *, atom: str) -> tuple[Chains, list[str]]
                 continue
             wanted[side].append(name)
             expected.append((side, name, raw["fingerprint"]))
+            connected.append((side, raw))
     if problems:
         raise InvalidPresetError(problems)
     warnings: list[str] = []
+    for side, raw in connected:
+        warnings += _connections(result, side, raw)
     for side in SIDES:
         missing = [e.orbital.name for e in result.work[side] if e.orbital.name not in wanted[side]]
         for position, name in enumerate([*wanted[side], *missing]):
