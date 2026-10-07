@@ -174,9 +174,9 @@ class ApiBackend:
         model: Model the service should use; the library's default when `None`.
 
     Raises:
-        ChatomonConfigError: If the address is not an HTTP address, holds a user or
-            a password, or `api_key_env` is not the name of a variable. The message
-            never quotes the value it refuses.
+        ChatomonConfigError: If the address is not an HTTP address, holds a user, a
+            password, a query or a fragment, or `api_key_env` is not the name of a
+            variable. The message never quotes the value it refuses.
 
     Examples:
         ```python
@@ -193,24 +193,36 @@ class ApiBackend:
 
     def __post_init__(self) -> None:
         url = self.api_url
+        if isinstance(url, str) and url != url.strip():
+            raise ChatomonConfigError("api_url must not start or end with a space")
         try:
             parts = urlsplit(url) if isinstance(url, str) else None
-            host = parts.hostname if parts is not None else None
-            # Reading the port is what refuses one that is not a number.
-            port_is_valid = parts is None or parts.port is None or parts.port >= 0
         except ValueError:
-            parts, host, port_is_valid = None, None, False
+            parts = None
+        # Said before anything else that is wrong with the address: this is the one to put right.
         if parts is not None and (parts.username is not None or parts.password is not None):
             raise ChatomonConfigError(
                 "api_url must not hold a user or a password: "
                 "name an environment variable in api_key_env"
             )
+        try:
+            host = parts.hostname if parts is not None else None
+            # Reading the port is what refuses one that is not a number.
+            port_is_valid = parts is None or parts.port is None or parts.port >= 0
+        except ValueError:
+            host, port_is_valid = None, False
         plain = isinstance(url, str) and url.isprintable() and not any(c.isspace() for c in url)
         if parts is None or parts.scheme not in ("http", "https") or not host:
             raise ChatomonConfigError(_NOT_AN_ADDRESS)
         if not plain or not port_is_valid:
             raise ChatomonConfigError(_NOT_AN_ADDRESS)
+        if "?" in url or "#" in url:
+            # The client writes its own path after the address: what follows a `?` or a `#`
+            # could not work, and would be shown wherever the address is.
+            raise ChatomonConfigError("api_url must not hold a query or a fragment")
         name = self.api_key_env
+        if isinstance(name, str) and name != name.strip():
+            raise ChatomonConfigError("api_key_env must not start or end with a space")
         if name is not None and not (isinstance(name, str) and _VARIABLE.fullmatch(name)):
             raise ChatomonConfigError(
                 "api_key_env takes the name of an environment variable, not its value"

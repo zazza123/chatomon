@@ -391,6 +391,81 @@ def test_api_backend_refuses_without_quoting_what_it_refuses(kwargs, match, secr
         assert secret not in str(info.value)
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "message", "secret"),
+    [
+        (
+            # A port that is not a number does not hide the user and the password.
+            {"api_url": "http://user:hunter2@scope.example:abc"},
+            "api_url must not hold a user or a password: "
+            "name an environment variable in api_key_env",
+            "hunter2",
+        ),
+        (
+            # It could not work, the client writes its path after it, and it would be shown.
+            {"api_url": "https://scope.example/api?code=hunter2"},
+            "api_url must not hold a query or a fragment",
+            "hunter2",
+        ),
+        (
+            {"api_url": "https://scope.example/api#hunter2"},
+            "api_url must not hold a query or a fragment",
+            "hunter2",
+        ),
+        (
+            {"api_url": " https://scope.example"},
+            "api_url must not start or end with a space",
+            None,
+        ),
+        (
+            {"api_url": "https://scope.example\n"},
+            "api_url must not start or end with a space",
+            None,
+        ),
+        (
+            {"api_url": "https://scope.example", "api_key_env": "SCOPE_KEY "},
+            "api_key_env must not start or end with a space",
+            None,
+        ),
+    ],
+    ids=["port", "query", "fragment", "before", "after", "name"],
+)
+def test_api_backend_says_what_is_wrong_with_what_it_refuses(kwargs, message, secret):
+    with pytest.raises(ChatomonConfigError) as info:
+        ApiBackend(**kwargs)
+    assert str(info.value) == message
+    if secret is not None:
+        assert secret not in str(info.value)
+
+
+def test_a_name_that_is_not_set_is_named_also_when_it_is_a_key_written_there(monkeypatch):
+    """Pins a limit: a key that reads like a name cannot be told from one, and is repeated."""
+    pasted = "a3f9c0d1e5b7"
+    monkeypatch.delenv(pasted, raising=False)
+    with pytest.raises(ChatomonConfigError) as info:
+        ScopeGuardOrbital(
+            guard=ApiBackend(api_url="https://scope.example", api_key_env=pasted),
+            description="A courier.",
+        )
+    assert str(info.value) == f"the environment variable {pasted} is not set"
+
+
+async def test_a_predefined_answer_of_the_service_is_the_orbitals_reply(service, monkeypatch):
+    monkeypatch.setenv("SCOPE_KEY", KEY)
+    service.key = KEY
+    service.scope_class = "Predefined Answer"
+    service.suggested_response = "800 123 456"
+    orb = ScopeGuardOrbital(
+        guard=ApiBackend(api_url=service.url, api_key_env="SCOPE_KEY"), description=DESCRIPTION
+    )
+    verdict = await orb.check(ctx("What is your phone number?"))
+    assert (verdict.action, verdict.reason, verdict.reply) == (
+        "respond",
+        "Predefined Answer",
+        "800 123 456",
+    )
+
+
 def test_api_backend_does_not_read_the_environment(monkeypatch):
     monkeypatch.delenv("SCOPE_KEY", raising=False)
     assert ApiBackend(api_url="https://scope.example", api_key_env="SCOPE_KEY").api_key_env

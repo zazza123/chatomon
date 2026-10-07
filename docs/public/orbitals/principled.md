@@ -75,7 +75,9 @@ scope_guard = ScopeGuardOrbital(
 
 ## Credentials
 
-An `ApiBackend` never holds a key, only the name of the variable that does. The orbital reads the variable when it is created, so a variable that is not set, or is empty, is a `ChatomonConfigError` that names it, raised where the atom is defined and not at the first message. The name ends up in your code; the key does not, and neither is part of the orbital's fingerprint. An address that holds a user and a password is refused for the same reason: the key belongs in a variable.
+An `ApiBackend` never holds a key, only the name of the variable that does. The orbital reads the variable when it is created, so a variable that is not set, or is empty, is a `ChatomonConfigError` that names it, raised where the atom is defined and not at the first message. The name ends up in your code; the key does not, and neither is part of the orbital's fingerprint. An address that holds a user and a password is refused for the same reason: the key belongs in a variable. An address with a query or a fragment is refused too: the client writes its own path after the address.
+
+The name is not a secret, and it is shown as it is: in the message for a variable that is not set, in the studio, in a preset and in the code. A key written where the name goes is refused without being repeated when it cannot be a name, as one with a hyphen; a key made only of letters, digits and underscores reads like a name, and the message that says it is not set repeats it. Write the name there, never the key.
 
 Without `api_key_env` no key is passed, and the client of the `orbitals` library does what it always does: it uses `PRINCIPLED_API_KEY` when that variable is set.
 
