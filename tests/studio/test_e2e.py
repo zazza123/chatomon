@@ -74,10 +74,14 @@ class Studio:
 
 @contextlib.contextmanager
 def running(
-    atom: Atom, *, source: str = "tests:atom", namespace: dict[str, object] | None = None
+    atom: Atom,
+    *,
+    source: str = "tests:atom",
+    namespace: dict[str, object] | None = None,
+    preset: str | None = None,
 ) -> Iterator[Studio]:
     port = free_port()
-    session = Session(atom, source=source, namespace=namespace)
+    session = Session(atom, source=source, namespace=namespace, preset=preset)
     app = create_app(session, token=TOKEN, host="127.0.0.1", port=port)
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, access_log=False)
     server = uvicorn.Server(config)
@@ -1681,6 +1685,83 @@ def test_a_preset_says_where_an_orbital_connects_apart_from_what_differs(page: P
     expect(differences).to_contain_text("The session is not exactly the one that was exported:")
     expect(differences.locator("li")).to_have_count(2)
     assert service.requests == []
+
+
+def test_a_preset_given_at_the_start_says_in_the_page_where_orbitals_connect(
+    page: Page, service: FakeService, monkeypatch
+):
+    monkeypatch.setenv("SCOPE_KEY", SCOPE_KEY)
+
+    def atom() -> Atom:
+        return Atom(
+            name="speedypack",
+            instructions="Be brief.",
+            connector=PydanticAIConnector(FunctionModel(respond)),
+            input_orbitals=[MessageLengthOrbital(max_words=60)],
+        )
+
+    tuned = Session(atom(), source="tests:atom")
+    guard = {"type": "ApiBackend", "fields": {"api_url": service.url, "api_key_env": "SCOPE_KEY"}}
+    tuned.add("input", "ScopeGuardOrbital", {"guard": guard, "description": "A courier."})
+    with running(atom(), preset=json.dumps(tuned.export_preset())) as studio:
+        page.goto(f"{studio.url}/?token={TOKEN}")
+        # The terminal has the note too, but the browser is what the developer is looking at.
+        expect(card(page).locator("#dlg-title")).to_have_text("Started with a preset")
+        expect(card(page).locator("#preset-connections")).to_contain_text(
+            "This preset decides where an orbital connects:"
+        )
+        expect(card(page).locator("#preset-connections li")).to_have_text(
+            [
+                re.compile(
+                    r"^'scope_guard' uses the environment variable SCOPE_KEY: guard=ApiBackend\("
+                )
+            ]
+        )
+        card(page).get_by_role("button", name="Done").click()
+        expect(page.locator("dialog[open]")).to_have_count(0)
+        # Once read, these notes do not come back with the page; others would. A dialog
+        # says it has closed a moment after it does: the page remembers then.
+        deadline = time.monotonic() + 5
+        while page.evaluate("localStorage.getItem('chatomon-studio-preset-connections')") is None:
+            assert time.monotonic() < deadline, "the page did not remember the notes were read"
+            time.sleep(0.05)
+        page.reload()
+        expect(page.locator("#app")).to_have_class(re.compile(r"\bready\b"))
+        expect(row(page, "scope_guard")).to_have_count(1)
+        expect(page.locator("dialog[open]")).to_have_count(0)
+        page.evaluate(
+            """localStorage.setItem("chatomon-studio-preset-connections", '["another note"]')"""
+        )
+        page.reload()
+        expect(card(page).locator("#dlg-title")).to_have_text("Started with a preset")
+        card(page).get_by_role("button", name="Done").click()
+        assert SCOPE_KEY not in page.content()
+        assert service.requests == []
+
+
+def test_on_a_network_address_the_picker_says_where_connections_are_added(
+    page: Page, tunable: Studio
+):
+    open_studio(page, tunable)
+    page.locator('#drawer [data-act="add"][data-side="input"]').click()
+    expect(card(page)).to_contain_text("are added in code")
+    expect(card(page)).not_to_contain_text("network address")
+    card(page).get_by_role("button", name="Cancel").click()
+
+    def remote(route) -> None:
+        response = route.fetch()
+        state = response.json()
+        state["studio"]["local"] = False
+        route.fulfill(response=response, json=state)
+
+    page.route("**/api/state", remote)
+    page.reload()
+    expect(page.locator("#app")).to_have_class(re.compile(r"\bready\b"))
+    page.locator('#drawer [data-act="add"][data-side="input"]').click()
+    expect(card(page)).to_contain_text(
+        "While the studio listens on a network address, orbitals that connect to a service "
+        "are added in your code."
+    )
 
 
 def test_every_orbital_that_calls_a_model_can_be_tested_from_its_card(page: Page, connected):

@@ -27,6 +27,7 @@ from chatomon.studio import _kinds as kinds
 from chatomon.studio import _loading as loading
 from chatomon.studio._chains import InvalidRequestError, RefusedError, UnknownOrbitalError
 from chatomon.studio._loading import load, namespace
+from chatomon.studio._presets import InvalidPresetError
 from chatomon.studio._session import Reloaded, Session, StudioBusyError, UnknownTurnError
 from chatomon.studio._values import InvalidSettingError
 from tests.contract.harness import ToolCall
@@ -1467,6 +1468,49 @@ async def test_a_variable_that_is_not_set_is_a_refusal_before_the_check(service,
             "input", kind="ScopeGuardOrbital", settings={"guard": backend(service.url)}
         )
     assert service.requests == []
+
+
+NETWORK = (
+    "the studio listens on a network address: where an orbital connects is set in your code, "
+    "or in a preset given when the studio starts, not from the page"
+)
+
+
+async def test_on_a_network_address_the_page_gives_no_orbital_a_connection(service, monkeypatch):
+    monkeypatch.setenv("SCOPE_KEY", KEY)
+    service.key = KEY
+    local = Session(make_atom(), source="app:atom")
+    local.add("input", "ScopeGuardOrbital", guard_settings(service.url))
+    preset = json.dumps(local.export_preset())
+    # What the command was started with is the developer's, like the code.
+    session = Session(make_atom(), source="app:atom", preset=preset)
+    session.local = False
+    before = kept(session)
+    with pytest.raises(InvalidSettingError) as added:
+        session.add("input", "ScopeGuardOrbital", guard_settings(service.url, name="second"))
+    with pytest.raises(InvalidSettingError) as edited:
+        session.edit("input", "scope_guard", {"guard": backend(closed_url())})
+    with pytest.raises(InvalidSettingError) as tested:
+        await session.probe("input", kind="ScopeGuardOrbital", settings=guard_settings(service.url))
+    for refused in (added, edited, tested):
+        assert (str(refused.value), refused.value.setting) == (NETWORK, "guard")
+    with pytest.raises(InvalidPresetError) as imported:
+        session.import_preset(preset)
+    assert imported.value.problems == [NETWORK]
+    assert kept(session) == before
+    assert service.requests == []
+    # An orbital that needs a connection is not offered; the others are.
+    offered = [kind["kind"] for kind in session.state()["kinds"]]
+    assert "ScopeGuardOrbital" not in offered and "ClaimExtractorOrbital" not in offered
+    assert "JudgeOrbital" in offered and "ScopeGuardOrbital" in [
+        kind["kind"] for kind in local.state()["kinds"]
+    ]
+    # What is not a connection is still changed, and an orbital that is there is still tested.
+    session.edit("input", "scope_guard", {"history_window": 2})
+    session.add("input", "TurnLimitOrbital", {"max_turns": 3})
+    probe = await session.probe("input", name="scope_guard")
+    assert probe.outcome == "answered"
+    assert len(service.requests) == 1
 
 
 def raising(error: BaseException, **kwargs: Any) -> Any:

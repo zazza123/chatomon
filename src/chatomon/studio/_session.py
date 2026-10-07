@@ -30,6 +30,7 @@ from chatomon.studio import _kinds as kinds
 from chatomon.studio import _loading as loading
 from chatomon.studio import _presets as presets
 from chatomon.studio import _testgen as testgen
+from chatomon.studio import _values as values
 from chatomon.studio._chains import SIDES, Chains, Entry, InvalidRequestError, RefusedError
 from chatomon.studio._events import Event, EventProcessor
 from chatomon.studio._runners import Runner, runner_for
@@ -193,6 +194,12 @@ def _failure(exc: BaseException, timeout: float, waited: float) -> tuple[str, st
     return "failed", f"The check failed with {type(exc).__name__}.", None
 
 
+NETWORK = (
+    "the studio listens on a network address: where an orbital connects is set in your code, "
+    "or in a preset given when the studio starts, not from the page"
+)
+
+
 class StudioBusyError(ChatomonError):
     """A turn is running, so the session cannot start another one or change its orbitals."""
 
@@ -294,6 +301,11 @@ class Session:
         self.conversation: Any = None
         self.turns: list[TurnRecord] = []
         self.notes: list[str] = _notes(runner, atom)
+        self.preset_connections: list[str] = []
+        """Where the preset given at the start makes orbitals connect: the page shows it."""
+        self.local = True
+        """Whether the studio listens only on this machine: the app says so. On a network
+        address the page cannot say where an orbital connects."""
         self._task: asyncio.Task[None] | None = None
         self._reload: asyncio.Task[Reloaded] | None = None
         self._probing = False
@@ -306,6 +318,7 @@ class Session:
         if preset is not None:
             noted = self.import_preset(preset)
             self.notes = [*self.notes, *noted.connections, *noted.warnings]
+            self.preset_connections = list(noted.connections)
             # The session starts here: there is no earlier state of it to go back to.
             self._undo = None
 
@@ -359,6 +372,8 @@ class Session:
             ChatomonConfigError: If the atom would be invalid; nothing changes.
         """  # noqa: DOC502 - raised by the helpers
         self._require_idle()
+        where, index = self.chains.find(side, name)
+        self._keep_connections(type(self.chains.work[where][index].orbital), settings, new=False)
         self._adopt(self.chains.edited(side, name, settings))
 
     def move(self, side: str, name: str, position: int) -> None:
@@ -383,6 +398,7 @@ class Session:
             ChatomonConfigError: If the atom would be invalid; nothing changes.
         """  # noqa: DOC502 - raised by the helpers
         self._require_idle()
+        self._keep_connections(kind, settings, new=True)
         self._adopt(self.chains.added(side, kind, settings))
 
     def delete(self, side: str, name: str) -> None:
@@ -490,6 +506,35 @@ class Session:
             reason=verdict.reason,
         )
 
+    def _keep_connections(
+        self, cls: type[Orbital] | str, settings: Mapping[str, Any], *, new: bool
+    ) -> None:
+        """Refuse a connection the page gives while the studio listens on a network address.
+
+        Whoever has the link could otherwise have a variable of this machine sent to
+        an address of their choice, with a test or a turn.
+
+        Args:
+            cls: The orbital's class, or the name of one that can be added.
+            settings: What the page sent.
+            new: Whether the orbital is being created: it may leave a connection out.
+
+        Raises:
+            InvalidSettingError: Naming the setting that says where the orbital connects.
+        """
+        if self.local:
+            return
+        if isinstance(cls, str):
+            found = next((k for k in kinds.addable() if k.cls.__name__ == cls), None)
+        else:
+            found = kinds.describe(cls)
+        if found is None:
+            return
+        for key, value in settings.items():
+            setting = found.setting(key)
+            if setting is not None and values.connects(setting) and not (new and value is None):
+                raise values.InvalidSettingError(NETWORK, setting=key)
+
     def _probed(
         self, side: str, name: str | None, kind: str | None, settings: Mapping[str, Any] | None
     ) -> Orbital:
@@ -499,6 +544,7 @@ class Session:
             where, index = self.chains.find(side, name)
             return self.chains.work[where][index].orbital
         # Built as an addition would build it, on chains that are never adopted.
+        self._keep_connections(kind or "", settings or {}, new=True)
         candidate = self.chains.added(side, kind or "", settings or {})
         return candidate.work[self.chains.find_side(side)][-1].orbital
 
@@ -532,6 +578,8 @@ class Session:
         """  # noqa: DOC502 - raised by the helpers
         self._require_idle()
         candidate, noted = presets.applied(text, self.chains, atom=self.atom.name)
+        if noted.connections and not self.local:
+            raise presets.InvalidPresetError([NETWORK])
         try:
             self._adopt(candidate, undo="Preset imported")
         except ChatomonConfigError as exc:
@@ -870,6 +918,8 @@ class Session:
                 "reload": self.namespace is not None,
                 # The extras that would bring more orbitals to add.
                 "extras": [{"module": module, "extra": extra} for module, extra in kinds.extras()],
+                # The terminal has them too, but the page is what the developer looks at.
+                "preset_connections": list(self.preset_connections),
             },
             "atom": {
                 "name": a.name,
@@ -896,6 +946,8 @@ class Session:
                     "settings": [setting.schema() for setting in kind.settings],
                 }
                 for kind in kinds.addable()
+                # On a network address a class that needs a connection is added in code.
+                if self.local or not any(s.required and values.connects(s) for s in kind.settings)
             ],
             "changes": [change.to_json() for change in self.chains.changes()],
             "undo": self._undo[1] if self._undo is not None else None,

@@ -474,6 +474,15 @@ def test_a_field_left_out_keeps_a_held_value_that_reads_as_the_default():
     assert again == changed and again.notes == []
 
 
+def test_what_says_where_an_orbital_connects():
+    # A setting that names a variable, and a block with a field that does, at any depth.
+    assert values.connects(block(Address)) is True
+    assert values.connects(block(str | Address | None, required=False)) is True
+    assert values.connects(block(Sheet)) is False
+    assert values.connects(values.Setting("token_env", "env", True, False, None)) is True
+    assert values.connects(values.Setting("reply", "text", True, False, None)) is False
+
+
 def test_a_preset_leaves_out_the_fields_that_hold_their_default():
     setting = block(Client | Address)
     full = values.represented(setting, Address(url="http://a", token_env="TOKEN"))

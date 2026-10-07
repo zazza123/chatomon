@@ -510,6 +510,18 @@ def variables(setting: Setting, value: Any) -> list[str]:
     return names
 
 
+def connects(setting: Setting) -> bool:
+    """Return whether a setting says where an orbital connects.
+
+    It does when it names an environment variable, or is a block with a field
+    that does, at any depth: what a preset is noted for, and what the page
+    cannot set while the studio listens on a network address.
+    """
+    if setting.type == "env":
+        return True
+    return any(connects(inner) for found in setting.types for inner in found.fields)
+
+
 def unnamed(setting: Setting, value: Any) -> bool:
     """Return whether a block's JSON has a field for an environment variable left empty."""
     found = named(setting, value)

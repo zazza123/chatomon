@@ -59,6 +59,8 @@ Choosing one opens a form with its name and its settings. The name is proposed a
 
 A ScopeGuard or a ClaimExtractor is added with an `ApiBackend`: the address of the service and, when the service asks for a key, the name of the variable that holds it. The variable must be set in the environment the studio was started in; when it is not, the form refuses with the name of the variable, and nothing is created. What an `ApiBackend` does not cover, such as a local backend, a `headers` provider or a `mapping`, is given in your code: see [Principled Intelligence Orbitals](../orbitals/principled.md).
 
+While the studio listens on a network address, the page cannot say where an orbital connects: these orbitals are not offered, a connection of an orbital that is there cannot be changed, and a preset that sets one is refused in the import card. A connection is then set in your code, or in a preset given when the studio starts. An orbital that is there can still be tested.
+
 An added orbital goes at the end of its chain, can be renamed from its card, and can be deleted from the card or from its row in the drawer. Deleting offers **Undo**. Orbitals defined in your code cannot be deleted or renamed here: turn them off instead.
 
 ## Testing a Connection

@@ -117,17 +117,29 @@ export function showImport(ctx) {
     ctx.refresh(result.state);
     const { connections, warnings } = result;
     if (!connections.length && !warnings.length) { closeDialog(); ctx.offerUndo(); return; }
-    // Where an orbital connects is a note of its own: it is not about what differs.
-    const connects = connections.length ? `<div class="note warn" id="preset-connections">This preset decides where an orbital connects:${list(connections)}</div>` : "";
     const differs = warnings.length ? `<div class="note warn" id="preset-warnings">The session is not exactly the one that was exported:${list(warnings)}</div>` : "";
     openDialog({
       title: "Preset applied",
       sub: plural(connections.length + warnings.length, "note"),
-      body: `${connects}${differs}`,
+      body: `${connects(connections)}${differs}`,
       actions: `<button class="btn" type="button" data-dlg="undo">Undo</button><span class="spacer"></span><button class="btn primary" type="button" data-dlg="close">Done</button>`,
     });
     $("#dlg-actions").onclick = (event) => { if (event.target.closest('[data-dlg="undo"]')) { closeDialog(); ctx.undo(); } };
   };
+}
+
+/** Where an orbital connects is a note of its own: it is not about what differs. */
+const connects = (connections) => (connections.length ? `<div class="note warn" id="preset-connections">This preset decides where an orbital connects:${list(connections)}</div>` : "");
+
+/** Say, when the page opens, where the preset the studio started with makes orbitals connect. */
+export function showStarted(connections, onClose) {
+  openDialog({
+    title: "Started with a preset",
+    sub: plural(connections.length, "note"),
+    body: connects(connections),
+    actions: `<span class="spacer"></span><button class="btn primary" type="button" data-dlg="close">Done</button>`,
+    onClose,
+  });
 }
 
 /** Save a turn as a test. The code comes from the server, which is also what writes the file. */

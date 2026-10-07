@@ -178,6 +178,22 @@ def test_the_state_says_whether_the_studio_is_local(session, client):
         assert remote.get("/api/state").json()["studio"]["local"] is False
         switched = switch(remote, "reader", False, origin=lan)
         assert switched.json()["studio"]["local"] is False
+        # There the page cannot say where an orbital connects.
+        guard = {"type": "ApiBackend", "fields": {"api_url": "https://scope.example"}}
+        refused = remote.post(
+            "/api/orbitals",
+            json={
+                "side": "input",
+                "kind": "ScopeGuardOrbital",
+                "settings": {"guard": guard, "description": "A courier."},
+            },
+            headers={"origin": lan},
+        )
+        assert refused.status_code == 422
+        assert refused.json()["error"]["setting"] == "guard"
+        assert refused.json()["error"]["message"].startswith(
+            "the studio listens on a network address: where an orbital connects is set in your code"
+        )
 
 
 def test_an_orbital_with_dots_for_a_name_can_be_switched():

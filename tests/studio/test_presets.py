@@ -928,6 +928,9 @@ def test_exporting_and_importing_restores_a_session_with_blocks(key):
     started = service_session(preset=text)
     assert snapshot(started) == snapshot(first)
     assert started.notes == [NOTE, UNNAMED]
+    # The page shows, when it opens, where a preset given at the start makes orbitals connect.
+    assert started.state()["studio"]["preset_connections"] == [NOTE, UNNAMED]
+    assert second.state()["studio"]["preset_connections"] == []
 
 
 def test_a_preset_writes_a_block_whole_with_the_fields_that_differ_from_the_default(key):

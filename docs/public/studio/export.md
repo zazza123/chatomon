@@ -141,6 +141,7 @@ A preset that cannot be applied is refused whole: nothing changes, and the card 
 | An orbital whose extra is not installed | A `studio` entry of a class the studio does not find; the message names the extra to install |
 | A block that does not fit | A type the argument does not accept, or a field the type does not have |
 | A variable that is not set | A connection that names an environment variable the studio's environment does not have |
+| A connection, on a network address | A preset imported in the page that sets where an orbital connects, while the studio listens on a network address: give it when the studio starts |
 | A name or a value that is not accepted | A name used twice, a setting the orbital does not have, a value its constructor refuses |
 | A chain the atom refuses | An orbital turned off while another reads its annotations |
 
@@ -154,7 +155,7 @@ A preset that sets where an orbital connects is applied with a note for each con
 - **The connection names an environment variable.** `'scope_guard' uses the environment variable SCOPE_KEY: guard=ApiBackend(api_url="https://…", api_key_env="SCOPE_KEY"). Check where it points before you send a message.`
 - **The connection names no variable.** `'scope_guard' names no environment variable for its key: guard=ApiBackend(api_url="https://…"). Its client can still send a key it reads from the environment on its own. Check where it points before you send a message.` The client of the `orbitals` library does so: it sends `PRINCIPLED_API_KEY` when that variable is set.
 
-A preset decides where a key and the conversation are sent. A file that gives an address makes the studio send there, at the first turn, the messages the orbital reads and the key of the variable it names, or `PRINCIPLED_API_KEY` when it names none. Apply only presets you trust, as you would run only code you trust, and read these notes when a preset comes from someone else: in the page they are in the card that follows the import, and at a start with `--preset` they are printed in the terminal before the link.
+A preset decides where a key and the conversation are sent. A file that gives an address makes the studio send there, at the first turn, the messages the orbital reads and the key of the variable it names, or `PRINCIPLED_API_KEY` when it names none. Apply only presets you trust, as you would run only code you trust, and read these notes when a preset comes from someone else: in the page they are in the card that follows the import. At a start with `--preset` they are printed in the terminal before the link, and the page shows them in a card when it opens, until those notes have been read in that browser.
 
 ### Starting with a Preset
 
@@ -171,7 +172,7 @@ The preset goes through the same checks as an import in the page, and the answer
 | The preset | What happens |
 |------------|--------------|
 | Has problems | The studio does not start. The command prints one line per problem and exits with code 1; `serve` raises a `ChatomonConfigError` with the same lines |
-| Is applied with notes | The studio starts, and each note is printed before the link |
+| Is applied with notes | The studio starts, and each note is printed before the link. The notes about connections are also shown by the page when it opens |
 | Cannot be read | The studio does not start: the file is missing, or is not UTF-8 text |
 
 The session begins with the preset's changes: the drawer counts them against your code, and there is nothing to undo yet. **Reset to code** goes back to your code as always, and **Undo** then brings the preset's changes back.

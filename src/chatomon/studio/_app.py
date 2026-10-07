@@ -106,6 +106,8 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
     Returns:
         The Starlette app, guarded by Host, Origin and token checks.
     """
+    # On a network address the session refuses a connection that comes from the page.
+    session.local = host in LOOPBACK
 
     def state() -> dict[str, Any]:
         current = session.state()

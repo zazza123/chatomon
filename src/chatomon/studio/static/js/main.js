@@ -5,7 +5,7 @@ import { renderTurns } from "./turns.js";
 import { createDrawer } from "./drawer.js";
 import { showAtom, showNotice, showReport, syncReload } from "./cards.js";
 import { redrawOrbital, showOrbital, showPicker } from "./orbital-card.js";
-import { showCode, showExport, showImport, showTest } from "./export-cards.js";
+import { showCode, showExport, showImport, showStarted, showTest } from "./export-cards.js";
 
 let toastTimer = 0;
 let toastFn = null;
@@ -169,7 +169,7 @@ function refresh(state) {
   $("#chip-scope").textContent = local ? "\u00a0· local only" : "\u00a0· network address";
   $("#content-chip").title = local
     ? `${LOCAL_NOTE} It only listens on this machine.`
-    : `${LOCAL_NOTE} It listens on a network address: anyone who reaches it with the link can read this conversation, use the atom's models and send a variable of this machine's environment to an address of their choice.`;
+    : `${LOCAL_NOTE} It listens on a network address: anyone who reaches it with the link can read this conversation.`;
   drawer.render(state);
   stage.setOrbitals(state.orbitals, state.atom);
   drawTurns();
@@ -299,5 +299,10 @@ async function boot() {
   // A turn may be running from before a reload: settle() waits for it, then shows it.
   await settle();
   requestAnimationFrame(() => requestAnimationFrame(() => $("#app").classList.add("ready")));
+  // A preset given at the start decided where orbitals connect: the terminal said so, and so
+  // does the page, until these very notes have been read in this browser.
+  const read = "chatomon-studio-preset-connections";
+  const notes = JSON.stringify(ui.state.studio.preset_connections || []);
+  if (notes !== "[]" && storage.get(read) !== notes) showStarted(ui.state.studio.preset_connections, () => storage.set(read, notes));
 }
 boot().catch(lostStudio);

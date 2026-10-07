@@ -382,7 +382,8 @@ export function showPicker(side, context) {
     sub: side === "input" ? "It runs on the user's message, after the orbitals already in the chain." : "It runs on the nucleus reply, after the orbitals already in the chain.",
     body: `<div class="picks">${kinds.map((kind) => `<button class="pick" type="button" data-kind="${esc(kind.kind)}"><span class="orb-name">${esc(kind.kind)}</span><span class="orb-kind">${esc(kind.summary)}</span></button>`).join("")}</div>
       ${ctx.state().studio.extras.map((missing) => `<p class="hint">More orbitals with <code>pip install 'chatomon[${esc(missing.extra)}]'</code></p>`).join("")}
-      <p class="hint">Orbitals that need your own objects, such as functions, are added in code.</p>`,
+      <p class="hint">Orbitals that need your own objects, such as functions, are added in code.</p>
+      ${ctx.state().studio.local === false ? `<p class="hint">While the studio listens on a network address, orbitals that connect to a service are added in your code.</p>` : ""}`,
     actions: `<span class="spacer"></span><button class="btn" type="button" data-dlg="close">Cancel</button>`,
   });
   $("#dlg-body").onclick = (e) => {
