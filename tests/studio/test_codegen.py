@@ -531,6 +531,42 @@ def test_an_atom_built_with_blocks_has_the_sessions_fingerprints(project, monkey
     assert rebuilt.input_orbitals[0].description.constraints == "Never discuss refunds"  # type: ignore[attr-defined]
 
 
+def test_a_text_with_line_breaks_in_a_block_is_written_one_literal_per_line(project, monkeypatch):
+    monkeypatch.setenv("SCOPE_KEY", KEY)
+    session, names = project(module=SERVICES)
+    parts = {
+        "type": "AIServiceDescriptionV2",
+        "fields": {
+            "identity_role": "A courier.\nIn Italy.",
+            "context": "Parcels",
+            "predefined_responses": ["Greet the user back.\nThen ask how to help."],
+        },
+    }
+    session.add(
+        "input",
+        "ScopeGuardOrbital",
+        {"name": "by_parts", "guard": HOSTED["guard"], "description": parts},
+    )
+    session.add(
+        "input",
+        "ScopeGuardOrbital",
+        {"name": "one_text", "guard": HOSTED["guard"], "description": "A courier.\nIn Italy."},
+    )
+    code = codegen.generate(session.chains, names)
+    # As for a plain setting: no literal runs over a line break of its text.
+    assert '\\nIn Italy."' not in code.code
+    assert '\\nThen ask how to help."' not in code.code
+    assert code.code.count('"A courier.\\n"\n') == 2
+    assert '"Greet the user back.\\n"\n' in code.code
+    again = lists(code, names)["input_orbitals"]
+    assert fingerprints(again) == fingerprints(session.chains.enabled("input"))
+    # A note shows the block on one line, whatever its texts hold.
+    by_parts = session.chains.enabled("input")[1]
+    setting = codegen.kinds.describe(type(by_parts)).setting("description")
+    assert setting is not None
+    assert "\n" not in codegen.written(setting, by_parts.description)  # type: ignore[attr-defined]
+
+
 def test_the_code_of_an_orbital_with_blocks(project, monkeypatch):
     monkeypatch.setenv("SCOPE_KEY", KEY)
     session, names = project(module=SERVICES)
@@ -626,7 +662,10 @@ def test_a_block_from_code_is_written_by_its_name_until_it_is_changed(project):
     )
     session.edit("input", "scope", {"description": "A courier.\nIn Italy."})
     as_text = codegen.generate(session.chains, names)
-    assert 'description="A courier.\\nIn Italy."' in as_text.orbitals
+    # One text is written as the text of a plain setting is: a literal per line.
+    assert (
+        '        description=(\n            "A courier.\\n"\n            "In Italy."\n        ),'
+    ) in as_text.orbitals
 
 
 def test_a_client_without_a_name_is_marked_and_listed(project):

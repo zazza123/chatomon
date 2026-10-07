@@ -1574,9 +1574,7 @@ def test_a_refused_block_keeps_its_refusal_when_the_card_is_drawn_again(page: Pa
     card(page).locator("#card-switch").click()
     expect(card(page).locator(".sw-label")).to_have_text("Off")
     guard = block_of(page, "guard")
-    expect(guard.locator(":scope > .block-body > .field-err")).to_have_text(
-        "api_url needs a value"
-    )
+    expect(guard.locator(":scope > .block-body > .field-err")).to_have_text("api_url needs a value")
     expect(guard).to_have_attribute("aria-invalid", "true")
     expect(guard.get_by_label("api_url")).to_have_value("")
     expect(guard.get_by_label("api_key_env")).to_have_value("ANOTHER_KEY")

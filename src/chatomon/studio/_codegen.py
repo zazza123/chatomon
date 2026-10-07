@@ -205,8 +205,19 @@ def _bracketed(head: str, tail: str, items: list[list[str]], used: int) -> list[
     return [*lines, tail]
 
 
+def _text(value: Any, flat: bool) -> list[str]:
+    """Write a plain value of a block; a text with line breaks, one literal per line.
+
+    Returns:
+        One literal, or the lines of several in parentheses, as for a plain setting.
+    """
+    if flat or not isinstance(value, str) or "\n" not in value:
+        return [literal(value)]
+    return ["(", *(f"    {part}" for part in text_literal(value).split("\n")), ")"]
+
+
 def _instance(
-    found: ValueType, value: Any, indent: int, lead: int, needs: set[Import]
+    found: ValueType, value: Any, indent: int, lead: int, needs: set[Import], *, flat: bool = False
 ) -> list[str]:
     """Write a value type as a call: its required fields and those that differ from the default.
 
@@ -219,6 +230,7 @@ def _instance(
         indent: The indentation of the line the call starts on.
         lead: The characters between that indentation and the call.
         needs: The imports the code needs; the type's own is added.
+        flat: Whether the call is wanted on one line, whatever its texts hold.
 
     Returns:
         The lines of the call, relative to the line it starts on.
@@ -229,28 +241,30 @@ def _instance(
         raw = getattr(value, item.key)
         if not item.required and raw == item.default:
             continue
-        lines = _field(item, raw, indent + 4, len(item.key) + 1, needs)
+        lines = _field(item, raw, indent + 4, len(item.key) + 1, needs, flat=flat)
         items.append([f"{item.key}={lines[0]}", *lines[1:]])
     # A field the studio does not read and that has no default has to be given, as it is here.
     items += [[f"{name}={literal(given)}"] for name, given, passed in found.unread if passed]
     return _bracketed(f"{found.cls.__name__}(", ")", items, indent + lead + 1)
 
 
-def _field(item: Setting, raw: Any, indent: int, lead: int, needs: set[Import]) -> list[str]:
+def _field(
+    item: Setting, raw: Any, indent: int, lead: int, needs: set[Import], *, flat: bool = False
+) -> list[str]:
     """Write the value of one field: a plain value, or a list of texts and entries.
 
     Returns:
         The lines of the value, relative to the line it starts on.
     """
     if not isinstance(raw, list | tuple):
-        return [literal(raw)]
+        return _text(raw, flat)
     entries: list[list[str]] = []
     for entry in raw:
         known = next((kind for kind in item.types if type(entry) is kind.cls), None)
         if known is None:
-            entries.append([literal(entry)])
+            entries.append(_text(entry, flat))
         else:
-            entries.append(_instance(known, entry, indent + 4, 0, needs))
+            entries.append(_instance(known, entry, indent + 4, 0, needs, flat=flat))
     return _bracketed("[", "]", entries, indent + lead + 1)
 
 
@@ -268,7 +282,7 @@ def written(setting: Setting, value: Any) -> str:
     if found is None:
         return f"{setting.key}={literal(value)}"
     # An indentation far to the left: whatever its length, the call stays on one line.
-    return f"{setting.key}={_instance(found, value, -(10**6), 0, set())[0]}"
+    return f"{setting.key}={_instance(found, value, -(10**6), 0, set(), flat=True)[0]}"
 
 
 @dataclass
@@ -358,8 +372,12 @@ class _Writer:
             return set()
         found = next((known for known in setting.types if type(value) is known.cls), None)
         nameless = id(value) not in self.known
+        if isinstance(value, str) and nameless:
+            # One text, written as the text of a plain setting is: a literal per line.
+            args.append(Argument(setting.key, text_literal(value)))
+            return set()
         if found is None or not nameless or represented(setting, value) is OPAQUE:
-            # A name in the module, one text, or an object the studio cannot write.
+            # A name in the module, or an object the studio cannot write.
             text, comment, more = self._object(orb.name, setting.key, value)
             args.append(Argument(setting.key, text, comment))
             return more
