@@ -490,6 +490,29 @@ def test_characters_that_editors_take_for_line_breaks_are_escaped(code_point):
     assert ast.literal_eval(written) == text
 
 
+HIDDEN = {
+    0x202E: "a right-to-left override",
+    0x2066: "an isolate",
+    0x200B: "a zero-width space",
+    0x200D: "a zero-width joiner",
+    0xFEFF: "a byte order mark",
+    0x00AD: "a soft hyphen",
+    0x007F: "delete",
+    0x009B: "a control of the second set",
+    0xE0041: "a tag past the basic plane",
+}
+
+
+@pytest.mark.parametrize("code_point", HIDDEN, ids=HIDDEN.values())
+def test_characters_an_editor_does_not_show_are_escaped(code_point):
+    # Such a character can change what a line of code looks like without changing what it is.
+    text = f"refund{chr(code_point)}approved"
+    written = codegen.literal(text)
+    assert chr(code_point) not in written
+    assert written.isascii()
+    assert eval(written) == text
+
+
 def test_a_lone_surrogate_next_to_a_character_past_the_basic_plane_reads_back():
     value = chr(0xD83D) + chr(0x1F4E6) + chr(0xE9) + chr(0xDC00) + '"' + chr(92) + chr(10)
     assert ast.literal_eval(codegen.literal(value)) == value

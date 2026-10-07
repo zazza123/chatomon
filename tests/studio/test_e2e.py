@@ -197,8 +197,7 @@ def hours(ctx: OrbitalContext) -> Verdict:
     return Verdict.allow()
 
 
-@pytest.fixture
-def judged() -> Iterator[Studio]:
+def judged_atom() -> Atom:
     """An atom whose first reply of every turn is rejected; "boom" fails the second one."""
     calls: dict[str, int] = {}
 
@@ -215,13 +214,17 @@ def judged() -> Iterator[Studio]:
             raise RuntimeError("model down")
         return ModelResponse(parts=[TextPart(content=REPLY)])
 
-    atom = Atom(
+    return Atom(
         name="speedypack",
         instructions="Be brief.",
         connector=PydanticAIConnector(FunctionModel(draft)),
         output_orbitals=[hours],
     )
-    with running(atom) as handle:
+
+
+@pytest.fixture
+def judged() -> Iterator[Studio]:
+    with running(judged_atom()) as handle:
         yield handle
 
 
@@ -242,6 +245,102 @@ def test_the_report_labels_each_attempt_with_what_was_decided(page: Page, judged
     send(page, "boom", "The turn failed: RuntimeError: model down")
     open_report(page, 2)
     expect(attempt_labels(page)).to_have_text(["rejected"])
+
+
+def test_the_report_shows_what_the_nucleus_wrote_at_every_attempt(page: Page, judged: Studio):
+    open_studio(page, judged)
+    send(page, "Are you open?", REPLY)
+    open_report(page, 1)
+    wrote = card(page).locator(".attempt .draft")
+    expect(wrote).to_contain_text(["We are open 24/7.", REPLY])
+    # Read aloud, the text is told from the orbitals' rows that follow it.
+    expect(wrote.nth(0).locator(".sr")).to_have_text("The nucleus wrote:")
+    # The rejected reply is in its attempt only; what the user received is the accepted one.
+    expect(card(page).locator(".final")).to_have_text(REPLY)
+    # The text comes before the rows of the orbitals that checked it.
+    order = (
+        card(page)
+        .locator(".attempt")
+        .first.evaluate("attempt => [...attempt.children].map((el) => el.className)")
+    )
+    assert order == ["attempt-head", "draft", "res-list"]
+
+
+def changed_reply(text: str):
+    """Give the page a state whose first attempt holds another text."""
+
+    def handle(route) -> None:
+        response = route.fetch()
+        state = response.json()
+        for turn in state["turns"]:
+            turn["report"]["output"][0]["nucleus_reply"] = text
+        route.fulfill(response=response, json=state)
+
+    return handle
+
+
+def test_an_attempt_with_no_text_says_that_the_nucleus_wrote_nothing(page: Page, judged: Studio):
+    open_studio(page, judged)
+    send(page, "Are you open?", REPLY)
+    # A framework can hand over a reply with no text: the attempt is there, its text is empty.
+    page.route("**/api/state", changed_reply(""))
+    page.reload()
+    open_report(page, 1)
+    first = card(page).locator(".attempt").first
+    expect(first.locator(".draft")).to_have_count(0)
+    expect(first.locator("p.muted")).to_have_text("The nucleus wrote nothing.")
+    expect(card(page).locator(".attempt .draft")).to_have_count(1)
+
+
+def test_an_attempt_of_blank_space_says_so_instead_of_showing_an_empty_box(
+    page: Page, judged: Studio
+):
+    open_studio(page, judged)
+    send(page, "Are you open?", REPLY)
+    page.route("**/api/state", changed_reply("   \n  "))
+    page.reload()
+    open_report(page, 1)
+    first = card(page).locator(".attempt").first
+    # An empty box would read as a fault of the page.
+    expect(first.locator(".draft")).to_have_count(0)
+    expect(first.locator("p.muted")).to_have_text("The nucleus wrote only blank space.")
+
+
+def test_markup_in_what_the_nucleus_wrote_is_shown_as_text(page: Page, judged: Studio):
+    open_studio(page, judged)
+    send(page, "Are you open?", REPLY)
+    markup = '<img src=x onerror="document.title=1"><script>document.title = 2</script><b>bold</b>'
+    page.route("**/api/state", changed_reply(markup))
+    page.reload()
+    open_report(page, 1)
+    wrote = card(page).locator(".attempt .draft").first
+    # A model writes this text: it is shown, never taken as part of the page.
+    expect(wrote).to_contain_text(markup)
+    expect(wrote.locator("img, script, b")).to_have_count(0)
+    assert page.title() == "chatomon studio"
+
+
+def test_what_the_nucleus_wrote_fits_a_phone_and_keeps_its_lines(page: Page, judged: Studio):
+    page.set_viewport_size({"width": 390, "height": 800})
+    open_studio(page, judged)
+    send(page, "Are you open?", REPLY)
+    long = "https://speedypack.example/" + "tracking" * 30
+    page.route("**/api/state", changed_reply(f"First line.\n{long}"))
+    page.reload()
+    open_report(page, 1)
+    wrote = card(page).locator(".attempt .draft").first
+    expect(wrote).to_contain_text("First line.")
+    assert wrote.evaluate("el => getComputedStyle(el).whiteSpace") == "pre-wrap"
+    past_the_edge = card(page).evaluate(
+        """dialog => {
+            const body = dialog.querySelector("#dlg-body");
+            const padding = parseFloat(getComputedStyle(body).paddingRight);
+            const limit = body.getBoundingClientRect().right - padding;
+            return [...body.querySelectorAll(".draft")]
+                .filter((el) => el.getBoundingClientRect().right > limit + 0.5).length;
+        }"""
+    )
+    assert past_the_edge == 0
 
 
 def test_an_attempt_without_a_decision_is_labelled_interrupted(page: Page, judged: Studio):
@@ -1035,6 +1134,44 @@ def test_saving_a_turn_writes_a_test_and_asks_before_replacing_it(page: Page, sa
     expect(card(page).locator("#dlg-title")).to_be_focused()
 
 
+@pytest.fixture
+def saving_judged(tmp_path, monkeypatch) -> Iterator[Studio]:
+    """A studio that can write tests, on the atom whose first reply is always rejected."""
+    monkeypatch.chdir(tmp_path)
+    atom = judged_atom()
+    with running(atom, namespace={"atom": atom}) as handle:
+        yield handle
+
+
+REJECTED = "tests/studio/test_are_you_open.py"
+
+
+def test_a_turn_with_a_rejected_reply_is_saved_with_the_replies_of_the_nucleus(
+    page: Page, saving_judged, tmp_path
+):
+    open_studio(page, saving_judged)
+    send(page, "Are you open?", REPLY)
+    save_as_test(page, 1)
+    # The first thing the card says is that the file will hold text a model wrote.
+    expect(card(page).locator("p.note").first).to_have_text(
+        "This test stores the 2 replies the nucleus gave in the studio, as text: "
+        "read them before you commit the file."
+    )
+    expect(card(page).locator("#dlg-sub")).to_have_text("Runs offline: no model is called")
+    code = card(page).locator("pre.code")
+    expect(code).to_contain_text("NUCLEUS_REPLIES = [")
+    expect(code).to_contain_text('("regenerate", [("hours", "block")]),')
+    # The words a test with a stand-in of its own uses are highlighted as keywords.
+    keywords = code.locator("span.k").all_inner_texts()
+    assert {"def", "yield", "raise", "return"} <= set(keywords)
+
+    card(page).get_by_role("button", name="Write file").click()
+    expect(card(page).locator("#test-done")).to_contain_text(f"Saved as {REJECTED}")
+    written = (tmp_path / REJECTED).read_text(encoding="utf-8")
+    assert '    "We are open 24/7.",\n' in written
+    assert f"    {json.dumps(REPLY)},\n" in written
+
+
 def test_a_test_holds_the_conversation_or_the_turn_alone(page: Page, saving):
     open_studio(page, saving)
     send(page, "hello", REPLY)
@@ -1044,7 +1181,7 @@ def test_a_test_holds_the_conversation_or_the_turn_alone(page: Page, saving):
     expect(earlier).to_be_checked()
     code = card(page).locator("pre.code")
     expect(code).to_contain_text('agent.run_sync("hello")')
-    expect(card(page).locator("#dlg-sub")).to_contain_text("marked integration")
+    expect(card(page).locator("#dlg-sub")).to_have_text("Calls real models: marked integration")
     card(page).get_by_label("File, inside").fill("tests/mine.py")
 
     earlier.click()
@@ -1191,6 +1328,35 @@ def test_an_atom_of_another_framework_runs_a_turn_and_saves_it(page: Page, monke
         expect(code).to_contain_text(call)
         expect(code).to_contain_text("# Turn 2: answered")
         expect(card(page)).to_contain_text("is marked integration")
+
+
+@pytest.mark.parametrize("name", list(SMOKE))
+def test_an_atom_of_another_framework_saves_a_turn_with_a_rejected_reply(
+    page: Page, monkeypatch, name
+):
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=frameworks.harness(name, monkeypatch).connector("We are open 24/7.", REPLY),
+        output_orbitals=[hours],
+    )
+    with running(atom) as studio:
+        open_studio(page, studio)
+        send(page, "Are you open?", REPLY)
+        open_report(page, 1)
+        expect(attempt_labels(page)).to_have_text(["rejected", "accepted"])
+        expect(card(page).locator(".attempt .draft")).to_contain_text(["We are open 24/7.", REPLY])
+        card(page).get_by_role("button", name="Close").last.click()
+
+        save_as_test(page, 1)
+        code = card(page).locator("pre.code")
+        expect(code).to_contain_text("class ScriptedNucleus(")
+        expect(code).to_contain_text('("regenerate", [("hours", "block")]),')
+        # The words of a test that defines a class and awaits its turns are keywords too.
+        assert {"class", "async", "await", "def", "return"} <= set(
+            code.locator("span.k").all_inner_texts()
+        )
+        expect(card(page).locator("#dlg-sub")).to_have_text("Runs offline: no model is called")
 
 
 RELOADABLE = """

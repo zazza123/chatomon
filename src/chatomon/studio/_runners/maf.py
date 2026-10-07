@@ -9,7 +9,7 @@ from agent_framework import AgentSession, HistoryProvider, InMemoryHistoryProvid
 from chatomon.connectors.base import Connector
 from chatomon.connectors.maf import MAFFoundryConnector
 from chatomon.studio._runners import InterruptedTurnError, RunOutcome
-from chatomon.studio._testgen import Call, Framework, Offline
+from chatomon.studio._testgen import Call, Framework, StandIn
 
 _INTERRUPTED = (
     "the agent stopped to wait for an approval, which the studio cannot give: "
@@ -22,7 +22,7 @@ _FOUNDRY = (
 )
 _ASYNC = "Microsoft Agent Framework is asynchronous: the test needs `pytest-asyncio` 0.24 or later."
 _OWN_CLASS = (
-    "`OfflineNucleus` is written on Microsoft Agent Framework's client classes: "
+    "`{name}` is written on Microsoft Agent Framework's client classes: "
     "if they change, save the test again."
 )
 _OFFLINE_NUCLEUS = (
@@ -34,6 +34,26 @@ _OFFLINE_NUCLEUS = (
     '            return ChatResponse(messages=[Message("assistant", ["offline"])])',
     "",
     "        return respond()",
+)
+# An id on every reply, as real providers give: without one the framework's in-memory
+# history drops a reply that repeats an earlier one.
+_SCRIPTED_NUCLEUS = (
+    "class ScriptedNucleus(ChatMiddlewareLayer, BaseChatClient):",
+    '    """Stands in for the nucleus: it repeats its replies, with no model and no tool."""',
+    "",
+    "    def __init__(self) -> None:",
+    "        super().__init__()",
+    "        self.replies = nucleus_replies()",
+    "",
+    "    def _inner_get_response(self, *, messages, stream, options, **kwargs):",
+    "        async def respond() -> ChatResponse:",
+    '            reply = Message("assistant", [next(self.replies)], message_id=uuid4().hex)',
+    "            return ChatResponse(messages=[reply])",
+    "",
+    "        return respond()",
+)
+_CLIENT_CLASSES = (
+    "from agent_framework import BaseChatClient, ChatMiddlewareLayer, ChatResponse, Message"
 )
 
 
@@ -117,8 +137,9 @@ def saved_test(connector: Connector[Any]) -> Framework:
         connector: A `MAFConnector` or a `MAFFoundryConnector`; not read.
 
     Returns:
-        The awaited call that runs a turn on a session, the reply, and the client the
-        test defines to stand in for the nucleus offline, put on the built agent.
+        The awaited call that runs a turn on a session, the reply, and the clients the
+        test defines to stand in for the nucleus, put on the built agent: one
+        offline, one that repeats its replies.
     """
     turn = Call(arguments=("session=session",))
     return Framework(
@@ -129,15 +150,18 @@ def saved_test(connector: Connector[Any]) -> Framework:
         setup=("session = agent.create_session()",),
         marker='@pytest.mark.asyncio(loop_scope="session")',
         notes=(_ASYNC,),
-        offline=Offline(
+        offline=StandIn(
             label="a client of its own, `OfflineNucleus`,",
-            imports=(
-                "from agent_framework import "
-                "BaseChatClient, ChatMiddlewareLayer, ChatResponse, Message",
-            ),
+            imports=(_CLIENT_CLASSES,),
             definitions=_OFFLINE_NUCLEUS,
             comment="# No model is called in this test: OfflineNucleus keeps the nucleus offline.",
             after_build=("agent.client = OfflineNucleus()",),
-            notes=(_OWN_CLASS,),
+            notes=(_OWN_CLASS.format(name="OfflineNucleus"),),
+        ),
+        scripted=StandIn(
+            imports=("from uuid import uuid4", _CLIENT_CLASSES),
+            definitions=_SCRIPTED_NUCLEUS,
+            after_build=("agent.client = ScriptedNucleus()",),
+            notes=(_OWN_CLASS.format(name="ScriptedNucleus"),),
         ),
     )

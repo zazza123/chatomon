@@ -11,7 +11,7 @@ const COPY = `<button class="btn primary" type="button" data-dlg="copy">Copy</bu
 function highlight(code, lang) {
   const re = lang === "json"
     ? /("(?:[^"\\]|\\.)*")(\s*:)?|\b(true|false|null)\b|(-?\b\d+(?:\.\d+)?\b)/g
-    : /(#[^\n]*)|("""[\s\S]*?"""|"(?:[^"\\\n]|\\.)*")|(@[\w.]+)|\b(from|import|as|def|assert|for|in|if|None|True|False)\b|\b(\d+(?:\.\d+)?)\b/g;
+    : /(#[^\n]*)|("""[\s\S]*?"""|"(?:[^"\\\n]|\\.)*")|(@[\w.]+)|\b(from|import|as|class|def|async|await|return|yield|raise|assert|for|in|if|None|True|False)\b|\b(\d+(?:\.\d+)?)\b/g;
   let out = "";
   let last = 0;
   let m;
@@ -160,7 +160,7 @@ export async function showTest(n, ctx, { onBack, onClose, alone = false, path = 
     size: "l",
     onClose,
     title: `Save turn ${n} as a test`,
-    sub: data.integration ? "Runs the real atom: marked <code>integration</code>" : "Runs offline: no model is called",
+    sub: data.integration ? "Calls real models: marked <code>integration</code>" : "Runs offline: no model is called",
     body: `${warnings}${data.notes.map((note) => `<p class="note">${rich(note)}</p>`).join("")}${earlier}${file}
       <pre class="code"><code>${highlight(data.code, "python")}</code></pre>
       <p class="note" id="test-done" role="status" tabindex="-1" hidden></p>`,

@@ -6,7 +6,18 @@ from typing import Any
 
 from chatomon.connectors.base import Connector
 from chatomon.studio._runners import RunOutcome
-from chatomon.studio._testgen import Call, Framework, Offline
+from chatomon.studio._testgen import Call, Framework, StandIn
+
+_SCRIPTED_NUCLEUS = (
+    "def scripted_nucleus() -> FunctionModel:",
+    '    """Stand in for the nucleus: repeat its replies, call no model and no tool."""',
+    "    replies = nucleus_replies()",
+    "",
+    "    def reply(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:",
+    "        return ModelResponse(parts=[TextPart(next(replies))])",
+    "",
+    "    return FunctionModel(reply)",
+)
 
 
 async def run_turn(agent: Any, message: str, conversation: Any) -> RunOutcome:
@@ -69,19 +80,29 @@ def saved_test(connector: Connector[Any]) -> Framework:
 
     Returns:
         The call that runs a turn, the argument that carries the conversation, the
-        reply, and the test model that stands in for the nucleus offline.
+        reply, the test model that stands in for the nucleus offline and the
+        function model that repeats its replies.
     """
     return Framework(
         run="agent.run_sync",
         first=Call(),
         later=Call(arguments=("message_history=result.all_messages()",)),
         reply="result.output",
-        offline=Offline(
+        offline=StandIn(
             label="PydanticAI's `TestModel`",
             imports=("from pydantic_ai.models.test import TestModel",),
             # No tool is called: by default the test model calls every tool the atom has.
             before_build=(
                 'monkeypatch.setattr(atom.connector, "model", TestModel(call_tools=[]))',
             ),
+        ),
+        # A function model that answers with text never calls a tool.
+        scripted=StandIn(
+            imports=(
+                "from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart",
+                "from pydantic_ai.models.function import AgentInfo, FunctionModel",
+            ),
+            definitions=_SCRIPTED_NUCLEUS,
+            before_build=('monkeypatch.setattr(atom.connector, "model", scripted_nucleus())',),
         ),
     )

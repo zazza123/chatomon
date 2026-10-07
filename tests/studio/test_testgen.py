@@ -227,6 +227,33 @@ MARKED = (
     "configuration and run it when the credentials are set."
 )
 OUTPUT_CHECK = "for attempt in report.output\n        for r in attempt.results\n"
+STORED = (
+    "This test stores the {count} replies the nucleus gave in the studio, as text: read them "
+    "before you commit the file."
+)
+STORED_ONE = (
+    "This test stores the reply the nucleus gave in the studio, as text: read it before you "
+    "commit the file."
+)
+REPEATS = (
+    "The nucleus repeats what it wrote in the studio and calls none of the atom's tools. The "
+    "test checks what the output chain decides on each reply, not the words of any reply."
+)
+OFFLINE_SCRIPTED = "No model is called in this test: it runs offline."
+CLOSE_TO_ITS_LIMIT = (
+    "An orbital that calls a model can decide differently from one run to the next on a reply "
+    "close to its limit: tune the orbital, not the test."
+)
+ATTEMPTS = (
+    "    assert [\n"
+    '        (a.decision, [(r.name, r.action) for r in a.results if r.action != "allow"])\n'
+    "        for a in report.output\n"
+    "    ] == [\n"
+)
+REJECTED_THEN_ACCEPTED = (
+    ATTEMPTS + '        ("regenerate", [("polite", "block")]),\n        ("accept", []),\n    ]\n'
+)
+OVER = "the nucleus was asked for more replies than in the studio"
 ALONE = (
     "Turn {n} is saved alone: if it depended on what came before it, as a turn limit does, "
     "the test fails. Replay the earlier turns in that case."
@@ -294,15 +321,23 @@ def run_saved(test: testgen.SavedTest, monkeypatch: pytest.MonkeyPatch) -> None:
         asyncio.run(outcome)
 
 
-def run_pytest(root: Path, test: testgen.SavedTest) -> subprocess.CompletedProcess[str]:
-    """Write the test where the studio would and run pytest on it, with no API key."""
+def run_pytest(
+    root: Path, test: testgen.SavedTest, *, folder: bool = False
+) -> subprocess.CompletedProcess[str]:
+    """Write the test where the studio would and run pytest on it, with no API key.
+
+    Args:
+        root: The project's directory.
+        test: The saved test.
+        folder: Whether to run every test saved there so far, in one session.
+    """
     path = root / "tests" / "studio" / f"{test.name}.py"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(test.code, encoding="utf-8")
     env = {key: value for key, value in os.environ.items() if not key.endswith("_API_KEY")}
     env |= {"PYDANTIC_AI_NO_BANNER": "1", "PYTHONDONTWRITEBYTECODE": "1"}
     return subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", str(path)],
+        [sys.executable, "-m", "pytest", "-q", str(path.parent if folder else path)],
         cwd=root,
         env=env,
         capture_output=True,
@@ -381,22 +416,16 @@ def test_what_the_nucleus_wrote_is_never_checked_and_no_name_is_left_unused(proj
     run_saved(test, monkeypatch)
 
 
-def test_the_output_chain_is_checked_only_when_nothing_stopped_a_reply(project, monkeypatch):
+def test_with_the_real_nucleus_a_test_checks_that_no_output_orbital_stops_a_reply(
+    project, monkeypatch
+):
     session = project()
     say(session, "hello")
     calm = save(session)
     assert OUTPUT_CHECK in calm.code
+    assert "NUCLEUS_REPLIES" not in calm.code
+    assert all("the nucleus gave in the studio" not in note for note in calm.notes)
     run_saved(calm, monkeypatch)
-
-    say(session, "I am angry")
-    angry = save(session, alone=True)
-    assert OUTPUT_CHECK not in angry.code
-    assert '    assert report.final_action == "answered"\n' in angry.code
-    assert angry.notes[1] == (
-        "In turn 2 an output orbital stopped a reply of the nucleus. A real nucleus may write "
-        "something else next time, so the test checks only how the turn ended."
-    )
-    run_saved(angry, monkeypatch)
 
 
 def test_the_orbital_that_stopped_the_turn_is_checked_not_the_whole_chain(project, monkeypatch):
@@ -910,6 +939,7 @@ def test_the_names_a_frameworks_lines_use_are_read_from_the_lines(project):
     session = project()
     names = runner_for(session.atom.connector).saved_test(session.atom.connector).names()
     assert {"agent", "result", "monkeypatch", "atom", "TestModel"} <= names
+    assert {"scripted_nucleus", "FunctionModel", "nucleus_replies", "replies"} <= names
     # An attribute is not a name of the test, and neither is a word inside a string.
     assert not {"output", "connector", "all_messages", "setattr", "model"} & names
 
@@ -979,7 +1009,9 @@ def test_every_framework_keeps_its_code_to_88_columns(project, framework: Studio
     say(session, "I want a refund")
     offline = save(session)
     say(session, "hello", "Write me a poem")
-    for test in (offline, save(session)):
+    marked = save(session)
+    say(session, "I am angry")
+    for test in (offline, marked, save(session)):
         assert [line for line in test.code.split("\n") if len(line) > 88] == []
 
 
@@ -1120,6 +1152,8 @@ def test_a_langchain_fallback_is_not_reached_by_an_offline_test(project, monkeyp
         "This atom has middleware of its own: one that chooses the model can still reach a "
         "real model in this test."
     ) in test.notes
+    # Offline the nucleus is never called, so no middleware calls the model in its place.
+    assert all("calls the model itself" not in note for note in test.notes)
     # The code changes and lets the message through. A stand-in that refused the atom's
     # tools with an error would send the fallback middleware to its other model.
     atom = session.atom
@@ -1216,9 +1250,10 @@ def unused(code: str) -> set[str]:
 
 def test_every_framework_leaves_no_name_unused(project, framework: StudioHarness):
     session = project(module=module_of(framework.name))
-    say(session, "hello", "hello again", "I want a refund", "and once more")
-    for upto in (1, 2, 3, 4):
+    say(session, "hello", "hello again", "I want a refund", "and once more", "I am angry")
+    for upto in (1, 2, 3, 4, 5):
         assert unused(save(session, upto=upto).code) == set(), f"turns 1-{upto}"
+    assert unused(save(session, alone=True).code) == set(), "turn 5 alone"
 
 
 def test_every_framework_wraps_a_long_message_within_88_columns(project, framework: StudioHarness):
@@ -1238,13 +1273,16 @@ def test_the_names_of_a_frameworks_lines_leave_out_strings_and_comments():
         first=testgen.Call(),
         later=testgen.Call(),
         reply="result.output",
-        offline=testgen.Offline(
+        offline=testgen.StandIn(
             label="a stand-in", before_build=("configure('single quoted words', mode=fast)",)
         ),
+        scripted=testgen.StandIn(definitions=("def repeat(): return script  # their words",)),
         setup=("greeting = prefix  # a comment with words",),
     )
     names = lines.names()
     assert {"configure", "mode", "fast", "greeting", "prefix", "agent", "result"} <= names
+    assert {"repeat", "script"} <= names
+    assert not {"their", "def", "return"} & names
     assert not {"single", "quoted", "words", "comment", "with", "output", "run_sync"} & names
 
 
@@ -1288,3 +1326,493 @@ async def test_a_turn_checked_by_an_orbital_added_with_a_connection_is_an_integr
     assert key not in stopped_by_the_service["code"]
     # The length limit answered before the guard ran: no model is needed for that turn.
     assert session.saved_test(2, alone=True)["integration"] is False
+
+
+# --- A nucleus that repeats what it wrote in the studio -------------------------------
+
+QUIET = MODULE.replace("@orbital(calls_model=True)\ndef scope", "@orbital\ndef scope")
+"""The same atom with no orbital that calls a model."""
+
+
+def quiet(name: str, **kwargs: Any) -> str:
+    """The module of a framework, with no orbital that calls a model."""
+    text = module_of(name, **kwargs)
+    changed = text.replace("@orbital(calls_model=True)\ndef scope", "@orbital\ndef scope")
+    assert changed != text
+    return changed
+
+
+def without_the_output_orbital(text: str) -> str:
+    changed = text.replace("output_orbitals=[polite]", "output_orbitals=[]")
+    assert changed != text
+    return changed
+
+
+def test_a_reply_an_output_orbital_rejected_is_repeated_and_checked_attempt_by_attempt(
+    project, monkeypatch
+):
+    assert QUIET != MODULE
+    session = project(module=QUIET)
+    say(session, "I am angry")
+    test = save(session)
+    assert (
+        "# What the nucleus wrote in the studio, in order. It is the only text a model\n"
+        "# wrote that this test stores: read it before you commit the file.\n"
+        "NUCLEUS_REPLIES = [\n"
+        "    # Turn 1\n"
+        '    "Damn right.",\n'
+        '    "Hi.",\n'
+        "]\n"
+    ) in test.code
+    assert REJECTED_THEN_ACCEPTED in test.code
+    assert OUTPUT_CHECK not in test.code
+    assert (
+        "    # The nucleus repeats what it wrote in the studio: it calls no model and no tool.\n"
+        '    monkeypatch.setattr(atom.connector, "model", scripted_nucleus())\n'
+        "    agent = atom.build()\n"
+    ) in test.code
+    assert test.integration is False
+    assert "@pytest.mark" not in test.code
+    assert test.notes[:3] == [STORED.format(count=2), REPEATS, OFFLINE_SCRIPTED]
+    run_saved(test, monkeypatch)
+    # Without the orbital the first reply is accepted, and the test says so.
+    monkeypatch.setattr(session.atom, "output_orbitals", ())
+    with pytest.raises(AssertionError):
+        run_saved(test, monkeypatch)
+
+
+def test_no_text_a_model_wrote_is_compared_when_the_nucleus_repeats_its_replies(project):
+    session = project(module=QUIET)
+    say(session, "I am angry")
+    code = save(session).code
+    assert '    agent.run_sync("I am angry")\n' in code
+    assert "result = " not in code
+    assert "result." not in code
+    # Each reply is written once, where the nucleus reads it, and nowhere as an expectation.
+    assert code.count('"Damn right."') == 1
+    assert code.count('"Hi."') == 1
+    assert "Write it again, politely." not in code
+
+
+def test_one_stopped_reply_is_enough_for_the_whole_conversation(project, monkeypatch):
+    session = project(module=QUIET)
+    say(session, "I am angry", "hello", "I want a refund")
+    whole = save(session)
+    assert (
+        "NUCLEUS_REPLIES = [\n"
+        "    # Turn 1\n"
+        '    "Damn right.",\n'
+        '    "Hi.",\n'
+        "    # Turn 2\n"
+        '    "Hi.",\n'
+        "]\n"
+    ) in whole.code
+    # Every turn the nucleus wrote in is checked attempt by attempt.
+    assert whole.code.count(ATTEMPTS) == 2
+    assert ATTEMPTS + '        ("accept", []),\n    ]\n' in whole.code
+    assert OUTPUT_CHECK not in whole.code
+    # A reply of the input chain is still checked when it is fixed in code.
+    assert '    assert result.output == "We don\'t handle refunds in chat."\n' in whole.code
+    assert whole.notes[0] == STORED.format(count=3)
+    assert whole.integration is False
+    with monkeypatch.context() as patch:  # the stand-in leaves the atom when the test ends
+        run_saved(whole, patch)
+
+    # The second turn alone holds no stopped reply: the nucleus is the real one again.
+    alone = save(session, upto=2, alone=True)
+    assert "NUCLEUS_REPLIES" not in alone.code
+    assert OUTPUT_CHECK in alone.code
+    assert alone.integration is True
+    assert alone.notes[0] == "The nucleus calls a real model" + MARKED
+    run_saved(alone, monkeypatch)
+
+
+def test_a_failed_turn_is_left_out_with_what_the_nucleus_wrote_in_it(project, monkeypatch):
+    session = project(module=QUIET)
+    say(session, "I am angry", "boom", "hello")
+    test = save(session)
+    assert "boom" not in test.code
+    assert "    # Turn 2\n" not in test.code
+    assert "    # Turn 3\n" in test.code
+    assert test.notes[0] == STORED.format(count=3)
+    run_saved(test, monkeypatch)
+
+
+def test_an_orbital_that_calls_a_model_marks_the_test_and_the_nucleus_is_not_named(
+    project, monkeypatch
+):
+    session = project()
+    say(session, "I am angry")
+    test = save(session)
+    assert "@pytest.mark.integration  # scope calls a real model\n" in test.code
+    assert test.integration is True
+    assert test.notes[:4] == [
+        STORED.format(count=2),
+        REPEATS,
+        "`scope` calls a real model" + MARKED,
+        CLOSE_TO_ITS_LIMIT,
+    ]
+    assert all("the nucleus call" not in note.lower() for note in test.notes)
+    run_saved(test, monkeypatch)
+
+
+REPLACED = {
+    'Verdict.respond("Let us keep it civil.")': ("orbital_response", "respond", 1),
+    'Verdict.block("Not like that.")': ("blocked", "block", 1),
+    "Verdict.block()": ("blocked", "block", 1),
+    # A guidance the nucleus does not follow: the retries are used up.
+    'Verdict.block(guidance="Write it again.")': ("fallback_refusal", "block", 3),
+}
+
+
+@pytest.mark.parametrize("verdict", REPLACED)
+def test_every_framework_repeats_a_replaced_reply_like_a_rejected_one(
+    project, monkeypatch, framework: StudioHarness, verdict
+):
+    ended, action, replies = REPLACED[verdict]
+    text = quiet(framework.name)
+    module = text.replace('Verdict.block(guidance="Write it again, politely.")', verdict)
+    assert module != text
+    session = project(module=module)
+    say(session, "I am angry")
+    test = save(session)
+    assert f'    assert report.final_action == "{ended}"\n' in test.code
+    rejected = f'        ("regenerate", [("polite", "{action}")]),\n' * (replies - 1)
+    replaced = f'        ("replace", [("polite", "{action}")]),\n    ]\n'
+    assert ATTEMPTS + rejected + replaced in test.code
+    assert test.code.count('    "Damn right.",\n') == replies
+    assert test.notes[0] == (STORED_ONE if replies == 1 else STORED.format(count=replies))
+    # What replaced the reply is no part of the test: not an orbital's words, not the refusal.
+    assert "civil" not in test.code
+    assert "Not like that" not in test.code
+    assert "refusal" not in test.code.replace("fallback_refusal", "")
+    run_saved(test, monkeypatch)
+    monkeypatch.setattr(session.atom, "output_orbitals", ())
+    with pytest.raises(AssertionError):
+        run_saved(test, monkeypatch)
+
+
+def test_replies_are_written_as_the_nucleus_wrote_them(project, monkeypatch):
+    separator = chr(0x2028)
+    backslash = chr(0x5C)
+    reply = (
+        f'Damn "right",\nsaid the caf{chr(0xE9)}{separator}twice.\n'
+        f'# not a comment, {backslash}n not a line break, """ not the end of a text\n'
+    )
+    module = QUIET.replace('"Damn right."', repr(reply))
+    assert module != QUIET
+    session = project(module=module)
+    say(session, "I am angry")
+    assert session.turns[0].report.output[0].nucleus_reply == reply
+    test = save(session)
+    assert separator not in test.code  # editors show it as a line break
+    assert "    (\n        " in test.code  # one literal per line of the reply
+    assert replies_of(test.code) == [reply, "Hi."]
+    run_saved(test, monkeypatch)
+
+
+def replies_of(code: str) -> list[str]:
+    """What the stand-in of a saved test will say, read back from its code."""
+    scope: dict[str, Any] = {}
+    exec(compile(code, "saved.py", "exec"), scope)
+    return scope["NUCLEUS_REPLIES"]
+
+
+def test_a_long_reply_is_broken_at_its_spaces_within_88_columns(project, monkeypatch):
+    sentence = "Damn right, and I will say it again as many times as it takes to fill a line. "
+    address = "https://speedypack.example/" + "tracking/" * 12
+    reply = f"{sentence * 4}\n\n{address} is where you look,  with two spaces before."
+    module = QUIET.replace('"Damn right."', repr(reply))
+    session = project(module=module)
+    say(session, "I am angry")
+    test = save(session)
+    assert replies_of(test.code) == [reply, "Hi."]
+    # A word with no space to break at is broken where the line ends.
+    assert [line for line in test.code.split("\n") if len(line) > 88] == []
+    assert f'        "{address[:78]}"\n' in test.code
+    assert '    "Hi.",\n' in test.code  # a reply that fits stays on one line
+    run_saved(test, monkeypatch)
+
+
+SHAPES = [
+    "",
+    " ",
+    "\n",
+    "one\n",
+    "no-space-at-all",
+    "  two spaces lead and two trail  ",
+    "ends with a word past the width " + "w" * 90,
+    "w" * 90 + " starts with one, and goes on for long enough to need a second line",
+    "a line that ends with a word past the width " + "w" * 90 + "\nand a second line",
+    # A language written without spaces, and a word of quotes, which double when written.
+    chr(0x65E5) * 120,
+    '"' * 120,
+    "w" * 82,
+]
+
+
+@pytest.mark.parametrize("reply", SHAPES)
+def test_a_reply_of_any_shape_reads_back_as_it_was_written(reply):
+    lines = testgen._reply(reply)
+    scope: dict[str, Any] = {}
+    exec("VALUE = [\n" + "\n".join(lines) + "\n]", scope)
+    assert scope["VALUE"] == [reply]
+    # A piece is never empty: the file is read by a person before it is committed.
+    assert '        ""' not in lines
+    assert max(len(line) for line in lines) <= 88
+
+
+def test_a_reply_that_fits_a_line_is_written_on_one():
+    fits = "x" * 81  # with its quotes, the indentation and the comma: 88 columns
+    assert testgen._reply(fits) == [f'    "{fits}",']
+    assert testgen._reply("a " * 40 + "b") == ['    "' + "a " * 40 + 'b",']
+    # One character more and it is broken at a space, each piece within the width.
+    broken = testgen._reply("a " * 41 + "b")
+    assert broken[0] == "    (" and broken[-1] == "    ),"
+    assert len(broken) == 4
+    assert max(len(line) for line in broken) <= 88
+    # A reply of one line that ends with a line break is still one literal.
+    assert testgen._reply("one\n") == ['    "one\\n",']
+
+
+def test_a_turn_stopped_by_an_orbital_of_the_studio_alone_is_warned_about(project):
+    session = project(module=QUIET)
+    session.add("output", "MessageLengthOrbital", {"max_chars": 2, "name": "short"})
+    say(session, "hello")
+    decided = [attempt.decision for attempt in session.turns[0].report.output]
+    assert decided == ["regenerate", "regenerate", "replace"]
+    test = save(session)
+    assert "NUCLEUS_REPLIES" in test.code
+    assert '        ("replace", [("short", "block")]),\n' in test.code
+    # The orbital that stopped the replies is not in the code yet: the test would fail there.
+    assert test.warnings == [
+        "Turn 1 ran with 1 studio change (short added). The test builds the atom from your "
+        "code, so it checks your code, not the studio: copy the configuration into your code "
+        "first."
+    ]
+
+
+def test_a_langchain_reply_with_no_text_is_repeated_as_an_empty_one(project, monkeypatch):
+    text = quiet("langchain").replace('else "Hi."', 'else ""')
+    session = project(module=text)
+    say(session, "I am angry")
+    wrote = [(a.nucleus_reply, a.decision) for a in session.turns[0].report.output]
+    assert wrote == [("Damn right.", "regenerate"), ("", "accept")]
+    test = save(session)
+    assert replies_of(test.code) == ["Damn right.", ""]
+    run_saved(test, monkeypatch)
+
+
+def test_long_names_of_output_orbitals_stay_within_88_columns(project, monkeypatch):
+    session = project(module=LONG_NAMES)
+    say(session, "I am angry")
+    test = save(session)
+    lines = test.code.split("\n")
+    assert [line for line in lines if len(line) > 88] == []
+    name = "another_long_name_for_the_orbital_that_checks_the_tone"
+    at = lines.index('            "regenerate",')
+    assert lines[at - 1 : at + 3] == [
+        "        (",
+        '            "regenerate",',
+        f'            [("{name}", "block")],',
+        "        ),",
+    ]
+    run_saved(test, monkeypatch)
+
+
+def test_a_report_without_what_the_nucleus_wrote_is_refused(project):
+    session = project(module=QUIET)
+    say(session, "I am angry")
+    report = session.turns[0].report
+    bare = tuple(attempt.model_copy(update={"nucleus_reply": None}) for attempt in report.output)
+    session.turns[0].report = report.model_copy(update={"output": bare})
+    with pytest.raises(RefusedError, match="turn 1 has no record of what the nucleus wrote"):
+        save(session)
+
+
+def test_something_named_like_the_replies_is_imported_under_another_name(project, monkeypatch):
+    text = QUIET + "\n\ndef nucleus_replies() -> Atom:\n    return atom\n"
+    session = project("shop:nucleus_replies", module=text)
+    say(session, "I am angry")
+    test = save(session)
+    assert "from shop import nucleus_replies as atom_source\n" in test.code
+    run_saved(test, monkeypatch)
+
+
+def test_every_framework_repeats_the_replies_and_fails_without_the_output_orbital(
+    project, tmp_path, framework: StudioHarness
+):
+    text = quiet(framework.name)
+    session = project(module=text)
+    say(session, "hello", "I am angry")
+    decided = [[attempt.decision for attempt in turn.report.output] for turn in session.turns]
+    assert decided == [["accept"], ["regenerate", "accept"]]
+    test = save(session)
+    assert test.integration is False
+    assert REJECTED_THEN_ACCEPTED in test.code
+    assert test.notes[:3] == [STORED.format(count=3), REPEATS, OFFLINE_SCRIPTED]
+    passed = run_pytest(tmp_path, test)  # with no API key in the environment
+    assert passed.returncode == 0, passed.stdout + passed.stderr
+    assert "1 passed" in passed.stdout
+
+    # A second test saved from the same atom runs in the same session of pytest: each has
+    # its own replies, and the first leaves the atom as it found it.
+    say(session, "I want a refund", "I am angry again")
+    both = run_pytest(tmp_path, save(session), folder=True)
+    assert both.returncode == 0, both.stdout + both.stderr
+    assert "2 passed" in both.stdout
+
+    (tmp_path / "shop.py").write_text(without_the_output_orbital(text), encoding="utf-8")
+    failed = run_pytest(tmp_path, test)
+    assert failed.returncode == 1, failed.stdout + failed.stderr
+    assert "1 failed" in failed.stdout
+    assert "('regenerate', [('polite', 'block')])" in failed.stdout
+
+
+def test_every_framework_says_when_the_nucleus_is_asked_for_more_than_it_wrote(
+    project, monkeypatch, framework: StudioHarness
+):
+    session = project(module=quiet(framework.name))
+    say(session, "I am angry")
+    test = save(session)
+    # The code changes: an orbital now rejects the reply that was accepted in the studio.
+    atom = session.atom
+    strict = type(atom.input_orbitals[0])(max_chars=1, guidance="Shorter.", name="strict")
+    monkeypatch.setattr(atom, "output_orbitals", (*atom.output_orbitals, strict))
+    with pytest.raises(AssertionError, match=OVER):
+        run_saved(test, monkeypatch)
+
+
+def test_every_framework_keeps_the_atoms_tools_from_running_when_replies_are_repeated(
+    project, monkeypatch, framework: StudioHarness
+):
+    plain = PARTS[framework.name][2]
+    text = quiet(framework.name, connector=f"{plain[:-1]}, tools=[refund_order])", before_atom=TOOL)
+    session = project(module=text)
+    say(session, "I am angry")
+    test = save(session)
+    assert REPEATS in test.notes
+    run_saved(test, monkeypatch)
+    # Run again in the same process, as a plugin that repeats tests does: the replies start over.
+    run_saved(test, monkeypatch)
+    assert sys.modules["shop"].CALLED == []
+
+
+TWICE = """
+
+@orbital
+def twice(ctx: OrbitalContext) -> Verdict:
+    said = [message.content for message in ctx.history if message.role == "assistant"]
+    return Verdict.block("Enough.") if said.count("Hi.") >= 2 else Verdict.allow()
+"""
+
+
+def test_every_framework_keeps_a_reply_that_repeats_an_earlier_one_in_the_history(
+    project, monkeypatch, framework: StudioHarness
+):
+    text = quiet(framework.name, before_atom=TWICE).replace(
+        "no_refunds, scope]", "no_refunds, scope, twice]"
+    )
+    session = project(module=text)
+    say(session, "I am angry", "hello", "and now")
+    ended = [turn.report.final_action for turn in session.turns]
+    assert ended == ["answered", "answered", "blocked"]
+    test = save(session)
+    assert test.code.count('    "Hi.",\n') == 2
+    # The third turn is blocked only if both replies are in the history the orbital reads.
+    run_saved(test, monkeypatch)
+
+
+CALLS_THE_MODEL = (
+    "A middleware that calls the model itself, as one that selects tools or summarises the "
+    "conversation does, gets the stand-in in place of the model: with one, this test fails "
+    "on the unchanged atom."
+)
+ASKS_AGAIN = '''
+from langchain.agents.middleware import AgentMiddleware, hook_config  # noqa: E402
+
+
+class AsksAgain(AgentMiddleware):
+    """Sends the first reply of every turn back to the model."""
+
+    @hook_config(can_jump_to=["model"])
+    def after_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+        replies = 0
+        for message in reversed(state["messages"]):
+            if isinstance(message, HumanMessage):
+                break
+            replies += isinstance(message, AIMessage)
+        return {"jump_to": "model"} if replies == 1 else None
+'''
+
+
+def test_a_turn_the_framework_asked_again_is_repeated_and_said(project, monkeypatch):
+    text = quiet(
+        "langchain",
+        connector="LangChainConnector(Nucleus(), middleware=[AsksAgain()])",
+        before_atom=ASKS_AGAIN,
+    )
+    session = project(module=text)
+    say(session, "I am angry")
+    decided = [attempt.decision for attempt in session.turns[0].report.output]
+    assert decided == ["regenerate", "accept", "accept"]
+    test = save(session)
+    assert (
+        "In turn 1 your code asked the nucleus again after chatomon had decided on a reply: "
+        "the test expects it to ask again."
+    ) in test.notes
+    # The notes of the stand-in are given whenever the stand-in is there.
+    assert (
+        "This atom has middleware of its own: one that chooses the model can still reach a "
+        "real model in this test."
+    ) in test.notes
+    assert CALLS_THE_MODEL in test.notes
+    run_saved(test, monkeypatch)
+
+    # Asked again with every reply accepted, the turn keeps the real nucleus and says nothing.
+    say(session, "hello")
+    calm = save(session, alone=True)
+    assert "NUCLEUS_REPLIES" not in calm.code
+    assert all("asked the nucleus again" not in note for note in calm.notes)
+
+
+def test_a_langchain_test_repeats_the_replies_with_a_chat_model_of_its_own(project):
+    session = project(module=quiet("langchain"))
+    say(session, "I am angry")
+    lines = save(session).code.split("\n")
+    assert "class ScriptedNucleus(GenericFakeChatModel):" in lines
+    build = lines.index("    agent = atom.build()")
+    assert lines[build - 3 : build] == [
+        "    # The nucleus repeats what it wrote in the studio: it calls no model and no tool.",
+        "    nucleus = ScriptedNucleus(messages=nucleus_replies())",
+        '    monkeypatch.setattr(atom.connector, "model", nucleus)',
+    ]
+    assert "OfflineNucleus" not in lines
+
+
+@pytest.mark.parametrize("name", ["maf", "maf_foundry"])
+def test_a_microsoft_agent_framework_test_repeats_the_replies_with_a_client_of_its_own(
+    project, name
+):
+    session = project(module=quiet(name))
+    say(session, "I am angry")
+    test = save(session)
+    lines = test.code.split("\n")
+    assert lines[2:6] == [
+        "from collections.abc import Iterator",
+        "from uuid import uuid4",
+        "",
+        "import pytest",
+    ]
+    assert "class ScriptedNucleus(ChatMiddlewareLayer, BaseChatClient):" in lines
+    build = lines.index("    agent = atom.build()")
+    assert lines[build + 1 : build + 4] == [
+        "    # The nucleus repeats what it wrote in the studio: it calls no model and no tool.",
+        "    agent.client = ScriptedNucleus()",
+        "    session = agent.create_session()",
+    ]
+    assert test.notes[3:5] == [
+        "`ScriptedNucleus` is written on Microsoft Agent Framework's client classes: "
+        "if they change, save the test again.",
+        ASYNC,
+    ]

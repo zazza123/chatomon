@@ -2,9 +2,15 @@
 
 The test sends the messages to the atom from code again and checks how each turn
 ended, which input orbitals stopped it and, when the reply is fixed in code, its
-text. It runs the real atom: nothing the nucleus wrote is stored, so what the
-output chain decides is checked only when nothing stopped a reply. Only messages,
-orbital names, actions and replies fixed in code are written.
+text. It runs the real atom, and checks that no output orbital stops a reply.
+
+When an output orbital rejected or replaced a reply in a turn the test holds, a
+real nucleus would not write that reply again. The test then puts a stand-in in
+place of the nucleus, which repeats what the nucleus wrote in the studio, and
+checks what the output chain decides on every reply. Those replies are what the
+nucleus says, never what the test expects: no text a model wrote is compared.
+They are the only text a model wrote that a test stores: the rest is the
+messages and the replies fixed in code.
 """
 
 from __future__ import annotations
@@ -42,13 +48,31 @@ _NOT_A_NAME = (
     "name: complete the import and save the file yourself."
 )
 _OFFLINE = "No model is called in this test: it runs offline, with {model} in place of the nucleus."
+_OFFLINE_SCRIPTED = "No model is called in this test: it runs offline."
+_STORED = (
+    "This test stores the {count} replies the nucleus gave in the studio, as text: read them "
+    "before you commit the file."
+)
+_STORED_ONE = (
+    "This test stores the reply the nucleus gave in the studio, as text: read it before you "
+    "commit the file."
+)
+_REPEATS = (
+    "The nucleus repeats what it wrote in the studio and calls none of the atom's tools. The "
+    "test checks what the output chain decides on each reply, not the words of any reply."
+)
+_CLOSE_TO_ITS_LIMIT = (
+    "An orbital that calls a model can decide differently from one run to the next on a reply "
+    "close to its limit: tune the orbital, not the test."
+)
+_ASKED_AGAIN = (
+    "In turn {n} your code asked the nucleus again after chatomon had decided on a reply: the "
+    "test expects it to ask again."
+)
+_NO_REPLY = "turn {n} has no record of what the nucleus wrote"
 _MARKED = (
     "{who} {call}, so the test is marked `integration`: register the marker in your "
     "pytest configuration and run it when the credentials are set."
-)
-_OUTPUT = (
-    "In turn {n} an output orbital stopped a reply of the nucleus. A real nucleus may write "
-    "something else next time, so the test checks only how the turn ended."
 )
 _FUNCTION = (
     "`{name}` is a function of yours: the studio assumes it calls no model. If it does, "
@@ -85,6 +109,21 @@ _NO_IMPORT = (
     "# Import it here, for example: from your_package.app import atom",
 )
 _KEEPS_OFFLINE = "# No model is called in this test: the test model keeps the nucleus offline."
+_REPEATS_ITSELF = (
+    "# The nucleus repeats what it wrote in the studio: it calls no model and no tool."
+)
+_REPLIES = "NUCLEUS_REPLIES"
+_STORED_HERE = (
+    "# What the nucleus wrote in the studio, in order. It is the only text a model",
+    "# wrote that this test stores: read it before you commit the file.",
+)
+_NEXT_REPLY = (
+    "def nucleus_replies() -> Iterator[str]:",
+    '    """Give the replies in order; the test fails if the nucleus is asked for more."""',
+    f"    yield from {_REPLIES}",
+    '    raise AssertionError("the nucleus was asked for more replies than in the studio")',
+)
+_ITERATOR = "from collections.abc import Iterator"
 _INPUT = 'assert [(r.name, r.action) for r in report.input if r.action != "allow"] == '
 _NO_OUTPUT = (
     "assert [",
@@ -94,10 +133,30 @@ _NO_OUTPUT = (
     '    if r.action != "allow"',
     "] == []",
 )
+_ATTEMPTS = (
+    "assert [",
+    '    (a.decision, [(r.name, r.action) for r in a.results if r.action != "allow"])',
+    "    for a in report.output",
+    "] == [",
+)
 # Names the test itself uses: something imported under one of them gets an alias.
 _USED = frozenset(
-    {"atom", "agent", "reports", "report", "result", "monkeypatch", "pytest", "TurnReport"}
+    {
+        "atom",
+        "agent",
+        "reports",
+        "report",
+        "result",
+        "monkeypatch",
+        "pytest",
+        "TurnReport",
+        "Iterator",
+        "nucleus_replies",
+        _REPLIES,
+    }
 )
+# What the engine decided when an output orbital did not let a reply through.
+_STOPPED = ("regenerate", "replace")
 _FUNCTION_KIND = "FunctionOrbital"
 _RESULT = re.compile(r"\bresult\b")
 
@@ -115,11 +174,16 @@ class Call:
 
 
 @dataclass(frozen=True)
-class Offline:
-    """What puts a stand-in in place of the nucleus in a test that calls no model."""
+class StandIn:
+    """What puts a stand-in in place of the nucleus of a saved test.
 
-    label: str
-    """How a note names the stand-in."""
+    A framework has two: the one of a test in which the nucleus is never called,
+    and the one that repeats what the nucleus wrote in the studio. Neither calls
+    a model or a tool.
+    """
+
+    label: str = ""
+    """How the note of an offline test names the stand-in."""
     imports: tuple[str, ...] = ()
     """The import lines it needs."""
     definitions: tuple[str, ...] = ()
@@ -146,8 +210,12 @@ class Framework:
     """The call of a turn after another, which carries the conversation."""
     reply: str
     """The expression of the reply the user received."""
-    offline: Offline
+    offline: StandIn
     """What stands in for the nucleus when no model is needed."""
+    scripted: StandIn
+    """What stands in for the nucleus to repeat its replies. It makes one
+    `nucleus_replies()` for the whole test and takes a reply from it with `next`
+    every time the model is called; the test fails when they are over."""
     imports: tuple[str, ...] = ()
     """The import lines every test needs."""
     setup: tuple[str, ...] = ()
@@ -168,18 +236,14 @@ class Framework:
         Returns:
             Every identifier outside a string literal that is not an attribute.
         """
-        offline = self.offline
-        lines = [
-            self.run,
-            self.reply,
-            self.marker,
-            *self.imports,
-            *self.setup,
-            *offline.imports,
-            *offline.definitions,
-            *offline.before_build,
-            *offline.after_build,
-        ]
+        lines = [self.run, self.reply, self.marker, *self.imports, *self.setup]
+        for stand_in in (self.offline, self.scripted):
+            lines += [
+                *stand_in.imports,
+                *stand_in.definitions,
+                *stand_in.before_build,
+                *stand_in.after_build,
+            ]
         for call in (self.first, self.later):
             lines += [call.before, call.after, *call.arguments]
         return frozenset(name for line in lines for name in _names(line))
@@ -218,8 +282,10 @@ class _Turn:
     """The input orbitals that did not allow, with what they did."""
     nucleus: bool
     """Whether the nucleus was called."""
-    output_stopped: bool
-    """Whether an output orbital stopped a reply."""
+    attempts: list[tuple[str | None, list[tuple[str, str]]]]
+    """What the engine decided about each reply, with the output orbitals that did not allow."""
+    replies: list[str | None]
+    """What the nucleus wrote at each attempt."""
     remote: list[str]
     """The orbitals that ran and call a model."""
     reply: str | None
@@ -230,6 +296,16 @@ class _Turn:
     """The functions that ran and are taken as calling no model."""
     failed: list[tuple[str, str]]
     """The orbitals that failed, with the error's type."""
+
+    @property
+    def output_stopped(self) -> bool:
+        """Whether an output orbital rejected or replaced a reply."""
+        return any(decision in _STOPPED for decision, _ in self.attempts)
+
+    @property
+    def asked_again(self) -> bool:
+        """Whether the nucleus was asked again after a reply was accepted or replaced."""
+        return any(decision != "regenerate" for decision, _ in self.attempts[:-1])
 
 
 def refusal(turn: TurnRecord) -> str | None:
@@ -302,7 +378,11 @@ def _read(turn: TurnRecord) -> _Turn:
         action=report.final_action,
         stopped=[(r.name, r.action) for r in report.input if r.action != "allow"],
         nucleus=nucleus,
-        output_stopped=any(r.action != "allow" for r in checked),
+        attempts=[
+            (a.decision, [(r.name, r.action) for r in a.results if r.action != "allow"])
+            for a in report.output
+        ],
+        replies=[attempt.nucleus_reply for attempt in report.output],
         remote=list(dict.fromkeys(r.name for r in ran if r.name in turn.models)),
         reply=reply,
         reply_by=reply_by,
@@ -426,7 +506,89 @@ def _call(prefix: str, function: str, message: str, call: Call) -> list[str]:
     return [*lines, *(f"    {argument}," for argument in call.arguments), ")"]
 
 
-def _checks(turn: _Turn, *, first: bool, last: bool, framework: Framework) -> list[str]:
+def _decided(turn: _Turn) -> list[str]:
+    """Write what the output chain is expected to decide on every reply of a turn.
+
+    Returns:
+        The lines of the comparison, without the test's indentation.
+    """
+    lines: list[str] = [*_ATTEMPTS]
+    for decision, stopped in turn.attempts:
+        pairs = ", ".join(f"({codegen.literal(n)}, {codegen.literal(a)})" for n, a in stopped)
+        one = f"    ({codegen.literal(decision)}, [{pairs}]),"
+        if len(one) + 4 <= codegen.WIDTH:
+            lines.append(one)
+        else:
+            lines += [
+                "    (",
+                f"        {codegen.literal(decision)},",
+                f"        [{pairs}],",
+                "    ),",
+            ]
+    return [*lines, "]"]
+
+
+def _reply(text: str) -> list[str]:
+    """Write a reply of the nucleus as an item of the list of replies.
+
+    A reply of one line that fits the width is one literal. A model writes long
+    lines: each is broken at its spaces into literals that fit the width, and a
+    line break of the reply ends a literal. A word that does not fit a line, as
+    in a language written without spaces, is broken where the line ends.
+
+    Returns:
+        The lines of the item, with the indentation of the list.
+    """
+    one = f"    {codegen.literal(text)},"
+    if "\n" not in text[:-1] and len(one) <= codegen.WIDTH:
+        return [one]
+    room = codegen.WIDTH - 8  # the indentation of a literal inside its parentheses
+    pieces: list[str] = []
+    for line in re.findall(r"[^\n]*\n|[^\n]+", text):
+        piece = ""
+        # Words with the spaces that follow them: no match is empty, so no piece is.
+        for word in re.findall(r"[^ ]+ *| +", line):
+            if len(codegen.literal(piece + word)) <= room:
+                piece += word
+                continue
+            if piece:
+                pieces.append(piece)
+                piece = ""
+            # The width is that of the literal: a quote or a character written as an
+            # escape takes more room in the file than in the reply.
+            for char in word:
+                if piece and len(codegen.literal(piece + char)) > room:
+                    pieces.append(piece)
+                    piece = ""
+                piece += char
+        pieces.append(piece)
+    return ["    (", *(f"        {codegen.literal(piece)}" for piece in pieces), "    ),"]
+
+
+def _script(turns: Sequence[_Turn]) -> list[str]:
+    """Write the replies the stand-in repeats, and what gives them one at a time.
+
+    Returns:
+        The lines that follow the imports.
+
+    Raises:
+        RefusedError: If a report does not hold what the nucleus wrote.
+    """
+    lines = [*_STORED_HERE, f"{_REPLIES} = ["]
+    for turn in turns:
+        if not turn.replies:
+            continue
+        lines.append(f"    # Turn {turn.n}")
+        for reply in turn.replies:
+            if reply is None:
+                raise RefusedError(_NO_REPLY.format(n=turn.n))
+            lines += _reply(reply)
+    return [*lines, "]", "", "", *_NEXT_REPLY]
+
+
+def _checks(
+    turn: _Turn, *, first: bool, last: bool, framework: Framework, scripted: bool
+) -> list[str]:
     """Write one turn: the call and what the test expects of it.
 
     Returns:
@@ -451,8 +613,8 @@ def _checks(turn: _Turn, *, first: bool, last: bool, framework: Framework) -> li
         lines += [f"{_INPUT}[", *pairs, "]"]
     else:
         lines.append(f"{_INPUT}[]")
-    if turn.nucleus and not turn.output_stopped:
-        lines += _NO_OUTPUT
+    if turn.nucleus:
+        lines += _decided(turn) if scripted else _NO_OUTPUT
     if turn.reply is not None and "\n" in turn.reply:
         lines += [
             f"assert {framework.reply} == (",
@@ -477,6 +639,10 @@ def generate(
 ) -> SavedTest:
     """Write a turn, with the turns before it unless `alone`, as a pytest file.
 
+    When an output orbital rejected or replaced a reply in one of those turns, the
+    nucleus of the whole test is a stand-in that repeats what the nucleus wrote in
+    the studio, and every turn is checked attempt by attempt.
+
     Args:
         turns: The conversation up to and including the turn to save.
         alone: Whether to leave the earlier turns out.
@@ -495,7 +661,8 @@ def generate(
         The code, the test's name, and what the developer should know.
 
     Raises:
-        RefusedError: If the turn to save failed.
+        RefusedError: If the turn to save failed, or a turn whose replies are to
+            be repeated has no record of them.
     """
     saved = turns[-1]
     why = refusal(saved)
@@ -505,9 +672,12 @@ def generate(
     skipped = [turn.n for turn in turns[:-1] if refusal(turn) is not None]
     records = [saved] if alone else [*before, saved]
     replayed = [_read(turn) for turn in records]
-    offline = not any(turn.nucleus or turn.remote for turn in replayed)
-    callers = ["the nucleus"] if any(turn.nucleus for turn in replayed) else []
+    # A real nucleus would not write again a reply that an output orbital stopped.
+    scripted = any(turn.output_stopped for turn in replayed)
+    real = not scripted and any(turn.nucleus for turn in replayed)
+    callers = ["the nucleus"] if real else []
     callers += dict.fromkeys(name for turn in replayed for name in turn.remote)
+    offline = not callers
     name = f"test_{slug(saved.message, saved.n)}"
 
     numbers = [turn.n for turn in replayed]
@@ -515,19 +685,24 @@ def generate(
     shown = source if re.fullmatch(r"[\w.:()]+", source) else "an atom"
     written = _atom(source, namespace, framework)
     imports, after, first = written if written is not None else (["", *_NO_IMPORT], [], [])
-    stdlib = [line for line in framework.imports if _stdlib(line)]
+    # The stand-in of a test: the one that repeats the replies, or the one of a test in
+    # which the nucleus is never called. A test with the real nucleus has none.
+    stand_in = framework.scripted if scripted else framework.offline if offline else None
+    needed = [*framework.imports, *(stand_in.imports if stand_in else ())]
+    if scripted:
+        needed.append(_ITERATOR)
+    stdlib = sorted(line for line in dict.fromkeys(needed) if _stdlib(line))
     lines = [f'{HEADER}: {shown}, {span}."""', ""]
     if stdlib:
         lines += [*stdlib, ""]
     lines += ["import pytest", "", "from chatomon import TurnReport"]
-    lines += [line for line in framework.imports if line not in stdlib]
-    stand_in = framework.offline
-    if offline:
-        lines += stand_in.imports
+    lines += [line for line in dict.fromkeys(needed) if line not in stdlib]
     lines += imports
     if after:
         lines += ["", *after]
-    if offline and stand_in.definitions:
+    if scripted:
+        lines += ["", *_script(replayed)]
+    if stand_in and stand_in.definitions:
         lines += ["", "", *stand_in.definitions]
     lines += ["", ""]
     if not offline:
@@ -537,17 +712,21 @@ def generate(
     lines += _definition(name, framework)
     body = [*first, "reports: list[TurnReport] = []"]
     body.append('monkeypatch.setattr(atom, "on_turn", reports.append)')
-    keeps_offline = stand_in.comment or _KEEPS_OFFLINE
-    if offline and stand_in.before_build:
-        body += [keeps_offline, *stand_in.before_build]
+    comment = _REPEATS_ITSELF if scripted else _KEEPS_OFFLINE
+    if stand_in and stand_in.before_build:
+        body += [stand_in.comment or comment, *stand_in.before_build]
     body.append("agent = atom.build()")
-    if offline and stand_in.after_build:
-        body += [keeps_offline, *stand_in.after_build]
+    if stand_in and stand_in.after_build:
+        body += [stand_in.comment or comment, *stand_in.after_build]
     body += framework.setup
     for index, turn in enumerate(replayed):
         body.append("")
         body += _checks(
-            turn, first=index == 0, last=index == len(replayed) - 1, framework=framework
+            turn,
+            first=index == 0,
+            last=index == len(replayed) - 1,
+            framework=framework,
+            scripted=scripted,
         )
     lines += [f"    {line}" if line else "" for line in body]
 
@@ -555,19 +734,27 @@ def generate(
     changed = [turn for turn in records if turn.changes and turn.signature != code_signature]
     earlier = [str(turn.n) for turn in records if turn.reloads != reloads]
     notes: list[str] = []
+    if scripted:
+        # First of all, that the file holds text a model wrote.
+        count = sum(len(turn.replies) for turn in replayed)
+        notes += [_STORED_ONE if count == 1 else _STORED.format(count=count), _REPEATS]
     if offline:
-        notes.append(_OFFLINE.format(model=stand_in.label))
+        label = framework.offline.label
+        notes.append(_OFFLINE_SCRIPTED if scripted else _OFFLINE.format(model=label))
         if changed:
             notes.append(_IN_THE_STUDIO)
         if earlier:
             notes.append(_THEN)
-        notes += stand_in.notes
     else:
         who = _listed([c if c == "the nucleus" else f"`{c}`" for c in callers])
         call = "call real models" if len(callers) > 1 else "calls a real model"
         notes.append(_MARKED.format(who=who[0].upper() + who[1:], call=call))
+        if scripted:
+            notes.append(_CLOSE_TO_ITS_LIMIT)
+    if stand_in:
+        notes += stand_in.notes
     notes += framework.notes
-    notes += [_OUTPUT.format(n=turn.n) for turn in replayed if turn.output_stopped]
+    notes += [_ASKED_AGAIN.format(n=turn.n) for turn in replayed if scripted and turn.asked_again]
     assumed = (
         [name for turn in replayed for name in turn.functions]
         if offline

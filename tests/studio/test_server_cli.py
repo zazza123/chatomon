@@ -521,5 +521,5 @@ def test_a_note_that_quotes_the_preset_cannot_rewrite_the_terminal(
     assert note == (
         "note: 'scope_guard' uses the environment variable SCOPE_KEY: "
         'guard=ApiBackend(api_url="https://scope.example", api_key_env="SCOPE_KEY", '
-        'model="m\\x9b2J"). Check where it points before you send a message.'
+        'model="m\\u009b2J"). Check where it points before you send a message.'
     )

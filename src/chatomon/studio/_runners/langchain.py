@@ -9,7 +9,7 @@ from langchain_core.messages import HumanMessage
 
 from chatomon.connectors.base import Connector
 from chatomon.studio._runners import InterruptedTurnError, RunOutcome
-from chatomon.studio._testgen import Call, Framework, Offline
+from chatomon.studio._testgen import Call, Framework, StandIn
 
 _INTERRUPTED = (
     "the agent stopped to wait for an answer, which the studio cannot give: "
@@ -32,11 +32,27 @@ _MIDDLEWARE = (
     "This atom has middleware of its own: one that chooses the model can still reach a "
     "real model in this test."
 )
+# A middleware reaches the model through the connector as the agent does, so in a test that
+# repeats the replies it gets the stand-in, which has only those replies to give.
+_CALLS_THE_MODEL = (
+    "A middleware that calls the model itself, as one that selects tools or summarises the "
+    "conversation does, gets the stand-in in place of the model: with one, this test fails "
+    "on the unchanged atom."
+)
 # LangChain's fake chat model refuses tools with an error, which a fallback middleware
 # takes as a reason to call another model: the stand-in takes them and calls none.
 _OFFLINE_NUCLEUS = (
     "class OfflineNucleus(FakeListChatModel):",
     '    """Stands in for the nucleus: it calls no model and no tool."""',
+    "",
+    "    def bind_tools(self, tools, **kwargs):",
+    "        return self",
+)
+# LangChain's fake chat model over a list starts again from its first reply when they are
+# over; this one reads an iterator and ends with it.
+_SCRIPTED_NUCLEUS = (
+    "class ScriptedNucleus(GenericFakeChatModel):",
+    '    """Stands in for the nucleus: it repeats its replies, with no model and no tool."""',
     "",
     "    def bind_tools(self, tools, **kwargs):",
     "        return self",
@@ -127,7 +143,8 @@ def saved_test(connector: Connector[Any]) -> Framework:
 
     Returns:
         The awaited call that runs a turn around the conversation's messages, the
-        reply, and the chat model the test defines to stand in for the nucleus offline.
+        reply, and the chat models the test defines to stand in for the nucleus:
+        one offline, one that repeats its replies.
     """
     thread = (_THREAD,) if _set(connector, "checkpointer") else ()
     middleware = getattr(connector, "agent_kwargs", {}).get("middleware")
@@ -142,7 +159,18 @@ def saved_test(connector: Connector[Any]) -> Framework:
         reply='result["messages"][-1].content',
         marker='@pytest.mark.asyncio(loop_scope="session")',
         notes=(_ASYNC,),
-        offline=Offline(
+        scripted=StandIn(
+            imports=(
+                "from langchain_core.language_models.fake_chat_models import GenericFakeChatModel",
+            ),
+            definitions=_SCRIPTED_NUCLEUS,
+            before_build=(
+                "nucleus = ScriptedNucleus(messages=nucleus_replies())",
+                'monkeypatch.setattr(atom.connector, "model", nucleus)',
+            ),
+            notes=(_MIDDLEWARE, _CALLS_THE_MODEL) if middleware else (),
+        ),
+        offline=StandIn(
             label="a chat model of its own, `OfflineNucleus`,",
             imports=(
                 "from langchain_core.language_models.fake_chat_models import FakeListChatModel",
