@@ -13,7 +13,7 @@ The studio is a local web page for trying an atom before it goes anywhere. You c
 - **Connections** — an orbital that calls a service is added with the address of the service and the name of the variable that holds its key, and tried with **Test connection** before a message is sent.
 - **Back to code** — the tuned orbitals as Python to paste into your atom, or as a preset file to load again later.
 - **Reload** — after a change to your code the atom is loaded again without a restart, and the session keeps your orbital changes and the conversation.
-- **Tests** — a turn, or the conversation up to it, saved as a pytest file that runs against the atom from your code.
+- **Tests** — a turn, or the conversation up to it, saved as a pytest file that runs against the atom from your code. A reply that an output orbital stopped is repeated in the test, which checks what the orbital decides on it.
 - **Every framework** — an atom built with any of chatomon's connectors opens the same way.
 
 ## Table of Contents
@@ -24,7 +24,7 @@ The studio is a local web page for trying an atom before it goes anywhere. You c
 | [Tuning Orbitals](tuning.md) | Editing settings and blocks, changing the order, adding and deleting orbitals, testing a connection, changes against the code |
 | [Back to Code](export.md) | Copy as code, presets and the preset format |
 | [Reloading the Code](reload.md) | What a reload keeps, what it drops, and what needs a restart |
-| [Saving a Turn as a Test](testing.md) | What a saved test checks, offline and integration tests, where the file goes |
+| [Saving a Turn as a Test](testing.md) | What a saved test checks, repeating the replies of the nucleus, offline and integration tests, where the file goes |
 | [Frameworks in the Studio](frameworks.md) | What changes with each connector: the conversation, the atom card, the notes at start |
 
 ## Installing and Starting
@@ -88,8 +88,6 @@ The studio shows conversation text and calls models with your credentials, so it
 - **Changes live in the session.** Stopping the studio discards them: copy the code first, or export a preset and [start the studio with it](export.md#starting-with-a-preset) the next time.
 - **Some changes need a restart.** [Reload from code](reload.md) loads your project again; installed packages, code outside the directory the command was started from, and a studio started with `serve()` need the command to be started again.
 - **What a turn can rely on depends on the framework.** Dependencies, runtime contexts, checkpointers, history providers and turns that wait for an answer are covered in [Frameworks in the Studio](frameworks.md); the command says what applies to your atom when it starts.
-- **A saved test does not repeat what the output chain decided.** It runs the real nucleus, which writes something else every time: for a turn in which an output orbital stopped a reply, the test checks only how the turn ended.
-- **Rejected replies are not shown.** When an output orbital makes the nucleus write a reply again, the report shows the orbital's guidance, not the text it rejected.
 
 ## Key Components
 
