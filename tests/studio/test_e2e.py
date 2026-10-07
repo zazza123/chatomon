@@ -1152,7 +1152,7 @@ def test_a_turn_with_a_rejected_reply_is_saved_with_the_replies_of_the_nucleus(
     open_studio(page, saving_judged)
     send(page, "Are you open?", REPLY)
     save_as_test(page, 1)
-    # The first thing the card says is that the file will hold text of the conversation.
+    # The first thing the card says is that the file will hold text a model wrote.
     expect(card(page).locator("p.note").first).to_have_text(
         "This test stores the 2 replies the nucleus gave in the studio, as text: "
         "read them before you commit the file."

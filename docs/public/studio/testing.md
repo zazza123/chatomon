@@ -75,8 +75,8 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from speedypack.app import atom
 
-# What the nucleus wrote in the studio, in order. It is the only text of the
-# conversation this test stores: read it before you commit the file.
+# What the nucleus wrote in the studio, in order. It is the only text a model
+# wrote that this test stores: read it before you commit the file.
 NUCLEUS_REPLIES = [
     # Turn 1
     "We're open Monday to Saturday, 9 to 18.",
@@ -132,7 +132,7 @@ For every reply of the nucleus, in order, the test checks what chatomon decided 
 | More replies than were written | When your code now rejects a reply that was accepted in the studio, the nucleus is asked for one more than it has: the test fails and says so |
 | A turn asked again | When your code sent the nucleus back to write after chatomon had decided, as a LangChain middleware that jumps back to the model does, the test expects it to do so again, and the card says in which turn |
 
-**The file holds text of the conversation.** The replies of the nucleus are written at the top of the file, as text, and they can quote what the nucleus read: your knowledge, or what a tool returned. The card says so before anything else. Read them before you commit the file, and edit them there if you need to: the test only needs each reply to still be one your orbitals decide on in the same way.
+**The file holds text a model wrote.** A saved test has always held your messages; this one also holds the replies of the nucleus, written at the top of the file, as text, and they can quote what the nucleus read: your knowledge, or what a tool returned. The card says so before anything else. Read them before you commit the file, and edit them there if you need to: the test only needs each reply to still be one your orbitals decide on in the same way.
 
 Clearing **Replay the turns before it** can change the kind of test. When the stopped reply is in an earlier turn, the last turn alone is a test with the real nucleus again.
 

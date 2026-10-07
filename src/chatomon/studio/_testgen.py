@@ -9,8 +9,8 @@ real nucleus would not write that reply again. The test then puts a stand-in in
 place of the nucleus, which repeats what the nucleus wrote in the studio, and
 checks what the output chain decides on every reply. Those replies are what the
 nucleus says, never what the test expects: no text a model wrote is compared.
-They are the only text of the conversation a test stores, next to the messages
-and the replies fixed in code.
+They are the only text a model wrote that a test stores: the rest is the
+messages and the replies fixed in code.
 """
 
 from __future__ import annotations
@@ -114,8 +114,8 @@ _REPEATS_ITSELF = (
 )
 _REPLIES = "NUCLEUS_REPLIES"
 _STORED_HERE = (
-    "# What the nucleus wrote in the studio, in order. It is the only text of the",
-    "# conversation this test stores: read it before you commit the file.",
+    "# What the nucleus wrote in the studio, in order. It is the only text a model",
+    "# wrote that this test stores: read it before you commit the file.",
 )
 _NEXT_REPLY = (
     "def nucleus_replies() -> Iterator[str]:",
@@ -728,7 +728,7 @@ def generate(
     earlier = [str(turn.n) for turn in records if turn.reloads != reloads]
     notes: list[str] = []
     if scripted:
-        # First of all, that the file holds text of the conversation.
+        # First of all, that the file holds text a model wrote.
         count = sum(len(turn.replies) for turn in replayed)
         notes += [_STORED_ONE if count == 1 else _STORED.format(count=count), _REPEATS]
     if offline:

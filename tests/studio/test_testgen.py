@@ -1356,8 +1356,8 @@ def test_a_reply_an_output_orbital_rejected_is_repeated_and_checked_attempt_by_a
     say(session, "I am angry")
     test = save(session)
     assert (
-        "# What the nucleus wrote in the studio, in order. It is the only text of the\n"
-        "# conversation this test stores: read it before you commit the file.\n"
+        "# What the nucleus wrote in the studio, in order. It is the only text a model\n"
+        "# wrote that this test stores: read it before you commit the file.\n"
         "NUCLEUS_REPLIES = [\n"
         "    # Turn 1\n"
         '    "Damn right.",\n'
