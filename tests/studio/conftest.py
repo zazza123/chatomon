@@ -23,6 +23,21 @@ def framework(
     return frameworks.harness(request.param, monkeypatch)
 
 
+@pytest.fixture(autouse=True)
+def the_suite_stays_imported() -> Iterator[None]:
+    """Fail a test that leaves the suite's own modules forgotten.
+
+    A reload forgets the modules under the directory its session was started in.
+    Started in the repository, that is the suite itself: a test that runs later
+    would import a second copy of a module other tests already hold.
+    """
+    before = {name: module for name, module in sys.modules.items() if name.split(".")[0] == "tests"}
+    yield
+    lost = sorted(name for name, module in before.items() if sys.modules.get(name) is not module)
+    sys.modules.update(before)
+    assert not lost, f"this test left modules of the suite forgotten or replaced: {lost}"
+
+
 def _forget_modules_under(directory: Path) -> None:
     """Take out of `sys.modules` what was imported from a directory."""
     directories = {Path(os.path.abspath(directory)), directory.resolve()}
