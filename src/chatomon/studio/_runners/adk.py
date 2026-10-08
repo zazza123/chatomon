@@ -27,6 +27,10 @@ _ASYNC = "Google ADK is asynchronous: the test needs `pytest-asyncio` 0.24 or la
 _OWN_CLASS = (
     "`{name}` is written on Google ADK's model classes: if they change, save the test again."
 )
+_PLUGINS_RUN = (
+    "This atom has plugins of its own: they run in this test too, and write where they "
+    "usually write."
+)
 # A callback reaches the model through the agent as a turn does, or answers in its place.
 _CALLBACKS = (
     "This atom has callbacks of its own: one that calls a model can still reach a real "
@@ -93,6 +97,7 @@ async def run_turn(agent: Any, message: str, conversation: Any) -> RunOutcome:
     Raises:
         InterruptedTurnError: If the run stopped to wait for an answer, as a
             long-running tool or a request for a confirmation makes it do.
+            The conversation that was given is as it was.
     """
     runner = InMemoryRunner(app=agent)
     service = runner.session_service
@@ -106,7 +111,8 @@ async def run_turn(agent: Any, message: str, conversation: Any) -> RunOutcome:
     content = types.Content(role="user", parts=[types.Part(text=message)])
     turn = runner.run_async(user_id=_USER, session_id=session.id, new_message=content)
     events = [event async for event in turn]
-    if events and events[-1].long_running_tool_ids:
+    # A request for a confirmation is not the last event of its run.
+    if any(event.long_running_tool_ids for event in events):
         raise InterruptedTurnError(_INTERRUPTED)
     after = await service.get_session(
         app_name=runner.app_name, user_id=_USER, session_id=session.id
@@ -152,7 +158,7 @@ def saved_test(connector: Connector[Any]) -> Framework:
 
     Args:
         connector: An `ADKConnector`; with callbacks of the developer's the
-            stand-ins take a note.
+            stand-ins take a note, and with plugins every test does.
 
     Returns:
         The awaited call that runs a turn on ADK's in-memory runner, which keeps
@@ -162,6 +168,7 @@ def saved_test(connector: Connector[Any]) -> Framework:
     """
     kwargs = getattr(connector, "agent_kwargs", {})
     callbacks = (_CALLBACKS,) if any(key.endswith("_callback") for key in kwargs) else ()
+    plugins = getattr(connector, "app_kwargs", {}).get("plugins")
     turn = Call(arguments=("quiet=True",))
     return Framework(
         imports=("from google.adk.runners import InMemoryRunner",),
@@ -171,7 +178,7 @@ def saved_test(connector: Connector[Any]) -> Framework:
         reply="result[-1].content.parts[0].text",
         setup=("runner = InMemoryRunner(app=agent)",),
         marker='@pytest.mark.asyncio(loop_scope="session")',
-        notes=(_ASYNC,),
+        notes=(_ASYNC, *((_PLUGINS_RUN,) if plugins else ())),
         offline=StandIn(
             label="a model of its own, `OfflineNucleus`,",
             imports=_MODEL_CLASSES,

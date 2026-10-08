@@ -6,6 +6,7 @@ import pytest
 from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 from google.adk.plugins.base_plugin import BasePlugin
+from google.adk.tools.function_tool import FunctionTool
 from google.adk.tools.long_running_tool import LongRunningFunctionTool
 from google.genai import types
 
@@ -19,6 +20,10 @@ from tests.fakes import ScriptedOrbital
 PLUGINS = (
     "this atom has plugins of its own (audit, billing); they run on every turn of the "
     "studio too, and write where they usually write"
+)
+PLUGINS_RUN = (
+    "This atom has plugins of its own: they run in this test too, and write where they "
+    "usually write."
 )
 CALLBACKS = (
     "This atom has callbacks of its own: one that calls a model can still reach a real "
@@ -74,6 +79,26 @@ async def test_a_run_that_waits_for_an_answer_is_a_failed_turn_and_the_conversat
     ]
 
 
+def pay(amount: int) -> str:
+    """Pay an amount."""
+    return f"paid {amount}"
+
+
+async def test_a_request_for_a_confirmation_is_a_turn_that_waits_too():
+    """ADK asks for a confirmation in an event that is not the last of the run."""
+    call = types.FunctionCall(name="pay", args={"amount": 5}, id="call-pay")
+    paying = LlmResponse(
+        content=types.Content(role="model", parts=[types.Part(function_call=call)])
+    )
+    model = ScriptedLlm(script=["one", paying, "three"])
+    connector = ADKConnector(model, tools=[FunctionTool(pay, require_confirmation=True)])
+    agent = built(connector)
+    first = await run_turn(agent, "hello", None)
+    with pytest.raises(InterruptedTurnError, match="the turn is left unfinished"):
+        await run_turn(agent, "pay five", first.conversation)
+    assert (await run_turn(agent, "again", first.conversation)).reply == "three"
+
+
 async def test_the_copy_a_turn_runs_on_is_still_the_same_conversation():
     seen: list[str | None] = []
     connector = ADKConnector(ScriptedLlm(script=["one", "two"]))
@@ -110,6 +135,16 @@ def test_a_saved_test_awaits_its_turns_on_adks_runner_and_swaps_the_connectors_m
         compile("\n".join([*stand_in.imports, "", *stand_in.definitions]), "x.py", "exec")
     assert lines.offline.definitions[0] == "class OfflineNucleus(BaseLlm):"
     assert lines.scripted.definitions[0] == "def scripted_nucleus() -> BaseLlm:"
+
+
+def test_a_saved_test_of_an_atom_with_plugins_says_that_they_run():
+    class Mine(BasePlugin):
+        pass
+
+    assert PLUGINS_RUN not in saved_test(ADKConnector(ScriptedLlm())).notes
+    lines = saved_test(ADKConnector(ScriptedLlm(), app_kwargs={"plugins": [Mine(name="audit")]}))
+    # In every test, with a stand-in or with the real nucleus: the plugins are the app's.
+    assert lines.notes[-1] == PLUGINS_RUN
 
 
 def test_a_saved_test_of_an_atom_with_callbacks_says_what_they_can_do():
