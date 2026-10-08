@@ -138,6 +138,35 @@ def _said(text: str, source: LlmResponse | None = None) -> LlmResponse:
     )
 
 
+def _live(events: Sequence[Event]) -> list[Event]:
+    """Leave out the turns a rewind took back, as ADK does for the model.
+
+    ADK keeps those events in the session. An event that carries a rewind hides
+    itself and every event since the first one of the run it names.
+
+    Returns:
+        The events the model is still shown, in the order they were stored.
+    """
+    first: dict[str, int] = {}
+    for index, event in enumerate(events):
+        if event.invocation_id:
+            first.setdefault(event.invocation_id, index)
+    live: list[Event] = []
+    index = len(events) - 1
+    while index >= 0:
+        event = events[index]
+        rewound = event.actions.rewind_before_invocation_id if event.actions else None
+        if rewound:
+            start = first.get(rewound)
+            if start is not None and start < index:
+                index = start
+        else:
+            live.append(event)
+        index -= 1
+    live.reverse()
+    return live
+
+
 def _history(events: Sequence[Event]) -> list[Message]:
     history: list[Message] = []
     for event in events:
@@ -288,10 +317,11 @@ class _ChatomonPlugin(BasePlugin):
             The turn, kept until the run ends.
         """
         session = invocation_context.session
+        events = _live(session.events)
         if message is None:
-            message, history = _message_of(session.events, invocation_context.invocation_id)
+            message, history = _message_of(events, invocation_context.invocation_id)
         else:
-            history = _history(session.events)
+            history = _history(events)
         turn = self._engine.start_turn(conversation_id=session.id)
         try:
             decision = await self._engine.run_input(turn, message=message, history=history)

@@ -432,6 +432,28 @@ async def test_thoughts_are_no_part_of_the_reply_or_of_the_history():
     )
 
 
+async def test_the_turns_a_rewind_took_back_are_not_in_the_history():
+    guard = ScriptedOrbital(name="guard")
+    out = ScriptedOrbital(name="out")
+    app, model, _ = build("One.", "Two.", "Three.", input_orbitals=[guard], output_orbitals=[out])
+    runner = runner_of(app)
+    await ask(runner, "first")
+    second = await ask(runner, "second")
+    await runner.rewind_async(
+        user_id=USER, session_id="s1", rewind_before_invocation_id=second[-1].invocation_id
+    )
+    await ask(runner, "third")
+    before = (Message(role="user", content="first"), Message(role="assistant", content="One."))
+    # ADK keeps the turns it rewound in the session and hides them from the model.
+    assert model.recorder[2].messages == [
+        ("user", "first"),
+        ("assistant", "One."),
+        ("user", "third"),
+    ]
+    assert guard.contexts[2].history == before
+    assert out.contexts[2].history == (*before, Message(role="user", content="third"))
+
+
 async def test_a_step_that_talks_and_calls_a_tool_is_no_reply():
     call = types.FunctionCall(name="lookup", args={})
     talking = LlmResponse(
