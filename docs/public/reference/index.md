@@ -84,7 +84,7 @@ The Principled Intelligence orbitals are not re-exported: import them from `chat
 |------|---------------|
 | `Connector`, `render_guidance` | [Connectors / Base](connectors_base.md) |
 
-The framework connectors are not re-exported: import them from `chatomon.connectors.pydantic_ai`, `chatomon.connectors.langchain`, or `chatomon.connectors.maf`, which need the matching extra.
+The framework connectors are not re-exported: import them from `chatomon.connectors.pydantic_ai`, `chatomon.connectors.langchain`, `chatomon.connectors.maf`, or `chatomon.connectors.adk`, which need the matching extra.
 
 ### `chatomon.connectors.maf`
 

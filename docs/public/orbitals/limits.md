@@ -86,7 +86,7 @@ assert len(closed) == 1
 - **Closing the session** — chatomon never runs the agent, so it cannot end the conversation: it keeps answering with the closing reply. Your application reads the `turn_limit` reason in the turn report, as `close_on_limit` does above, and closes the chat.
 - **Chain order** — place it first among the input orbitals. Past the limit it answers before the later orbitals run, so a long message gets the closing reply rather than the length reply, and no judge is called for a conversation that is over.
 - **Full history required** — the count comes from the history your application passes. If it trims the history (for example a sliding window), the count stops growing at the size of the window, and the limit may never be reached.
-- **Microsoft Agent Framework** — MAF's history provider does not store a message identical to one it already holds, so with `MAFConnector` and `MAFFoundryConnector` a message repeated word for word ("yes", "ok") is counted once, and the limit is reached late or never. PydanticAI and LangChain count every message.
+- **Microsoft Agent Framework** — MAF's history provider does not store a message identical to one it already holds, so with `MAFConnector` and `MAFFoundryConnector` a message repeated word for word ("yes", "ok") is counted once, and the limit is reached late or never. PydanticAI, LangChain and Google ADK count every message.
 - **Input side only** — placing it among the output orbitals is a configuration error.
 
 ## Decisions and Audit

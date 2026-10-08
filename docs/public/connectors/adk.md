@@ -37,7 +37,7 @@ asyncio.run(main())
 
 Every extra keyword argument of the connector goes to `LlmAgent` (`tools`, `generate_content_config`, callbacks, `output_key`, ...). What the `App` takes goes in `app_kwargs` (`plugins`, `context_cache_config`, `resumability_config`, ...). Your own plugins run after chatomon's.
 
-The agent runs only inside the app that `build()` returned. A `Runner` given the agent alone has no plugin of chatomon's, and the nucleus then raises `ChatomonConfigError` instead of calling the model unchecked.
+The agent runs only inside the app that `build()` returned. A `Runner` given the agent alone has no plugin of chatomon's, and the nucleus then raises `ChatomonConfigError` instead of calling the model unchecked. For the same reason the nucleus answers only the model calls ADK makes for a turn: code of yours that calls the agent's model itself gets that error, and should call your own model object.
 
 The atom's instructions and knowledge reach the model as written. ADK reads `{name}` in an instruction string as a variable of the session state; chatomon gives the text in a way ADK does not interpret, so braces in a knowledge base stay braces.
 
@@ -51,7 +51,7 @@ Each of these raises `ChatomonConfigError` with a message that says what to do i
 | `static_instruction`, `global_instruction` | The instructions come from the atom, and `static_instruction` would move them out of the system instruction |
 | `output_schema` | The nucleus replies with text, which is what the orbitals check |
 | `sub_agents` | After a transfer a sub-agent answers with a model of its own, which the output orbitals do not see. Give the other agents to the nucleus as tools (`AgentTool`) |
-| `mode` | An atom is a chat agent; in the other modes the result leaves through a tool call |
+| `mode` other than `chat` | An atom is a chat agent, the mode a root agent has by default; in the others the result leaves through a tool call |
 | `events_compaction_config` without a `summarizer` | ADK would summarise with the nucleus, outside a turn. Give the configuration a summarizer with a model of its own |
 
 Two more checks happen when the atom is built. The atom's name must be a name ADK accepts for an agent: a Python identifier other than `user`. A model given by name must be one ADK's registry resolves; pass a `BaseLlm` object for any other model.
@@ -69,7 +69,7 @@ Both `Runner.run_async` and the synchronous `Runner.run` are supported.
 
 ## Conversations
 
-The ADK session keeps the conversation, and its id is the conversation id of every report. The input orbitals check the text of a message, with the text parts of a message in several parts on separate lines; what else a message carries, such as an image, is not checked. A blocked message is replaced by the placeholder before ADK appends it to the session, so the original text is never stored, whatever session service the runner has. The plugins that come after chatomon's do not receive it either.
+The ADK session keeps the conversation, and its id is the conversation id of every report. The input orbitals check every text part of a message, each on a line of its own and whatever the part is flagged as; what else a message carries, such as an image, is not checked. A blocked message is replaced by the placeholder before ADK appends it to the session, so the original text is never stored, whatever session service the runner has. The plugins that come after chatomon's do not receive it either. For a turn an input orbital answers they are not asked `before_run_callback`, which chatomon answers first; they still receive `after_run_callback`.
 
 A reply written by an input orbital is stored as a turn of the agent. ADK signs the content that ends a run early as `model`, and in the turns that follow it would quote that content to the agent as the words of another agent; chatomon signs it with the agent's name.
 
@@ -81,7 +81,7 @@ Live runs (`run_live`, bidirectional audio and video) are refused with `Chatomon
 
 ## Tools and Other Agents
 
-Tools are declared on the agent as usual. An agent used as a tool (`AgentTool`) is a tool like any other: its inner run is not a turn of the atom, and the orbitals do not check it.
+Tools are declared on the agent as usual. An agent used as a tool (`AgentTool`) is a tool like any other: its inner run is not a turn of the atom, and the orbitals do not check it. The agent of another atom cannot be such a tool: it runs only inside its own app.
 
 ## Judges and Model Resolution
 
@@ -94,19 +94,20 @@ chatomon's spans join ADK's trace with no configuration: `chatomon.input` nests 
 ADK also traces and logs by itself, under its own rules:
 
 - **ADK's spans hold content by default.** The system instruction, the messages and the accepted reply are attributes of ADK's spans unless `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=false`. The atom's `capture_content` governs chatomon's reports, not ADK's spans.
-- **What chatomon stopped does not reach ADK's spans.** A blocked message is replaced before ADK sees it. ADK sees one model call, with the reply that passed, so a rejected reply is not there. chatomon takes the guidance out of the request before ADK records it: in ADK's trace the request appears without the `<guidance>` block, and the turn report has the guidance when `capture_content` allows it.
+- **What chatomon stopped does not reach ADK's spans.** A blocked message is replaced before ADK sees it. ADK sees one model call, with the reply that passed, so a rejected reply is not there. The request holds the guidance only while your model works, and ADK records it when a response is back: in ADK's trace the request appears without the `<guidance>` block, and the turn report has the guidance when `capture_content` allows it.
 - **A model class logs what it handles.** With its logger at `DEBUG`, ADK's `Gemini` class logs every request and response, those of a rejected attempt and the guidance included.
-- **ADK logs a run that fails.** When your model or a tool raises, ADK logs the error with its traceback through its own loggers, before the exception reaches your code.
+- **ADK logs a run that fails.** When your model or a tool raises, ADK logs the error with its traceback through its own loggers and puts its message on its spans, before the exception reaches your code.
 
 ## Failures, Cancellation and Paused Runs
 
-When the model or a tool raises, the turn is closed as `aborted` and the exception reaches your code unchanged (see [Failures](index.md#failures)). ADK keeps the message of the failed turn in the session, so the next turn finds it in the history. A run that is cancelled is closed as `aborted` too, whether the cancellation arrives during the model call, while an orbital runs or while a tool runs.
+When the model or a tool raises, the turn is closed as `aborted` and the exception reaches your code unchanged (see [Failures](index.md#failures)). ADK keeps the message of the failed turn in the session, so the next turn finds it in the history. A run that is cancelled is closed as `aborted` too, wherever the cancellation arrives. While the agent works (an orbital, the model call, a tool) the report is there before the cancellation reaches your code. While ADK itself works (storing an event, a plugin of yours) ADK tells no plugin: chatomon closes the turn when Python's garbage collector frees the run. That report comes after the cancellation reached your code, within the next turns of a process that keeps working, and it is lost if the process stops first.
 
-A run that pauses for a long-running tool, a confirmation or credentials ends without a reply, and its turn is closed as `aborted`. The answer arrives as a message with no text and resumes the run. chatomon then opens a new turn and runs the input orbitals again on the last message the user wrote, so the model is never called without the checks. One exchange with a pause leaves two reports, and an orbital that counts turns counts two.
+A run that pauses for a long-running tool, a confirmation or credentials ends without a reply, and its turn is closed as `aborted`. The answer arrives as a message with no text and resumes the run. chatomon then opens a new turn and runs the input orbitals again on the message of that run, so the model is never called without the checks. One exchange with a pause leaves two reports, and the input orbitals run twice on the same message. That message is already stored, so a second check that asks to hide it cannot take it out of the session; and what the answer itself carries is not checked, as the result of a tool is not. A run that ADK starts again by its id, with no new message, is treated the same way.
 
 ## Limits
 
-- **Replies your callbacks write are not checked.** chatomon checks what the nucleus model writes. A callback that returns the reply itself (`before_model_callback`, `on_model_error_callback`, `before_agent_callback`, `after_agent_callback`) or rewrites it afterwards (`after_model_callback`, the `on_event_callback` of a plugin) is your code speaking: the output orbitals do not see that text. A turn whose reply never came from the nucleus is reported as `aborted`.
+- **Replies your callbacks write are not checked.** chatomon checks what the nucleus model writes. A callback that returns the reply itself (`before_model_callback`, `on_model_error_callback`, `before_agent_callback`, `after_agent_callback`) or rewrites it afterwards (`after_model_callback`, the `on_event_callback` of a plugin) is your code speaking: the output orbitals do not see that text. A turn whose reply never came from the nucleus is reported as `aborted`. In the same way, a plugin of yours that returns a new user message from `on_user_message_callback` replaces the message after the input orbitals checked it.
+- **Thoughts are not checked.** What a thinking model returns as a thought is not part of the reply: the output orbitals do not see it, and it travels with a reply they accepted.
 - **ADK does not see the class of your model.** The agent's model is chatomon's wrapper, which forwards the name and the declared capabilities of yours. Where ADK looks at the class instead, it does not find it: Gemini's Interactions API is not chained from one call to the next, and for Anthropic, LiteLLM and OpenAI Responses models ADK does not keep its own fallback ids of tool calls, which matters only for a provider that returns calls without an id.
 - **One agent.** An atom is one `LlmAgent` with its tools. Sub-agents and ADK's workflow agents are not supported.
 - **ADK 2.10 or later.** Earlier 2.x versions call the model even when a plugin has already answered, or store that answer as the words of another agent. The 1.x line is not supported.

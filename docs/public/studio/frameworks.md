@@ -74,7 +74,7 @@ Saved as `app.py`, it opens with `chatomon studio app:atom`. The atom card shows
 
 ## Google ADK
 
-The studio runs the `App` the atom builds on ADK's in-memory runner. In ADK the session service belongs to the runner, not to the app, so the studio never reaches the session store of your application: there is nothing to point elsewhere and nothing to clear. Artifacts and memory are in memory too, so tools that use them work and leave nothing behind.
+The studio runs the `App` the atom builds on ADK's in-memory runner. In ADK the session service belongs to the runner, not to the app, so the studio never reaches the session store of your application: there is nothing to point elsewhere and nothing to clear. Artifacts and memory are in memory too and last one turn: a tool finds nothing that a tool saved in an earlier turn.
 
 The conversation is an ADK session. ADK keeps the message of a turn that failed in the session it ran on, so the studio runs each turn on a copy of the session and keeps the copy only when the turn ends well. The id of the session stays the same, and it is the conversation id that orbitals and the turn report see.
 

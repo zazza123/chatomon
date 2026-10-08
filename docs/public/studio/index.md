@@ -29,7 +29,7 @@ The studio is a local web page for trying an atom before it goes anywhere. You c
 
 ## Installing and Starting
 
-Install the `studio` extra together with the extra of the atom's framework: `pip install 'chatomon[studio,pydantic-ai]'`, with `langchain`, `maf` or `maf-foundry` in place of `pydantic-ai` for the other frameworks. Then give the command the atom's location as `module:attribute`:
+Install the `studio` extra together with the extra of the atom's framework: `pip install 'chatomon[studio,pydantic-ai]'`, with `langchain`, `maf`, `maf-foundry` or `adk` in place of `pydantic-ai` for the other frameworks. Then give the command the atom's location as `module:attribute`:
 
 ```bash
 chatomon studio speedypack.app:atom
