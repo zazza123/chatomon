@@ -14,6 +14,7 @@ from chatomon.knowledge import Knowledge
 from chatomon.observability import ContentPolicy, get_tracer
 from chatomon.orbitals.base import Orbital, undeclared
 from chatomon.schemas import (
+    DEFAULT_BLOCKED_GUIDANCE,
     DEFAULT_BLOCKED_PLACEHOLDER,
     DEFAULT_REFUSAL,
     CaptureContent,
@@ -41,6 +42,17 @@ class Atom(Generic[AgentT]):
         output_orbitals: Orbitals run in order on the nucleus reply.
         refusal: Reply used when a message is blocked without a specific reply.
         blocked_placeholder: Text that replaces a blocked user message in the history.
+        blocked_guidance: Guidance the nucleus receives, before the orbital's own, when
+            an input orbital blocks a message with guidance and the nucleus writes the
+            refusal. The nucleus is then called with the placeholder in place of the
+            message, and a model that is not told what the placeholder is can answer
+            about it: it tells the user that a message was removed, or greets, and the
+            refusal the orbital asked for is never written. The default,
+            [DEFAULT_BLOCKED_GUIDANCE][chatomon.schemas.DEFAULT_BLOCKED_GUIDANCE], says
+            that the message is withheld and must not be mentioned. Pass your own text
+            to word it for your model, or `None` to give the nucleus the orbital's
+            guidance alone. It is not part of the turn reports, which record the
+            guidance of each orbital.
         max_retries: Regenerations allowed when an output orbital blocks with guidance.
         on_turn: Receives the [TurnReport][chatomon.schemas.TurnReport] of every turn.
         capture_content: `"none"` (default), `"hash"` or `"full"`: how much of the
@@ -86,6 +98,7 @@ class Atom(Generic[AgentT]):
         output_orbitals: Sequence[Orbital] = (),
         refusal: str = DEFAULT_REFUSAL,
         blocked_placeholder: str = DEFAULT_BLOCKED_PLACEHOLDER,
+        blocked_guidance: str | None = DEFAULT_BLOCKED_GUIDANCE,
         max_retries: int = 2,
         on_turn: TurnCallback | None = None,
         capture_content: CaptureContent = "none",
@@ -111,6 +124,11 @@ class Atom(Generic[AgentT]):
             raise ChatomonConfigError("refusal must not be empty")
         if not blocked_placeholder.strip():
             raise ChatomonConfigError("blocked_placeholder must not be empty")
+        if blocked_guidance is not None and not blocked_guidance.strip():
+            raise ChatomonConfigError(
+                "blocked_guidance must not be empty; pass None to give the nucleus "
+                "the orbital's guidance alone"
+            )
         self.name = name
         self.instructions = instructions
         self.connector = connector
@@ -119,6 +137,7 @@ class Atom(Generic[AgentT]):
         self.output_orbitals: tuple[Orbital, ...] = tuple(output_orbitals)
         self.refusal = refusal
         self.blocked_placeholder = blocked_placeholder
+        self.blocked_guidance = blocked_guidance
         self.max_retries = max_retries
         self.on_turn = on_turn
         self.content_policy = ContentPolicy(capture_content, redactor)
@@ -195,6 +214,7 @@ class Atom(Generic[AgentT]):
             input_orbitals=self.input_orbitals,
             output_orbitals=self.output_orbitals,
             refusal=self.refusal,
+            blocked_guidance=self.blocked_guidance,
             max_retries=self.max_retries,
             on_turn=self.on_turn,
             content=self.content_policy,

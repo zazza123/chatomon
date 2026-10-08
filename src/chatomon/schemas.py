@@ -13,6 +13,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 __all__ = [
+    "DEFAULT_BLOCKED_GUIDANCE",
     "DEFAULT_BLOCKED_PLACEHOLDER",
     "DEFAULT_REFUSAL",
     "CaptureContent",
@@ -58,6 +59,16 @@ DEFAULT_REFUSAL = "I'm sorry, I can't help with that."
 
 DEFAULT_BLOCKED_PLACEHOLDER = "[message removed by chatomon]"
 """Text that replaces a blocked user message in the conversation history."""
+
+DEFAULT_BLOCKED_GUIDANCE = (
+    "The user's last message is withheld from you and a placeholder stands in its place. "
+    "Do not mention the placeholder or that a message was removed: reply as the guidance says."
+)
+"""Guidance the nucleus receives first when it writes the refusal of a blocked message.
+
+The nucleus is then called with the placeholder in place of the message. A model that is
+not told what the placeholder is can answer about it instead of following the orbital's
+guidance."""
 
 
 class Message(BaseModel):
@@ -250,7 +261,9 @@ class InputDecision(BaseModel):
     with `guidance` only."""
 
     guidance: tuple[str, ...] = ()
-    """Guidance to add to this turn's model call."""
+    """Guidance to add to this turn's model call. In a `guided_refusal` it is the
+    atom's `blocked_guidance`, when it has one, followed by the guidance of the
+    orbital that blocked."""
 
     reply: str | None = None
     """The reply to send when `kind` is `reply`."""

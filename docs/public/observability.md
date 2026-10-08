@@ -98,6 +98,8 @@ A turn has one attempt for every reply the nucleus wrote and the output chain ch
 
 An attempt that was accepted or replaced is the last one unless the framework asks the model again afterwards, for example when its own validation of the output fails. That attempt stays in the report with its decision, and `final_reply` is the reply the last attempt ended with.
 
+In a [guided refusal](concepts.md#guided-refusals) the nucleus also receives the atom's `blocked_guidance`. It is a setting of the atom, the same in every turn, and the report does not repeat it: the guidance in a result is the orbital's own.
+
 The ready-made orbitals use fixed `reason` labels that contain no user text, so they are safe to record without content capture and an application can act on them — for example [the limit orbitals](orbitals/limits.md#decisions-and-audit) (`message_too_long`, `turn_limit`, ...), such as closing a chat when `turn_limit` appears. Your own orbitals choose their labels: keep user text out of them.
 
 ## Content Capture

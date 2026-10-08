@@ -28,6 +28,7 @@ from chatomon import Atom, OrbitalContext, Verdict, orbital
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.errors import MissingExtraError
 from chatomon.orbitals import JudgeOrbital, MessageLengthOrbital
+from chatomon.schemas import DEFAULT_BLOCKED_GUIDANCE
 from chatomon.studio import _kinds as kinds
 from chatomon.studio._app import create_app
 from chatomon.studio._loading import load, namespace
@@ -1499,6 +1500,13 @@ def test_started_from_python_the_atom_card_has_no_reload(page: Page, studio: Stu
     open_atom_card(page)
     expect(reload_button(page)).to_have_count(0)
     expect(card(page)).to_contain_text("Change it there and restart the studio.")
+
+
+def test_the_atom_card_shows_the_guidance_given_with_a_blocked_message(page: Page, studio: Studio):
+    open_studio(page, studio)
+    open_atom_card(page)
+    expect(card(page)).to_contain_text("blocked_guidance")
+    expect(card(page)).to_contain_text(DEFAULT_BLOCKED_GUIDANCE)
 
 
 def test_a_reload_that_ends_after_its_card_was_left_does_not_take_the_screen(

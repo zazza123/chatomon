@@ -28,7 +28,7 @@ Every orbital returns a `Verdict` (`src/chatomon/schemas.py`):
 |---------|-------------------|--------------------|
 | `allow` | The message goes on; optional **guidance** is added to this turn's model call | The reply goes on (guidance is ignored) |
 | `block` with a reply | The user receives that reply; the model is not called | The reply is replaced |
-| `block` with guidance | The model is called **without** the user message, only with the guidance, and writes the refusal | The model rewrites its reply following the guidance |
+| `block` with guidance | The model is called **without** the user message, only with the guidance, and writes the refusal: a [guided refusal](#guided-refusals) | The model rewrites its reply following the guidance |
 | `block` with neither | The atom's default refusal is sent | The atom's default refusal is sent |
 | `respond` | The orbital answers the user; the model is not called | The reply is replaced by the orbital's text |
 
@@ -60,6 +60,41 @@ sequenceDiagram
 
 The engine that implements these rules is `Engine` in `src/chatomon/engine.py`; connectors only translate its decisions into framework hooks.
 
+## Guided Refusals
+
+When an input orbital blocks a message with guidance, the nucleus writes the refusal without seeing the message. For the message `I want a refund`, blocked with the guidance `Explain that refunds are handled by email.`, this is what the model receives:
+
+```text
+System prompt
+
+    You are the customer assistant of SpeedyPack.
+
+    <guidance>
+    - The user's last message is withheld from you and a placeholder stands in its place. Do not mention the placeholder or that a message was removed: reply as the guidance says.
+    - Explain that refunds are handled by email.
+    </guidance>
+
+User message
+
+    [message removed by chatomon]
+```
+
+The second item of the guidance is the orbital's. The first is chatomon's, and it is there because of the placeholder. A model that receives the placeholder and is not told what it is can answer about it: it tells the user that a message was removed and asks to send it again, or it only greets. The user then never gets the refusal the orbital asked for.
+
+Both texts are settings of the atom:
+
+| Setting | What it is | Default |
+|---------|-----------|---------|
+| `blocked_placeholder` | The text that stands in place of a blocked message, for the nucleus and in the history | `[message removed by chatomon]` |
+| `blocked_guidance` | The guidance given to the nucleus before the orbital's own in a guided refusal | The first item above: `DEFAULT_BLOCKED_GUIDANCE` in `src/chatomon/schemas.py` |
+
+`Atom(blocked_guidance="...")` gives the nucleus your own text in place of the default. `Atom(blocked_guidance=None)` gives it the orbital's guidance alone: the guidance of each orbital then has to say what to do with the placeholder.
+
+- **Try it on your model.** How a model treats the placeholder changes from one model to another. Run a guided refusal on yours a few times: if a reply speaks of a removed message, or does not follow the orbital's guidance, reword `blocked_guidance`.
+- **It does not quote the placeholder.** The default speaks of a placeholder without repeating its text, so it holds for a `blocked_placeholder` of your own.
+- **It is given in a guided refusal only.** A turn whose message passes never gets it. A guided refusal that an output orbital sends back to the nucleus keeps it, with the orbital's guidance, because the placeholder is still in place of the message.
+- **It is not in the turn report.** The report records the guidance of each orbital. `blocked_guidance` is the same in every turn: read it on the atom.
+
 ## Rules That Always Hold
 
 - **Blocked messages never reach the nucleus.** In the stored conversation history a blocked user message is replaced by a placeholder (`[message removed by chatomon]` by default), so it cannot resurface in later turns. (LangGraph checkpointers also keep earlier snapshots of a thread; see [Connectors](connectors/langchain.md#conversations).)
@@ -77,5 +112,5 @@ The engine that implements these rules is `Engine` in `src/chatomon/engine.py`; 
 - [Observability and Audit](observability.md) — what each turn records
 
 ---
-**Last Updated:** September 2026
+**Last Updated:** October 2026
 **Status:** Implemented

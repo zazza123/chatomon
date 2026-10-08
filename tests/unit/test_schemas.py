@@ -4,6 +4,7 @@ import pytest
 
 from chatomon import OrbitalContext, TurnReport, Verdict
 from chatomon.schemas import (
+    DEFAULT_BLOCKED_GUIDANCE,
     DEFAULT_BLOCKED_PLACEHOLDER,
     DEFAULT_REFUSAL,
     InputDecision,
@@ -17,6 +18,13 @@ from chatomon.schemas import (
 def test_defaults_match_the_spec():
     assert DEFAULT_REFUSAL == "I'm sorry, I can't help with that."
     assert DEFAULT_BLOCKED_PLACEHOLDER == "[message removed by chatomon]"
+
+
+def test_the_default_blocked_guidance_is_the_wording_measured_on_real_models():
+    assert DEFAULT_BLOCKED_GUIDANCE == (
+        "The user's last message is withheld from you and a placeholder stands in its place. "
+        "Do not mention the placeholder or that a message was removed: reply as the guidance says."
+    )
 
 
 def test_allow_carries_optional_guidance_and_annotations():

@@ -1,8 +1,8 @@
 from chatomon import TurnReport, Verdict
 from chatomon.connectors import render_guidance
 from chatomon.orbitals import JudgeOrbital
+from chatomon.schemas import DEFAULT_BLOCKED_GUIDANCE, Message
 from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER as PLACEHOLDER
-from chatomon.schemas import Message
 from tests.contract.harness import ToolCall, build_agent
 from tests.fakes import ScriptedOrbital
 
@@ -119,6 +119,22 @@ async def test_guided_refusal_reply_goes_through_output_orbitals(harness):
     await harness.ask(agent, "bad request")
     assert len(out.contexts) == 1
     assert out.contexts[0].history[-1].content == PLACEHOLDER
+
+
+async def test_a_guided_refusal_written_again_keeps_the_guidance_about_the_placeholder(harness):
+    guard = ScriptedOrbital(Verdict.block(guidance="Decline."), name="guard")
+    out = ScriptedOrbital(Verdict.block(guidance="Shorter."), Verdict.allow(), name="out")
+    agent, reports = build_agent(
+        harness,
+        ["I am afraid that is not possible.", "No."],
+        input_orbitals=[guard],
+        output_orbitals=[out],
+    )
+    assert await harness.ask(agent, "bad request") == "No."
+    again = harness.calls[1]
+    assert again.messages[-1] == ("user", PLACEHOLDER)
+    assert render_guidance([DEFAULT_BLOCKED_GUIDANCE, "Decline.", "Shorter."]) in again.system
+    assert reports[0].final_action == "guided_refusal"
 
 
 async def test_judge_orbital_uses_the_atom_connector(harness):
