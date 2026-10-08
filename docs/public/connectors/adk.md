@@ -71,6 +71,8 @@ Both `Runner.run_async` and the synchronous `Runner.run` are supported.
 
 The ADK session keeps the conversation, and its id is the conversation id of every report. The input orbitals check every text part of a message, each on a line of its own and whatever the part is flagged as; what else a message carries, such as an image, is not checked. A blocked message is replaced by the placeholder before ADK appends it to the session, so the original text is never stored, whatever session service the runner has. The plugins that come after chatomon's do not receive it either. For a turn an input orbital answers they are not asked `before_run_callback`, which chatomon answers first; they still receive `after_run_callback`.
 
+The history the orbitals receive is read from the session. It leaves out the turns a rewind took back, as ADK does for the model. It keeps the full text of the turns ADK compacted, which the model sees as a summary.
+
 A reply written by an input orbital is stored as a turn of the agent. ADK signs the content that ends a run early as `model`, and in the turns that follow it would quote that content to the agent as the words of another agent; chatomon signs it with the agent's name.
 
 ## Streaming
@@ -82,6 +84,8 @@ Live runs (`run_live`, bidirectional audio and video) are refused with `Chatomon
 ## Tools and Other Agents
 
 Tools are declared on the agent as usual. An agent used as a tool (`AgentTool`) is a tool like any other: its inner run is not a turn of the atom, and the orbitals do not check it. The agent of another atom cannot be such a tool: it runs only inside its own app.
+
+With a planner (`planner`), the output orbitals check the whole text the model writes, the plan with the answer; ADK separates the plan afterwards. With a code executor (`code_executor`), a step in which the model writes code is text, so the output orbitals check it like a reply, and one they block ends the turn before the code runs. The result of the code is not checked, as the result of a tool is not.
 
 ## Judges and Model Resolution
 
@@ -95,7 +99,8 @@ ADK also traces and logs by itself, under its own rules:
 
 - **ADK's spans hold content by default.** The system instruction, the messages and the accepted reply are attributes of ADK's spans unless `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=false`. The atom's `capture_content` governs chatomon's reports, not ADK's spans.
 - **What chatomon stopped does not reach ADK's spans.** A blocked message is replaced before ADK sees it. ADK sees one model call, with the reply that passed, so a rejected reply is not there. The request holds the guidance only while your model works, and ADK records it when a response is back: in ADK's trace the request appears without the `<guidance>` block, and the turn report has the guidance when `capture_content` allows it.
-- **A model class logs what it handles.** With its logger at `DEBUG`, ADK's `Gemini` class logs every request and response, those of a rejected attempt and the guidance included.
+- **A model class logs what it handles.** With its logger at `DEBUG`, ADK's `Gemini` class logs every request and response, those of a rejected attempt and the guidance included. An instrumentation of the client under your model records the same calls.
+- **ADK counts the tokens of the reply that passed.** ADK sees one model call for each step, so the usage on its events and in its metrics is that of the last attempt. The attempts the output orbitals rejected are not counted there.
 - **ADK logs a run that fails.** When your model or a tool raises, ADK logs the error with its traceback through its own loggers and puts its message on its spans, before the exception reaches your code.
 
 ## Failures, Cancellation and Paused Runs
