@@ -1142,6 +1142,17 @@ def loads(monkeypatch: pytest.MonkeyPatch, *atoms: Atom) -> None:
     monkeypatch.setattr(loading, "load", lambda spec: queue.pop(0))
 
 
+@pytest.fixture
+def elsewhere(tmp_path, monkeypatch):
+    """Start the test's session in an empty directory.
+
+    A reload forgets the modules under the directory its session was started in:
+    in the repository those are the suite's own.
+    """
+    monkeypatch.chdir(tmp_path)
+
+
+@pytest.mark.usefixtures("elsewhere")
 async def test_the_conversation_goes_on_after_a_reload(framework: StudioHarness, monkeypatch):
     first = Listening(Verdict.allow(), Verdict.block("No."), name="guard")
     before = make_atom(connector=framework.connector("one"), input_orbitals=[first])
@@ -1183,6 +1194,7 @@ async def test_an_error_of_the_framework_while_building_is_a_failed_reload(monke
     assert (await say(session, "hello")).reply == "Hi"
 
 
+@pytest.mark.usefixtures("elsewhere")
 async def test_code_on_another_framework_starts_a_new_conversation(monkeypatch):
     here = frameworks.harness("pydantic_ai", monkeypatch)
     there = frameworks.harness("langchain", monkeypatch)
@@ -1203,6 +1215,7 @@ async def test_code_on_another_framework_starts_a_new_conversation(monkeypatch):
     assert (turn.n, turn.reply, guard.heard()) == (1, "two", [])
 
 
+@pytest.mark.usefixtures("elsewhere")
 async def test_the_two_connectors_of_one_framework_share_the_conversation(monkeypatch):
     here = frameworks.harness("maf", monkeypatch)
     there = frameworks.harness("maf_foundry", monkeypatch)
