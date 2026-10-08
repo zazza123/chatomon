@@ -10,7 +10,7 @@ The drawer lists the atom in the order a turn runs: input orbitals, the nucleus,
 
 Every orbital has a switch. Turning one off takes effect from the next turn and writes nothing to your code. A change that would make the atom invalid, such as turning off an orbital whose annotations another one reads, is refused with the reason.
 
-Clicking an orbital opens its card. Clicking the atom or the nucleus opens the atom's card: instructions, knowledge, connector and model, retries and refusal texts. The dashes and the nucleus of the atom on stage open the same cards.
+Clicking an orbital opens its card. Clicking the atom or the nucleus opens the atom's card: instructions, knowledge, connector and model, retries, the refusal texts and the guidance given with a blocked message. The dashes and the nucleus of the atom on stage open the same cards.
 
 The atom's card also has **Reload from code**, which loads the atom from your code again after you changed it: see [Reloading the Code](reload.md).
 
