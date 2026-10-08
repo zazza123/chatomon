@@ -38,6 +38,7 @@ The public API of chatomon, generated from the docstrings of the code. There is 
 | [PydanticAI](connectors_pydantic_ai.md) | `chatomon.connectors.pydantic_ai` | `PydanticAIConnector` (extra `pydantic-ai`) |
 | [LangChain](connectors_langchain.md) | `chatomon.connectors.langchain` | `LangChainConnector` (extra `langchain`) |
 | [Microsoft Agent Framework](connectors_maf.md) | `chatomon.connectors.maf` | `MAFConnector` and `MAFFoundryConnector` (extras `maf`, `maf-foundry`) |
+| [Google ADK](connectors_adk.md) | `chatomon.connectors.adk` | `ADKConnector` (extra `adk`) |
 
 ### Observability
 
@@ -83,7 +84,7 @@ The Principled Intelligence orbitals are not re-exported: import them from `chat
 |------|---------------|
 | `Connector`, `render_guidance` | [Connectors / Base](connectors_base.md) |
 
-The framework connectors are not re-exported: import them from `chatomon.connectors.pydantic_ai`, `chatomon.connectors.langchain`, or `chatomon.connectors.maf`, which need the matching extra.
+The framework connectors are not re-exported: import them from `chatomon.connectors.pydantic_ai`, `chatomon.connectors.langchain`, `chatomon.connectors.maf`, or `chatomon.connectors.adk`, which need the matching extra.
 
 ### `chatomon.connectors.maf`
 

@@ -740,6 +740,7 @@ def test_every_framework_names_its_connector_and_model_in_the_state(framework: S
             "langchain": "ScriptedChatModel",
             "maf": "ScriptedClient",
             "maf_foundry": "remote-agent (version 3)",
+            "adk": "scripted",
         }[framework.name]
     )
 

@@ -1,6 +1,6 @@
 # chatomon
 
-chatomon ("chat" + "atom") is a Python library to declare a chat agent — an **Atom** (instructions, knowledge, connector) — wrapped by ordered chains of **Orbitals** (input/output guardrails), and build it into a **native** agent of existing frameworks (PydanticAI, LangChain/LangGraph, Microsoft Agent Framework; Google ADK next). It is not a chatbot framework: it never runs the agent itself, except in the studio (`chatomon.studio`), a local development tool.
+chatomon ("chat" + "atom") is a Python library to declare a chat agent — an **Atom** (instructions, knowledge, connector) — wrapped by ordered chains of **Orbitals** (input/output guardrails), and build it into a **native** agent of existing frameworks (PydanticAI, LangChain/LangGraph, Microsoft Agent Framework, Google ADK). It is not a chatbot framework: it never runs the agent itself, except in the studio (`chatomon.studio`), a local development tool.
 
 Architecture invariants are stated in this file. The maintainer keeps the design spec outside the repository; any rule a contributor must follow lives here or in `CONTRIBUTING.md`.
 

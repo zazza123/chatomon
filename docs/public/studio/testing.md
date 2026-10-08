@@ -140,19 +140,21 @@ Clearing **Replay the turns before it** can change the kind of test. When the st
 
 The example above is the test of a PydanticAI atom. What a test checks is the same for every framework; the lines that run a turn follow the framework of the atom.
 
-| | PydanticAI | LangChain | Microsoft Agent Framework |
-|---|---|---|---|
-| A turn | `agent.run_sync("…")` | `await agent.ainvoke({"messages": [HumanMessage("…")]})` | `await agent.run("…", session=session)` |
-| The conversation | `message_history=result.all_messages()` | The messages of the turn before go in front of the new one | A session, created once the atom is built |
-| The reply | `result.output` | `result["messages"][-1].content` | `result.text` |
-| Offline, in place of the nucleus | `TestModel` | `OfflineNucleus`, a chat model the test defines | `OfflineNucleus`, a client the test defines |
-| Repeating the replies, in place of the nucleus | `scripted_nucleus()`, a function the test defines around a `FunctionModel` | `ScriptedNucleus`, a chat model the test defines | `ScriptedNucleus`, a client the test defines |
+| | PydanticAI | LangChain | Microsoft Agent Framework | Google ADK |
+|---|---|---|---|---|
+| A turn | `agent.run_sync("…")` | `await agent.ainvoke({"messages": [HumanMessage("…")]})` | `await agent.run("…", session=session)` | `await runner.run_debug("…", quiet=True)` |
+| The conversation | `message_history=result.all_messages()` | The messages of the turn before go in front of the new one | A session, created once the atom is built | ADK's in-memory runner, created once the atom is built, keeps it |
+| The reply | `result.output` | `result["messages"][-1].content` | `result.text` | `result[-1].content.parts[0].text` |
+| Offline, in place of the nucleus | `TestModel` | `OfflineNucleus`, a chat model the test defines | `OfflineNucleus`, a client the test defines | `OfflineNucleus`, a model the test defines |
+| Repeating the replies, in place of the nucleus | `scripted_nucleus()`, a function the test defines around a `FunctionModel` | `ScriptedNucleus`, a chat model the test defines | `ScriptedNucleus`, a client the test defines | `scripted_nucleus()`, a function the test defines around a model of its own |
 
-**Asynchronous tests.** The studio runs a LangChain agent asynchronously, and Microsoft Agent Framework has no other way, so the tests of these two frameworks are `async def` with `@pytest.mark.asyncio(loop_scope="session")` and need `pytest-asyncio` 0.24 or later. A LangChain test runs the agent as the studio did, which is what lets tools and middleware that are asynchronous only work in the test too. The loop is the session's because a client your module creates when it is imported keeps its connections on one loop: with a loop for each test, the second test that reaches a model would fail.
+**Asynchronous tests.** The studio runs a LangChain agent asynchronously, Microsoft Agent Framework has no other way, and Google ADK's asynchronous run is the one it recommends, so the tests of these three frameworks are `async def` with `@pytest.mark.asyncio(loop_scope="session")` and need `pytest-asyncio` 0.24 or later. A LangChain test runs the agent as the studio did, which is what lets tools and middleware that are asynchronous only work in the test too. The loop is the session's because a client your module creates when it is imported keeps its connections on one loop: with a loop for each test, the second test that reaches a model would fail.
 
 **LangChain.** With a checkpointer every call also takes a thread of its own, as every turn does in the studio. Offline, the test defines a chat model that takes the atom's tools and calls none, so a message your code lets through fails the test on what it expects. That stand-in replaces the model of the connector: a middleware of yours that chooses the model itself can still reach a real one, and the card says so whenever the atom has middleware. The same holds for the chat model that repeats the replies. That one is also what a middleware gets when it calls the model itself, to select tools or to summarise the conversation: it has only the replies of the turn to give, so the saved test of such an atom fails although nothing changed. The card says so whenever the atom has middleware.
 
 **Microsoft Agent Framework**, an agent hosted in Foundry included. Offline, the test defines a small client and puts it on the agent it built, in place of the nucleus, so a Foundry atom never reaches its hosted agent. A test that repeats the replies does the same with a client that gives them one at a time. Both clients are written on the framework's own client classes: save the test again if they change.
+
+**Google ADK.** The test builds the app, gives it to ADK's `InMemoryRunner` and runs every turn with `run_debug`, which keeps the session from one call to the next. Offline, the test defines a small model and puts it on the connector before the atom is built; a test that repeats the replies does the same with a model that gives them one at a time. The stand-in goes on the connector because the model of the built agent is chatomon's own, which runs the output chain: replacing that one would take the checks away. Both models are written on ADK's model classes: save the test again if they change. When the atom has callbacks of its own, one that calls a model can still reach a real one and one that writes the reply changes what the test sees, and the card says so. Plugins of your own run in the saved test as they do in the studio, which the card says too.
 
 Offline means the nucleus is not called. The module of your atom is still imported, with whatever it reads when it is, and in Microsoft Agent Framework the context providers of the atom still run on a turn the input chain stops: one that calls a service calls it.
 

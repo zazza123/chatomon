@@ -5,7 +5,7 @@
   </picture>
 </h1>
 
-Declare a chat agent once — its instructions, its knowledge and the **orbitals** (input/output guardrails) around it — and build it into a native agent of the framework you already use: PydanticAI, LangChain/LangGraph, or Microsoft Agent Framework.
+Declare a chat agent once — its instructions, its knowledge and the **orbitals** (input/output guardrails) around it — and build it into a native agent of the framework you already use: PydanticAI, LangChain/LangGraph, Microsoft Agent Framework, or Google ADK.
 
 > Status: pre-alpha, under active development.
 
@@ -15,6 +15,7 @@ Declare a chat agent once — its instructions, its knowledge and the **orbitals
 pip install 'chatomon[pydantic-ai]'   # or 'chatomon[langchain]'
 pip install 'chatomon[maf]'           # MAF core; add your provider's MAF client package
 pip install 'chatomon[maf-foundry]'   # FoundryChatClient and FoundryAgent
+pip install 'chatomon[adk]'           # Google ADK 2.10 or later
 pip install 'chatomon[principled]'    # Principled Intelligence ScopeGuard / ClaimExtractor orbitals
 pip install 'chatomon[studio,pydantic-ai]'  # the local studio: chatomon studio module:atom
 ```
