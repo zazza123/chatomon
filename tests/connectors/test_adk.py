@@ -18,10 +18,14 @@ from google.adk.agents.run_config import (
 )
 from google.adk.apps import App
 from google.adk.apps.app import EventsCompactionConfig
+from google.adk.apps.llm_event_summarizer import LlmEventSummarizer
+from google.adk.artifacts import InMemoryArtifactService
+from google.adk.code_executors.unsafe_local_code_executor import UnsafeLocalCodeExecutor
 from google.adk.events import Event
 from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 from google.adk.models.registry import LLMRegistry
+from google.adk.planners.plan_re_act_planner import PlanReActPlanner
 from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.runners import InMemoryRunner, Runner
 from google.adk.sessions import InMemorySessionService
@@ -454,6 +458,29 @@ async def test_the_turns_a_rewind_took_back_are_not_in_the_history():
     assert out.contexts[2].history == (*before, Message(role="user", content="third"))
 
 
+async def test_the_turns_adk_compacted_stay_whole_in_the_history():
+    guard = ScriptedOrbital(name="guard")
+    summarizer = LlmEventSummarizer(llm=ScriptedLlm(script=["A summary.", "Another."]))
+    compaction = EventsCompactionConfig(
+        summarizer=summarizer, compaction_interval=1, overlap_size=0
+    )
+    app, model, _ = build(
+        "One.",
+        "Two.",
+        connector={"app_kwargs": {"events_compaction_config": compaction}},
+        input_orbitals=[guard],
+    )
+    runner = runner_of(app)
+    await ask(runner, "first")
+    await ask(runner, "second")
+    # The model is shown the summary; the orbitals check against what was said.
+    assert model.recorder[1].messages == [("assistant", "A summary."), ("user", "second")]
+    assert guard.contexts[1].history == (
+        Message(role="user", content="first"),
+        Message(role="assistant", content="One."),
+    )
+
+
 async def test_a_step_that_talks_and_calls_a_tool_is_no_reply():
     call = types.FunctionCall(name="lookup", args={})
     talking = LlmResponse(
@@ -481,6 +508,60 @@ async def test_a_step_that_talks_and_calls_a_tool_is_no_reply():
         Message(role="user", content="hours?"),
         Message(role="assistant", content="Open 9 to 18."),
     )
+
+
+async def test_with_a_planner_the_plan_is_checked_with_the_answer():
+    planned = "/*PLANNING*/ I will greet. /*FINAL_ANSWER*/ Hello there!"
+    out = ScriptedOrbital(name="out")
+    app, _, _ = build(planned, connector={"planner": PlanReActPlanner()}, output_orbitals=[out])
+    events = await ask(runner_of(app), "hi")
+    assert [ctx.message for ctx in out.contexts] == [planned]
+    # ADK takes the plan out of the reply once the nucleus has handed it over.
+    assert reply(events).strip() == "Hello there!"
+
+
+def running_code(app: App) -> Runner:
+    """A runner with the artifact store ADK wants before it runs a model's code."""
+    return Runner(
+        app=app,
+        session_service=InMemorySessionService(),
+        artifact_service=InMemoryArtifactService(),
+        auto_create_session=True,
+    )
+
+
+async def test_a_step_that_writes_code_is_checked_like_a_reply(tmp_path):
+    marker = tmp_path / "ran"
+    code = f"Let me note it.\n```python\nopen({str(marker)!r}, 'w').close()\n```"
+    out = ScriptedOrbital(name="out")
+    app, _, reports = build(
+        code,
+        "Noted.",
+        connector={"code_executor": UnsafeLocalCodeExecutor()},
+        output_orbitals=[out],
+    )
+    events = await ask(running_code(app), "note it")
+    assert [ctx.message for ctx in out.contexts] == [code, "Noted."]
+    assert marker.exists()
+    assert reply(events) == "Noted."
+    assert reports[0].final_action == "answered"
+
+
+async def test_a_blocked_step_that_writes_code_ends_the_turn_before_the_code_runs(tmp_path):
+    marker = tmp_path / "ran"
+    code = f"Let me note it.\n```python\nopen({str(marker)!r}, 'w').close()\n```"
+    out = ScriptedOrbital(Verdict.block("Not allowed."), name="out")
+    app, model, reports = build(
+        code,
+        "Noted.",
+        connector={"code_executor": UnsafeLocalCodeExecutor()},
+        output_orbitals=[out],
+    )
+    events = await ask(running_code(app), "note it")
+    assert reply(events) == "Not allowed."
+    assert not marker.exists()
+    assert len(model.recorder) == 1
+    assert reports[0].final_action == "blocked"
 
 
 async def test_a_replaced_reply_keeps_the_usage_of_the_call_it_replaces():
