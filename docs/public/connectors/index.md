@@ -13,6 +13,7 @@ A connector builds an atom into a native agent of one framework and installs cha
 | [PydanticAI](pydantic_ai.md) | `PydanticAIConnector`: the agent it builds, message history, streaming limits, tracing |
 | [LangChain / LangGraph](langchain.md) | `LangChainConnector`: the graph it builds, checkpointers, streaming, `parent_span`, human in the loop |
 | [Microsoft Agent Framework](maf.md) | `MAFConnector` and `MAFFoundryConnector`: local sessions, Foundry, streaming limits |
+| [Google ADK](adk.md) | `ADKConnector`: the app it builds, sessions, streaming, ADK's own telemetry, paused runs |
 
 ## What "Native" Means
 
@@ -24,8 +25,9 @@ A connector builds an atom into a native agent of one framework and installs cha
 | [`LangChainConnector`](langchain.md) | LangGraph `CompiledStateGraph` from `create_agent` | `langchain.agents.create_agent` |
 | [`MAFConnector`](maf.md) | `agent_framework.Agent` | `agent_framework.Agent` |
 | [`MAFFoundryConnector`](maf.md) | `agent_framework.foundry.FoundryAgent` | `FoundryAgent` |
+| [`ADKConnector`](adk.md) | `google.adk.apps.App` with an `LlmAgent` as its root agent | `LlmAgent`; `app_kwargs` goes to `App` |
 
-chatomon sets the prompt and name from the atom, so the arguments that would conflict are refused with `ChatomonConfigError` (listed on each framework's page). Your own capabilities or middleware run inside chatomon's layer.
+chatomon sets the prompt and name from the atom, so the arguments that would conflict are refused with `ChatomonConfigError` (listed on each framework's page). Your own capabilities or middleware run inside chatomon's layer; in ADK your plugins and callbacks run after chatomon's plugin.
 
 ## How the Rules Map onto Each Framework
 
@@ -43,18 +45,23 @@ flowchart TB
         M1[AgentMiddleware<br/>run input chain, redact blocked message] --> M2[ChatMiddleware<br/>guidance, final output checks, regenerations]
         M2 --> M3[local session history and turn report]
     end
+    subgraph ADK
+        A1[plugin on_user_message<br/>run input chain, replace blocked message] --> A2[plugin before_run<br/>end the run when an orbital replies]
+        A2 --> A3[nucleus model<br/>add guidance, output chain, regenerations]
+        A3 --> A4[plugin after_run<br/>finish or abort the turn]
+    end
 ```
 
-Output checks and regenerations happen around the model call, before approved replies enter conversation history. Guidance is added to the current model request and is not stored. PydanticAI and LangChain support both their native async and sync APIs; MAF exposes an async native API. Both MAF connectors support checked output on non-streaming runs.
+Output checks and regenerations happen around the model call, before approved replies enter conversation history. Guidance is added to the current model request and is not stored. PydanticAI, LangChain and Google ADK support both their native async and sync APIs; MAF exposes an async native API. Both MAF connectors support checked output on non-streaming runs.
 
 ## At a Glance
 
-| | PydanticAI | LangChain | MAF |
-|--|-----------|-----------|-----|
-| Where the history lives | The `message_history` you pass to the next run | The graph's checkpointer | Local `AgentSession` history provider, with `store=False` |
-| Conversation id in reports | The run's `conversation_id` | The `thread_id` of the run config | The local `session_id` |
-| Streaming with output orbitals | `run_stream` is refused | Only the approved reply is streamed | `run(..., stream=True)` is refused |
-| Span nesting | Automatic | Through `parent_span` | Automatic |
+| | PydanticAI | LangChain | MAF | Google ADK |
+|--|-----------|-----------|-----|------------|
+| Where the history lives | The `message_history` you pass to the next run | The graph's checkpointer | Local `AgentSession` history provider, with `store=False` | The session of the runner's session service |
+| Conversation id in reports | The run's `conversation_id` | The `thread_id` of the run config | The local `session_id` | The id of the ADK session |
+| Streaming with output orbitals | `run_stream` is refused | Only the approved reply is streamed | `run(..., stream=True)` is refused | Each reply arrives whole, once approved |
+| Span nesting | Automatic | Through `parent_span` | Automatic | Automatic |
 
 ## Tools
 
@@ -62,11 +69,11 @@ Tools are declared on the native agent as usual. Model responses that call tools
 
 ## Judges and Model Resolution
 
-A `JudgeOrbital` without its own connector calls its model through the atom's connector. PydanticAI and LangChain accept `resolve_model`; by default PydanticAI uses the ID as a model string and LangChain calls `init_chat_model` with it. MAF needs a `resolve_client` callback because its core package does not resolve model IDs to chat clients.
+A `JudgeOrbital` without its own connector calls its model through the atom's connector. PydanticAI, LangChain and Google ADK accept `resolve_model`; by default PydanticAI uses the ID as a model string, LangChain calls `init_chat_model` with it and ADK resolves it with its model registry. MAF needs a `resolve_client` callback because its core package does not resolve model IDs to chat clients.
 
 ## Failures
 
-If the model or the framework raises during a turn, the connector closes the turn with `Engine.abort_turn` — the report says `aborted` and records the exception type — and the exception propagates to your code. LangChain's tools and `interrupt()` are covered on [its page](langchain.md#failures-and-human-in-the-loop).
+If the model or the framework raises during a turn, the connector closes the turn with `Engine.abort_turn` — the report says `aborted` and records the exception type — and the exception propagates to your code. LangChain's tools and `interrupt()` are covered on [its page](langchain.md#failures-and-human-in-the-loop); cancelled and paused ADK runs on [the ADK page](adk.md#failures-cancellation-and-paused-runs).
 
 ## Key Components
 
@@ -76,6 +83,7 @@ If the model or the framework raises during a turn, the connector closes the tur
 | `PydanticAIConnector` | `src/chatomon/connectors/pydantic_ai.py` | Builds atoms into PydanticAI agents |
 | `LangChainConnector` | `src/chatomon/connectors/langchain.py` | Builds atoms into LangChain agents (LangGraph graphs) |
 | `MAFConnector`, `MAFFoundryConnector` | `src/chatomon/connectors/maf/` | Build atoms into MAF core and Foundry agents |
+| `ADKConnector` | `src/chatomon/connectors/adk.py` | Builds atoms into Google ADK apps |
 | Contract suite | `tests/contract/` | The rules every connector must pass |
 
 ## Related Documentation
@@ -85,5 +93,5 @@ If the model or the framework raises during a turn, the connector closes the tur
 - [API Reference](../reference/index.md) — the `connectors` pages
 
 ---
-**Last Updated:** September 2026
+**Last Updated:** October 2026
 **Status:** Implemented

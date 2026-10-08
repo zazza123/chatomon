@@ -38,6 +38,7 @@ nav = [
     { "PydanticAI" = "connectors/pydantic_ai.md" },
     { "LangChain / LangGraph" = "connectors/langchain.md" },
     { "Microsoft Agent Framework" = "connectors/maf.md" },
+    { "Google ADK" = "connectors/adk.md" },
   ] },
   { "API reference" = [
     { "Overview" = "reference/index.md" },

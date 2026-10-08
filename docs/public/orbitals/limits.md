@@ -47,6 +47,7 @@ The model's own `max_tokens` is a hard cap against runaway generations, set in t
 | LangChain | On the chat model you pass to `LangChainConnector` (for example `max_tokens` on `ChatOpenAI`) |
 | Microsoft Agent Framework | `MAFConnector(client, default_options={"max_tokens": 400})` |
 | Microsoft Foundry | `MAFFoundryConnector(..., default_options={"max_tokens": 400})`, sent to Foundry as `max_output_tokens` |
+| Google ADK | `ADKConnector(model, generate_content_config=types.GenerateContentConfig(max_output_tokens=400))`, with `types` from `google.genai` |
 
 ## Turn Limit
 

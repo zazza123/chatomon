@@ -89,7 +89,7 @@ Issues are classified along independent axes. Only `type:` is mandatory.
 |---|---|---|
 | `type:` | exactly 1 on open issues | `feat` · `fix` · `refactor` · `docs` · `chore` · `epic` |
 | `area:` | 0–N | `core` · `connectors` · `orbitals` · `observability` · `docs` · `ci` · `studio` |
-| `framework:` | 0–N | `pydantic-ai` · `langchain` · `maf` |
+| `framework:` | 0–N | `pydantic-ai` · `langchain` · `maf` · `adk` |
 | `priority:` | 0–1 | `high` · `low` — absent means normal |
 | `status:` | 0–1 | `needs-triage` · `needs-info` · `blocked` |
 
@@ -296,8 +296,8 @@ Docstrings are written together with the code. The rules are in
 
 ## Adding a connector
 
-Support for a new agent framework — Google ADK, Microsoft Agent Framework and
-others — is the most likely large contribution, so its path is written down:
+Support for a new agent framework is the most likely large contribution, so its
+path is written down:
 
 1. **Request.** A `type:feat` issue with `area:connectors`, titled
    `<Framework> connector`. There is no `framework:` label for it yet (R5).

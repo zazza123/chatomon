@@ -12,11 +12,11 @@
 
 ## Overview
 
-chatomon ("chat" + "atom") lets you declare a chat agent once — an **atom** made of instructions, knowledge and a connector — surround it with **orbitals** that check messages going in and replies coming out, and build it into a **native agent** of the framework you already use. chatomon is not a chatbot framework: it never runs the agent itself; it installs checks inside PydanticAI, LangChain/LangGraph or Microsoft Agent Framework. Foundry PromptAgents support checked input and output on non-streaming runs.
+chatomon ("chat" + "atom") lets you declare a chat agent once — an **atom** made of instructions, knowledge and a connector — surround it with **orbitals** that check messages going in and replies coming out, and build it into a **native agent** of the framework you already use. chatomon is not a chatbot framework: it never runs the agent itself; it installs checks inside PydanticAI, LangChain/LangGraph, Microsoft Agent Framework or Google ADK. Foundry PromptAgents support checked input and output on non-streaming runs.
 
 ## Key Features
 
-- **One declaration, native agents** — `Atom.build()` returns a real `pydantic_ai.Agent`, LangGraph `CompiledStateGraph`, MAF `Agent` or `FoundryAgent`, with the supported framework features intact.
+- **One declaration, native agents** — `Atom.build()` returns a real `pydantic_ai.Agent`, LangGraph `CompiledStateGraph`, MAF `Agent` or `FoundryAgent`, or Google ADK `App`, with the supported framework features intact.
 - **Orbitals** — ordered input and output guardrails with four outcomes: let the message through, block it with a fixed reply, block it and let the model write a guided refusal, or answer in place of the model.
 - **Guidance instead of hard blocks** — orbitals can steer the model for one turn, or make it regenerate a reply, without the guidance ever entering the conversation history.
 - **Fail-closed by default** — an orbital that fails or times out blocks the message unless configured otherwise.
@@ -27,11 +27,11 @@ chatomon ("chat" + "atom") lets you declare a chat agent once — an **atom** ma
 
 ## Installation
 
-chatomon is installed with the extra of the framework you use: `pip install 'chatomon[pydantic-ai]'`, `pip install 'chatomon[langchain]'`, `pip install 'chatomon[maf]'`, or `pip install 'chatomon[maf-foundry]'`. The MAF core extra needs a separate package for your chosen model provider; the Foundry extra includes its client. The Principled Intelligence orbitals need `pip install 'chatomon[principled]'`. The core package depends only on pydantic and the OpenTelemetry API.
+chatomon is installed with the extra of the framework you use: `pip install 'chatomon[pydantic-ai]'`, `pip install 'chatomon[langchain]'`, `pip install 'chatomon[maf]'`, `pip install 'chatomon[maf-foundry]'`, or `pip install 'chatomon[adk]'`. The MAF core extra needs a separate package for your chosen model provider; the Foundry extra includes its client. The Principled Intelligence orbitals need `pip install 'chatomon[principled]'`. The core package depends only on pydantic and the OpenTelemetry API.
 
 ## Quickstart
 
-An atom with one input orbital that turns refund requests into a guided refusal. The PydanticAI and LangChain tabs use fake models. The MAF tab uses a configured Foundry chat client from the `maf-foundry` extra; set `FOUNDRY_PROJECT_ENDPOINT` to the full project endpoint and set `FOUNDRY_MODEL_DEPLOYMENT` before running it.
+An atom with one input orbital that turns refund requests into a guided refusal. The PydanticAI and LangChain tabs use fake models. The MAF tab uses a configured Foundry chat client from the `maf-foundry` extra; set `FOUNDRY_PROJECT_ENDPOINT` to the full project endpoint and set `FOUNDRY_MODEL_DEPLOYMENT` before running it. The Google ADK tab calls a Gemini model and needs your Google credentials.
 
 === "PydanticAI"
 
@@ -134,6 +134,38 @@ An atom with one input orbital that turns refund requests into a guided refusal.
     asyncio.run(main())
     ```
 
+=== "Google ADK"
+
+    ```{.python test="skip"}
+    import asyncio
+
+    from google.adk.runners import InMemoryRunner
+
+    from chatomon import Atom, OrbitalContext, Verdict, orbital
+    from chatomon.connectors.adk import ADKConnector
+
+
+    @orbital
+    async def no_refunds(ctx: OrbitalContext) -> Verdict:
+        if "refund" in ctx.message.lower():
+            return Verdict.block(guidance="Explain that refunds are handled by email.")
+        return Verdict.allow()
+
+
+    async def main() -> None:
+        app = Atom(
+            name="speedypack",
+            instructions="You are the customer assistant of SpeedyPack.",
+            connector=ADKConnector("gemini-3.5-flash"),
+            input_orbitals=[no_refunds],
+        ).build()
+        events = await InMemoryRunner(app=app).run_debug("I want a refund", quiet=True)
+        print(events[-1].content.parts[0].text)
+
+
+    asyncio.run(main())
+    ```
+
 ## Table of Contents
 
 <div class="grid cards" markdown>
@@ -158,7 +190,7 @@ An atom with one input orbital that turns refund requests into a guided refusal.
 
     ---
 
-    How atoms become PydanticAI, LangChain and MAF agents: conversations, streaming, tools and tracing.
+    How atoms become PydanticAI, LangChain, MAF and Google ADK agents: conversations, streaming, tools and tracing.
 
     [:lucide-arrow-right: Connectors](connectors/index.md)
 
@@ -210,6 +242,7 @@ The [Changelog](changelog.md) explains where release notes are published and how
 | `PydanticAIConnector` | `src/chatomon/connectors/pydantic_ai.py` | Builds atoms into PydanticAI agents |
 | `LangChainConnector` | `src/chatomon/connectors/langchain.py` | Builds atoms into LangChain agents (LangGraph graphs) |
 | `MAFConnector`, `MAFFoundryConnector` | `src/chatomon/connectors/maf/` | Build atoms into MAF core and Foundry agents |
+| `ADKConnector` | `src/chatomon/connectors/adk.py` | Builds atoms into Google ADK apps |
 | `JudgeOrbital` | `src/chatomon/orbitals/judge.py` | An LLM that judges messages with its own instructions |
 | `MessageLengthOrbital`, `TurnLimitOrbital` | `src/chatomon/orbitals/limits.py` | Ready-made length and turn limits |
 | `ScopeGuardOrbital`, `ClaimExtractorOrbital` | `src/chatomon/orbitals/principled.py` | Principled Intelligence guard models as orbitals |
