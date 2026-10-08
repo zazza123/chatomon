@@ -4,7 +4,7 @@ from chatomon import Atom, ChatomonConfigError, Knowledge, TurnReport, Verdict
 from chatomon.connectors import Connector
 from chatomon.engine import Engine
 from chatomon.orbitals.base import Orbital
-from chatomon.schemas import OrbitalContext
+from chatomon.schemas import DEFAULT_BLOCKED_GUIDANCE, OrbitalContext
 from tests.fakes import FakeAgent, FakeConnector, InputOnlyOrbital, ScriptedOrbital
 
 
@@ -135,11 +135,34 @@ def test_output_orbitals_may_read_input_orbitals():
         ({"max_retries": -1}, "max_retries"),
         ({"capture_content": "all"}, "capture_content"),
         ({"refusal": ""}, "refusal"),
+        ({"blocked_guidance": " "}, "blocked_guidance must not be empty; pass None"),
     ],
 )
 def test_invalid_settings_are_rejected_at_construction(overrides, match):
     with pytest.raises(ChatomonConfigError, match=match):
         make_atom(**overrides)
+
+
+async def guided_refusal(**settings) -> tuple[str, ...]:
+    """The guidance the nucleus gets when the atom's only input orbital blocks with guidance."""
+    guard = ScriptedOrbital(Verdict.block(guidance="Decline politely."), name="guard")
+    engine = make_atom(input_orbitals=[guard], **settings).build().engine
+    decision = await engine.run_input(engine.start_turn(), message="I want a refund")
+    return decision.guidance
+
+
+async def test_the_atom_tells_the_nucleus_that_a_blocked_message_is_withheld():
+    assert make_atom().blocked_guidance == DEFAULT_BLOCKED_GUIDANCE
+    assert await guided_refusal() == (DEFAULT_BLOCKED_GUIDANCE, "Decline politely.")
+
+
+async def test_the_blocked_guidance_of_the_atom_replaces_the_default():
+    guidance = await guided_refusal(blocked_guidance="Never speak of the placeholder.")
+    assert guidance == ("Never speak of the placeholder.", "Decline politely.")
+
+
+async def test_an_atom_without_blocked_guidance_gives_the_orbital_guidance_alone():
+    assert await guided_refusal(blocked_guidance=None) == ("Decline politely.",)
 
 
 async def test_engine_uses_on_turn_and_capture_content():

@@ -29,6 +29,7 @@ from chatomon.errors import ChatomonConfigError, MissingAnnotationsError
 from chatomon.observability import ContentPolicy, get_tracer
 from chatomon.orbitals.base import Orbital
 from chatomon.schemas import (
+    DEFAULT_BLOCKED_GUIDANCE,
     DEFAULT_REFUSAL,
     FinalAction,
     InputDecision,
@@ -132,6 +133,9 @@ class Engine:
         input_orbitals: Orbitals run in order on the user message.
         output_orbitals: Orbitals run in order on the nucleus reply.
         refusal: Reply used when a message is blocked without a specific reply.
+        blocked_guidance: Guidance given to the nucleus, before the orbital's own,
+            when it writes the refusal of a blocked message. `None` gives it the
+            orbital's guidance alone.
         max_retries: How many times the nucleus may regenerate a reply blocked
             with guidance before the refusal is used.
         on_turn: Receives the report of every turn.
@@ -180,6 +184,7 @@ class Engine:
         input_orbitals: Sequence[Orbital] = (),
         output_orbitals: Sequence[Orbital] = (),
         refusal: str = DEFAULT_REFUSAL,
+        blocked_guidance: str | None = DEFAULT_BLOCKED_GUIDANCE,
         max_retries: int = 2,
         on_turn: TurnCallback | None = None,
         content: ContentPolicy | None = None,
@@ -191,6 +196,7 @@ class Engine:
         self._input = tuple(input_orbitals)
         self._output = tuple(output_orbitals)
         self._refusal = refusal
+        self._blocked_guidance = blocked_guidance
         self._max_retries = max_retries
         self._on_turn = on_turn
         self._content = content if content is not None else ContentPolicy()
@@ -301,9 +307,11 @@ class Engine:
             turn.final_reply = reply
             return InputDecision(kind="reply", reply=reply)
         if verdict.guidance:
-            return InputDecision(
-                kind="guided_refusal", guidance=(verdict.guidance,), redact_user_message=True
-            )
+            guidance: tuple[str, ...] = (verdict.guidance,)
+            if self._blocked_guidance is not None:
+                # The nucleus gets the placeholder: a model not told what it is answers about it.
+                guidance = (self._blocked_guidance, *guidance)
+            return InputDecision(kind="guided_refusal", guidance=guidance, redact_user_message=True)
         reply = verdict.reply or self._refusal
         turn.final_action = "blocked"
         turn.final_reply = reply

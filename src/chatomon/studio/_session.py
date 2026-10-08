@@ -332,6 +332,7 @@ class Session:
             output_orbitals=chains.enabled("output"),
             refusal=a.refusal,
             blocked_placeholder=a.blocked_placeholder,
+            blocked_guidance=a.blocked_guidance,
             max_retries=a.max_retries,
             on_turn=self._record,
             capture_content="full",
@@ -930,6 +931,7 @@ class Session:
                 "max_retries": a.max_retries,
                 "refusal": a.refusal,
                 "blocked_placeholder": a.blocked_placeholder,
+                "blocked_guidance": a.blocked_guidance,
                 "capture_content": a.content_policy.mode,
             },
             "orbitals": {

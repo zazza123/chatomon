@@ -17,12 +17,13 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from chatomon import Atom, ChatomonConfigError, Verdict, orbital
+from chatomon.connectors import render_guidance
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.errors import MissingExtraError
 from chatomon.orbitals import JudgeOrbital, MessageLengthOrbital
 from chatomon.orbitals.base import Orbital
 from chatomon.orbitals.principled import ScopeGuardOrbital
-from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER, OrbitalContext
+from chatomon.schemas import DEFAULT_BLOCKED_GUIDANCE, DEFAULT_BLOCKED_PLACEHOLDER, OrbitalContext
 from chatomon.studio import _kinds as kinds
 from chatomon.studio import _loading as loading
 from chatomon.studio._chains import InvalidRequestError, RefusedError, UnknownOrbitalError
@@ -128,6 +129,23 @@ async def test_history_carries_across_turns_and_keeps_the_placeholder():
     ]
 
 
+async def test_the_studio_runs_the_atom_with_its_own_blocked_guidance():
+    prompts: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        prompts.append(info.instructions or "")
+        return ModelResponse(parts=[TextPart(content="Write to us by email.")])
+
+    guard = ScriptedOrbital(Verdict.block(guidance="Decline politely."), name="guard")
+    atom = make_atom(
+        connector=PydanticAIConnector(FunctionModel(respond)),
+        input_orbitals=[guard],
+        blocked_guidance="Never speak of the placeholder.",
+    )
+    await drain(Session(atom, source="app:atom").start_turn("I want a refund"))
+    assert render_guidance(["Never speak of the placeholder.", "Decline politely."]) in prompts[0]
+
+
 async def test_one_turn_at_a_time_and_busy_in_the_state():
     gate = asyncio.Event()
 
@@ -226,7 +244,13 @@ def test_the_state_describes_the_atom():
     assert state["atom"]["connector"] == "PydanticAIConnector"
     assert state["atom"]["knowledge"] == "Open 9-18."
     assert state["atom"]["capture_content"] == "none"
+    assert state["atom"]["blocked_guidance"] == DEFAULT_BLOCKED_GUIDANCE
     assert state["turns"] == []
+
+
+def test_the_state_says_when_the_atom_has_no_blocked_guidance():
+    state = Session(make_atom(blocked_guidance=None), source="app:atom").state()
+    assert state["atom"]["blocked_guidance"] is None
 
 
 async def test_reset_clears_the_conversation():

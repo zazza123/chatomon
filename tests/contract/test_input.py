@@ -1,7 +1,7 @@
 from chatomon import Verdict
 from chatomon.connectors import render_guidance
+from chatomon.schemas import DEFAULT_BLOCKED_GUIDANCE, Message
 from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER as PLACEHOLDER
-from chatomon.schemas import Message
 from tests.contract.harness import INSTRUCTIONS, build_agent
 from tests.fakes import ScriptedOrbital
 
@@ -56,7 +56,7 @@ async def test_guided_refusal_hides_the_message_from_the_model(harness):
     call = harness.calls[0]
     assert call.messages[-1] == ("user", PLACEHOLDER)
     assert all("secret code" not in content for _, content in call.messages)
-    assert render_guidance(["Decline refunds politely."]) in call.system
+    assert render_guidance([DEFAULT_BLOCKED_GUIDANCE, "Decline refunds politely."]) in call.system
     assert harness.history(agent)[0] == ("user", PLACEHOLDER)
     assert reports[0].final_action == "guided_refusal"
 

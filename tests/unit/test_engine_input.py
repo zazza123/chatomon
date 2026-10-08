@@ -1,11 +1,18 @@
 import logging
 import time
+from typing import Any
 
 import pytest
 
 from chatomon import Verdict, orbital
 from chatomon.engine import Engine, TurnState
-from chatomon.schemas import DEFAULT_REFUSAL, InputDecision, Message, OrbitalContext
+from chatomon.schemas import (
+    DEFAULT_BLOCKED_GUIDANCE,
+    DEFAULT_REFUSAL,
+    InputDecision,
+    Message,
+    OrbitalContext,
+)
 from tests.fakes import ScriptedOrbital, SlowOrbital, make_engine
 
 HISTORY = (Message(role="user", content="hi"), Message(role="assistant", content="hello!"))
@@ -69,7 +76,7 @@ async def test_block_without_reply_uses_the_refusal():
     assert turn.final_reply == "Nope."
 
 
-async def test_block_with_guidance_is_a_guided_refusal_with_only_that_guidance():
+async def test_block_with_guidance_is_a_guided_refusal_without_the_earlier_guidance():
     engine = make_engine(
         inputs=[
             ScriptedOrbital(Verdict.allow("earlier hint"), name="a"),
@@ -78,9 +85,37 @@ async def test_block_with_guidance_is_a_guided_refusal_with_only_that_guidance()
     )
     turn, decision = await run_input(engine)
     assert decision.kind == "guided_refusal"
-    assert decision.guidance == ("Decline politely.",)
+    assert "earlier hint" not in decision.guidance
+    assert decision.guidance[-1] == "Decline politely."
     assert decision.redact_user_message
     assert turn.final_action is None
+
+
+def guided(**kwargs: Any) -> Engine:
+    """An engine whose only input orbital blocks with guidance."""
+    guard = ScriptedOrbital(Verdict.block(guidance="Decline politely."), name="guard")
+    return make_engine(inputs=[guard], **kwargs)
+
+
+async def test_a_guided_refusal_first_says_that_the_message_is_withheld():
+    _, decision = await run_input(guided())
+    assert decision.guidance == (DEFAULT_BLOCKED_GUIDANCE, "Decline politely.")
+
+
+async def test_the_blocked_guidance_given_to_the_engine_replaces_the_default():
+    _, decision = await run_input(guided(blocked_guidance="Never speak of the placeholder."))
+    assert decision.guidance == ("Never speak of the placeholder.", "Decline politely.")
+
+
+async def test_without_a_blocked_guidance_a_guided_refusal_has_the_orbital_guidance_alone():
+    _, decision = await run_input(guided(blocked_guidance=None))
+    assert decision.guidance == ("Decline politely.",)
+
+
+async def test_the_blocked_guidance_is_not_given_with_a_message_that_passes():
+    hint = ScriptedOrbital(Verdict.allow("Be brief."), name="hint")
+    _, decision = await run_input(make_engine(inputs=[hint]))
+    assert decision.guidance == ("Be brief.",)
 
 
 async def test_orbitals_receive_context_and_earlier_annotations():

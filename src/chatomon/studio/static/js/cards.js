@@ -92,6 +92,7 @@ export function showAtom(ctx, outcome = "") {
       ["max_retries", String(a.max_retries)],
       ["refusal", a.refusal],
       ["blocked_placeholder", a.blocked_placeholder],
+      ["blocked_guidance", a.blocked_guidance ?? "—"],
       ["capture_content", `"${a.capture_content}" in your code · "full" in the studio`],
     ]) + `<p class="hint">The atom comes from your code. Change it there and ${can ? "press Reload: the studio keeps your orbital changes and the conversation." : "restart the studio."}</p>`,
     actions: `${can ? `<button class="btn" type="button" data-dlg="reload">${RELOAD}<span>Reload from code</span></button>` : ""}<span class="spacer"></span><button class="btn primary" type="button" data-dlg="close">Done</button>`,
