@@ -1297,6 +1297,7 @@ SMOKE = {
     "langchain": ("LangChainConnector · ScriptedChatModel", "await agent.ainvoke("),
     "maf": ("MAFConnector · ScriptedClient", "await agent.run("),
     "maf_foundry": ("MAFFoundryConnector · remote-agent (version 3)", "await agent.run("),
+    "adk": ("ADKConnector · scripted", "await runner.run_debug("),
 }
 
 

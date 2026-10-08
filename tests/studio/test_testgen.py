@@ -2,6 +2,7 @@
 
 import ast
 import asyncio
+import dataclasses
 import inspect
 import os
 import subprocess
@@ -189,11 +190,47 @@ _ChatomonFoundryChatClient._inner_get_response = Nucleus()._inner_get_response
     'agent_version="3")',
 )
 
+ADK = (
+    """
+from types import SimpleNamespace
+
+from google.adk.models.base_llm import BaseLlm
+from google.adk.models.llm_request import LlmRequest
+from google.adk.models.llm_response import LlmResponse
+from google.genai import types
+
+from chatomon import Atom, OrbitalContext, Verdict, orbital
+from chatomon.connectors.adk import ADKConnector
+from chatomon.orbitals import MessageLengthOrbital
+""",
+    """
+
+class Nucleus(BaseLlm):
+    model: str = "nucleus"
+
+    async def generate_content_async(self, llm_request: LlmRequest, stream: bool = False):
+        asked = next(
+            part.text
+            for content in reversed(llm_request.contents)
+            if content.role == "user"
+            for part in content.parts or []
+            if part.text
+        )
+        told = str(llm_request.config.system_instruction or "")
+        if "boom" in asked:
+            raise RuntimeError("model down")
+        text = "Damn right." if "angry" in asked and "politely" not in told else "Hi."
+        yield LlmResponse(content=types.Content(role="model", parts=[types.Part(text=text)]))
+""",
+    "ADKConnector(Nucleus())",
+)
+
 PARTS = {
     "pydantic_ai": PYDANTIC_AI,
     "langchain": LANGCHAIN,
     "maf": MAF,
     "maf_foundry": MAF_FOUNDRY,
+    "adk": ADK,
 }
 
 
@@ -900,12 +937,14 @@ REPLY = {
     "langchain": 'result["messages"][-1].content',
     "maf": "result.text",
     "maf_foundry": "result.text",
+    "adk": "result[-1].content.parts[0].text",
 }
 MESSAGE_GOES_TO = {
     "pydantic_ai": "agent.run_sync",
     "langchain": "HumanMessage",
     "maf": "agent.run",
     "maf_foundry": "agent.run",
+    "adk": "runner.run_debug",
 }
 TOOL = '''
 
@@ -923,6 +962,8 @@ LANGCHAIN_ASYNC = (
     "The studio runs a LangChain agent asynchronously, and so does the test: it needs "
     "`pytest-asyncio` 0.24 or later."
 )
+ADK_ASYNC = "Google ADK is asynchronous: the test needs `pytest-asyncio` 0.24 or later."
+ADK_OWN = "`{name}` is written on Google ADK's model classes: if they change, save the test again."
 
 
 def sent(code: str, name: str) -> list[str]:
@@ -1202,6 +1243,48 @@ def test_a_microsoft_agent_framework_test_is_a_coroutine_with_a_stand_in_of_its_
     assert "OfflineNucleus" not in online.code
     assert "agent_framework" not in online.code
     assert online.notes[1] == ASYNC
+    run_saved(online, monkeypatch)
+
+
+def test_a_google_adk_test_is_a_coroutine_on_adks_runner_with_a_stand_in_of_its_own(
+    project, monkeypatch
+):
+    session = project(module=module_of("adk"))
+    say(session, "I want a refund")
+    offline = save(session)
+    lines = offline.code.split("\n")
+    marker = lines.index('@pytest.mark.asyncio(loop_scope="session")')
+    assert lines[marker + 1] == (
+        "async def test_i_want_a_refund(monkeypatch: pytest.MonkeyPatch) -> None:"
+    )
+    assert "class OfflineNucleus(BaseLlm):" in lines
+    # The stand-in goes on the connector, before the build: the built agent's model is
+    # chatomon's own, and replacing it would take the output checks away.
+    build = lines.index("    agent = atom.build()")
+    assert lines[build - 2 : build + 2] == [
+        KEEPS_OFFLINE,
+        '    monkeypatch.setattr(atom.connector, "model", OfflineNucleus(model="offline"))',
+        "    agent = atom.build()",
+        "    runner = InMemoryRunner(app=agent)",
+    ]
+    assert '    result = await runner.run_debug("I want a refund", quiet=True)' in lines
+    assert offline.notes[:3] == [
+        "No model is called in this test: it runs offline, with a model of its own, "
+        "`OfflineNucleus`, in place of the nucleus.",
+        ADK_OWN.format(name="OfflineNucleus"),
+        ADK_ASYNC,
+    ]
+    run_saved(offline, monkeypatch)
+
+    say(session, "hello")
+    online = save(session, alone=True)
+    lines = online.code.split("\n")
+    marker = lines.index('@pytest.mark.asyncio(loop_scope="session")')
+    assert lines[marker - 1].startswith("@pytest.mark.integration")
+    assert lines[marker + 1].startswith("async def test_hello(")
+    assert "OfflineNucleus" not in online.code
+    assert "BaseLlm" not in online.code
+    assert online.notes[1] == ADK_ASYNC
     run_saved(online, monkeypatch)
 
 
@@ -1816,3 +1899,26 @@ def test_a_microsoft_agent_framework_test_repeats_the_replies_with_a_client_of_i
         "if they change, save the test again.",
         ASYNC,
     ]
+
+
+def test_a_google_adk_test_repeats_the_replies_with_a_model_of_its_own(project, monkeypatch):
+    session = project(module=quiet("adk"))
+    say(session, "I am angry")
+    test = save(session)
+    lines = test.code.split("\n")
+    assert "def scripted_nucleus() -> BaseLlm:" in lines
+    build = lines.index("    agent = atom.build()")
+    assert lines[build - 2 : build + 2] == [
+        "    # The nucleus repeats what it wrote in the studio: it calls no model and no tool.",
+        '    monkeypatch.setattr(atom.connector, "model", scripted_nucleus())',
+        "    agent = atom.build()",
+        "    runner = InMemoryRunner(app=agent)",
+    ]
+    assert REJECTED_THEN_ACCEPTED in test.code
+    assert test.notes[3:5] == [ADK_OWN.format(name="ScriptedNucleus"), ADK_ASYNC]
+    run_saved(test, monkeypatch)
+    # Asked for one reply more than it wrote in the studio, the nucleus fails the test.
+    scripted = test.code.replace('    "Hi.",\n', "", 1)
+    assert scripted != test.code
+    with pytest.raises(AssertionError):
+        run_saved(dataclasses.replace(test, code=scripted), monkeypatch)

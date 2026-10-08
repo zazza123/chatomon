@@ -59,6 +59,7 @@ nav = [
       { "PydanticAI" = "reference/connectors_pydantic_ai.md" },
       { "LangChain" = "reference/connectors_langchain.md" },
       { "Microsoft Agent Framework" = "reference/connectors_maf.md" },
+      { "Google ADK" = "reference/connectors_adk.md" },
     ] },
     { "Observability" = "reference/observability.md" },
     { "Studio" = "reference/studio.md" },

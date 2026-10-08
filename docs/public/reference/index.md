@@ -38,6 +38,7 @@ The public API of chatomon, generated from the docstrings of the code. There is 
 | [PydanticAI](connectors_pydantic_ai.md) | `chatomon.connectors.pydantic_ai` | `PydanticAIConnector` (extra `pydantic-ai`) |
 | [LangChain](connectors_langchain.md) | `chatomon.connectors.langchain` | `LangChainConnector` (extra `langchain`) |
 | [Microsoft Agent Framework](connectors_maf.md) | `chatomon.connectors.maf` | `MAFConnector` and `MAFFoundryConnector` (extras `maf`, `maf-foundry`) |
+| [Google ADK](connectors_adk.md) | `chatomon.connectors.adk` | `ADKConnector` (extra `adk`) |
 
 ### Observability
 
