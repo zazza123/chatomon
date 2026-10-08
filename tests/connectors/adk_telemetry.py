@@ -8,6 +8,7 @@ printed is a JSON object.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from typing import Any
@@ -16,6 +17,7 @@ BLOCKED = "BLOCKED-MESSAGE-7f3a"
 REJECTED = "REJECTED-REPLY-91bc"
 GUIDANCE = "GUIDANCE-TEXT-c55e"
 ACCEPTED = "ACCEPTED-REPLY-2d08"
+STREAMED = "STREAMED-GUIDANCE-b7e1"
 
 
 class _Keep(logging.Handler):
@@ -34,6 +36,10 @@ def _ids(span: Any) -> tuple[int, int]:
 
 
 async def _turns() -> None:
+    from google.adk.agents.run_config import (
+        RunConfig,
+        StreamingMode,  # pyright: ignore[reportPrivateImportUsage] - where ADK's guide takes it from
+    )
     from google.adk.runners import InMemoryRunner
 
     from chatomon import Atom, Verdict
@@ -58,6 +64,23 @@ async def _turns() -> None:
         ],
     )
     await InMemoryRunner(app=guided.build()).run_debug("hours?", quiet=True)
+
+    def broken(callback_context: Any, llm_response: Any) -> None:
+        # A callback of the developer's that fails on the first piece of a streamed reply.
+        if llm_response.partial:
+            raise ValueError("the callback failed")
+
+    streamed = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=ADKConnector(ScriptedLlm(script=["Open 9 to 18"]), after_model_callback=broken),
+        input_orbitals=[ScriptedOrbital(Verdict.allow(STREAMED), name="hint")],
+    )
+    streaming = RunConfig(streaming_mode=StreamingMode.SSE)
+    with contextlib.suppress(ValueError):
+        await InMemoryRunner(app=streamed.build()).run_debug(
+            "hours?", quiet=True, run_config=streaming
+        )
 
 
 def main() -> None:
@@ -108,6 +131,7 @@ def main() -> None:
                     "blocked message": where(BLOCKED),
                     "rejected reply": where(REJECTED),
                     "guidance": where(GUIDANCE),
+                    "guidance of a stream that broke": where(STREAMED),
                 },
                 "accepted reply": where(ACCEPTED),
                 "ancestors": {

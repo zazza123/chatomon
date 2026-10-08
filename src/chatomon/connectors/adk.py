@@ -6,7 +6,9 @@ Install with `pip install 'chatomon[adk]'`.
 from __future__ import annotations
 
 import asyncio
+import copy
 import importlib.util
+import weakref
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import aclosing
 from contextvars import ContextVar
@@ -64,8 +66,8 @@ _REFUSED = {
         "not see; give the other agents to the nucleus as tools (AgentTool)"
     ),
     "mode": (
-        "an atom is a chat agent; in the other modes the result leaves through a tool "
-        "call, which the output orbitals do not see"
+        "an atom is a chat agent, the mode a root agent has by default; in the others "
+        "the result leaves through a tool call, which the output orbitals do not see"
     ),
 }
 _NO_SUMMARIZER = (
@@ -82,8 +84,9 @@ _UNKNOWN_MODEL = (
 )
 _NOT_A_MODEL = "an ADK model is a BaseLlm object or a model name, got {kind}"
 _OUTSIDE_THE_APP = (
-    "this agent runs only inside the App that Atom.build() returned; "
-    "run it with Runner(app=app, ...) or InMemoryRunner(app=app)"
+    "this agent runs only inside the App that Atom.build() returned: run it with "
+    "Runner(app=app, ...) or InMemoryRunner(app=app), and do not call the agent's model "
+    "from your own code"
 )
 _LIVE_REFUSED = (
     "ADK live runs carry no text turn chatomon's orbitals can check; use run_async() or run()"
@@ -100,18 +103,26 @@ class _Turn:
     turn: TurnState
     decision: InputDecision
     history_out: tuple[Message, ...]
+    nucleus: _Nucleus
+    """The nucleus of the app the turn belongs to: no other may run on it."""
     output_guidance: tuple[str, ...] = ()
+    orphaned: weakref.finalize[Any, Any] | None = None
+    """Closes the turn when ADK drops the run without telling its plugins."""
 
 
-def _text(content: types.Content | None, between: str = "") -> str:
-    """Read the text of a content, without thoughts.
+def _text(content: types.Content | None, *, message: bool = False) -> str:
+    """Read the text of a reply, or of a message of the user's.
 
     Returns:
-        The text parts joined: as they are for a reply, which a model writes in
-        pieces, and `between` a line break for a message, whose parts are apart.
+        For a reply, which a model writes in pieces, the text parts joined as
+        they are, without thoughts. For a message every text part, each on a
+        line of its own: its parts are apart, and a thought is a notion of
+        replies, not something the writer of a message can hide text in.
     """
     parts = content.parts if content is not None and content.parts else []
-    return between.join(part.text for part in parts if part.text and not part.thought)
+    if message:
+        return "\n".join(part.text for part in parts if part.text)
+    return "".join(part.text for part in parts if part.text and not part.thought)
 
 
 def _calls_a_tool(content: types.Content | None) -> bool:
@@ -131,24 +142,30 @@ def _history(events: Sequence[Event]) -> list[Message]:
     history: list[Message] = []
     for event in events:
         role = "user" if event.author == "user" else "assistant"
-        text = _text(event.content, "\n" if role == "user" else "")
+        text = _text(event.content, message=role == "user")
         if event.partial or not text or _calls_a_tool(event.content):
             continue
         history.append(Message(role=role, content=text))
     return history
 
 
-def _last_user_text(events: Sequence[Event]) -> tuple[str, list[Message]]:
-    """Find the message a resumed run answers to.
+def _message_of(events: Sequence[Event], invocation_id: str) -> tuple[str, list[Message]]:
+    """Find the message of a run that ADK started with no new text.
 
     Returns:
-        The last text the user wrote and the history before it.
+        The text the user wrote in that run, or the last they wrote in the
+        session when the run has none, and the history before it.
     """
-    for index in range(len(events) - 1, -1, -1):
-        event = events[index]
-        if event.author == "user" and _text(event.content):
-            return _text(event.content, "\n"), _history(events[:index])
-    return "", _history(events)
+    written = [
+        index
+        for index, event in enumerate(events)
+        if event.author == "user" and _text(event.content, message=True)
+    ]
+    own = [index for index in written if events[index].invocation_id == invocation_id]
+    if not written:
+        return "", _history(events)
+    index = (own or written)[-1]
+    return _text(events[index].content, message=True), _history(events[:index])
 
 
 def _cancelling() -> bool:
@@ -184,8 +201,10 @@ class _Nucleus(BaseLlm):
         self, llm_request: LlmRequest, stream: bool = False
     ) -> AsyncGenerator[LlmResponse, None]:
         current = _current.get()
-        if current is None or current.turn.finished:
+        if current is None or current.nucleus is not self or current.turn.finished:
             raise ChatomonConfigError(_OUTSIDE_THE_APP)
+        # One hand-off, one model call: whoever calls again without ADK finds no turn.
+        _current.set(None)
         engine: Engine = self.engine
         turn, decision = current.turn, current.decision
         if decision.kind == "reply":
@@ -195,23 +214,32 @@ class _Nucleus(BaseLlm):
             return
         # With output orbitals no text leaves before it is checked.
         streaming = stream and not engine.output_orbitals
-        base = llm_request.config.model_copy(deep=True)
+        # Only the system instruction is touched: the rest of the configuration can
+        # hold a live client, which no copy survives.
+        base = llm_request.config.system_instruction
         final: LlmResponse
         try:
             if turn.final_action is not None:
                 # The flow asks the model again after chatomon decided on a reply.
                 engine.reopen_output(turn)
             while True:
-                llm_request.config = base.model_copy(deep=True)
+                llm_request.config.system_instruction = copy.deepcopy(base)
                 guidance = (*decision.guidance, *current.output_guidance)
                 if guidance:
                     llm_request.append_instructions([render_guidance(guidance)])
+                guided = llm_request.config.system_instruction
                 response: LlmResponse | None = None
                 calling = self.inner.generate_content_async(llm_request, stream=streaming)
                 async with aclosing(calling) as responses:
                     async for following in responses:
-                        if response is not None:
+                        if response is not None and streaming:
+                            # ADK records the request whenever a response is in its
+                            # hands: it holds the guidance only while the model works.
+                            llm_request.config.system_instruction = base
                             yield response
+                            llm_request.config.system_instruction = guided
+                        # Without streaming a model gives one response; of one that
+                        # gives more, only the last is the reply.
                         response = following
                 if response is None:
                     raise RuntimeError(_NO_ANSWER)
@@ -228,9 +256,8 @@ class _Nucleus(BaseLlm):
                     break
                 current.output_guidance = outcome.guidance
         finally:
-            # ADK records the request once the reply is back: it gets it without the
-            # guidance, also when an error or a cancellation ends the call.
-            llm_request.config = base
+            # Also when an error or a cancellation ends the call.
+            llm_request.config.system_instruction = base
         yield final
 
 
@@ -243,33 +270,103 @@ class _ChatomonPlugin(BasePlugin):
         self._placeholder = placeholder
         self._nucleus = nucleus
         self._turns: dict[str, _Turn] = {}
+        self._reporting: set[asyncio.Task[None]] = set()
+
+    def _mine(self, invocation_context: Any) -> bool:
+        # Another agent can run with the same plugins, as an AgentTool's does: a tool.
+        return getattr(invocation_context.agent, "model", None) is self._nucleus
+
+    async def _open(self, invocation_context: Any, message: str | None) -> _Turn:
+        """Open the turn of a run and run the input chain on its message.
+
+        Args:
+            invocation_context: The run.
+            message: The text of the message that arrived, or `None` when the
+                run has none of its own and its message is read from the session.
+
+        Returns:
+            The turn, kept until the run ends.
+        """
+        session = invocation_context.session
+        if message is None:
+            message, history = _message_of(session.events, invocation_context.invocation_id)
+        else:
+            history = _history(session.events)
+        turn = self._engine.start_turn(conversation_id=session.id)
+        try:
+            decision = await self._engine.run_input(turn, message=message, history=history)
+        except BaseException as error:
+            # Cancelled while an orbital ran: no hook of ADK's will close this turn.
+            if not turn.finished:
+                await self._engine.abort_turn(turn, error)
+            raise
+        user_text = self._placeholder if decision.redact_user_message else message
+        current = _Turn(
+            turn=turn,
+            decision=decision,
+            history_out=(*history, Message(role="user", content=user_text)),
+            nucleus=self._nucleus,
+        )
+        # ADK calls no plugin when a run is cancelled while the runner itself works
+        # (storing an event, another plugin's hook). The run's context dies with the
+        # run, whatever ended it: that is what closes a turn nothing else closed.
+        current.orphaned = weakref.finalize(
+            invocation_context,
+            self._orphaned,
+            invocation_context.invocation_id,
+            current,
+            asyncio.get_running_loop(),
+        )
+        current.orphaned.atexit = False
+        self._turns[invocation_context.invocation_id] = current
+        return current
+
+    def _take(self, invocation_id: str) -> _Turn | None:
+        current = self._turns.pop(invocation_id, None)
+        if current is not None and current.orphaned is not None:
+            current.orphaned.detach()
+        return current
+
+    def _orphaned(
+        self, invocation_id: str, current: _Turn, loop: asyncio.AbstractEventLoop
+    ) -> None:
+        if self._turns.get(invocation_id) is current:
+            del self._turns[invocation_id]
+        if not current.turn.finished and not loop.is_closed():
+            # The context can be collected from any thread; the report belongs to the loop.
+            loop.call_soon_threadsafe(self._report, current)
+
+    def _report(self, current: _Turn) -> None:
+        async def abort() -> None:
+            if not current.turn.finished:
+                await self._engine.abort_turn(current.turn, asyncio.CancelledError())
+
+        task = asyncio.ensure_future(abort())
+        self._reporting.add(task)
+        task.add_done_callback(self._reporting.discard)
 
     async def on_user_message_callback(
         self, *, invocation_context: Any, user_message: types.Content
     ) -> types.Content | None:
-        if getattr(invocation_context.agent, "model", None) is not self._nucleus:
-            # The run of another agent with the same plugins, as an AgentTool starts: a tool.
+        if not self._mine(invocation_context):
             return None
-        session = invocation_context.session
-        message, history = _text(user_message, "\n"), _history(session.events)
-        # An answer to a paused run has no text: the message it answers to is checked again.
-        resumed = not message and _calls_a_tool(user_message)
-        if resumed:
-            message, history = _last_user_text(session.events)
-        turn = self._engine.start_turn(conversation_id=session.id)
-        decision = await self._engine.run_input(turn, message=message, history=history)
-        user_text = self._placeholder if decision.redact_user_message else message
-        self._turns[invocation_context.invocation_id] = _Turn(
-            turn=turn,
-            decision=decision,
-            history_out=(*history, Message(role="user", content=user_text)),
-        )
-        if decision.redact_user_message and not resumed:
+        message = _text(user_message, message=True)
+        if not message and _calls_a_tool(user_message):
+            # An answer to a paused run has no text: the message of that run is
+            # checked again. It is already stored, so it cannot be replaced.
+            await self._open(invocation_context, None)
+            return None
+        current = await self._open(invocation_context, message)
+        if current.decision.redact_user_message:
             return types.Content(role="user", parts=[types.Part(text=self._placeholder)])
         return None
 
     async def before_run_callback(self, *, invocation_context: Any) -> types.Content | None:
         current = self._turns.get(invocation_context.invocation_id)
+        if current is None and self._mine(invocation_context):
+            # ADK started the run with no new message, as a run started again by its
+            # id is: nothing reached the plugin, and the run's message is checked again.
+            current = await self._open(invocation_context, None)
         if current is None or current.decision.kind != "reply":
             return None
         reply = current.decision.reply or ""
@@ -303,12 +400,12 @@ class _ChatomonPlugin(BasePlugin):
         await self._close(invocation_context.invocation_id)
 
     async def on_run_error_callback(self, *, invocation_context: Any, error: Exception) -> None:
-        current = self._turns.pop(invocation_context.invocation_id, None)
+        current = self._take(invocation_context.invocation_id)
         if current is not None and not current.turn.finished:
             await self._engine.abort_turn(current.turn, error)
 
     async def _close(self, invocation_id: str) -> None:
-        current = self._turns.pop(invocation_id, None)
+        current = self._take(invocation_id)
         if current is None or current.turn.finished:
             return
         if _cancelling():
@@ -344,9 +441,10 @@ class ADKConnector(Connector["App"]):
     Raises:
         ChatomonConfigError: If an argument is set by chatomon from the atom
             (`name`, `instruction`; `name` and `root_agent` of the app), cannot
-            be checked by the orbitals (`sub_agents`, `mode`, `output_schema`,
-            `static_instruction`, `global_instruction`), or is an events
-            compaction without a summarizer.
+            be checked by the orbitals (`sub_agents`, a `mode` other than
+            `"chat"`, `output_schema`, `static_instruction`,
+            `global_instruction`), or is an events compaction without a
+            summarizer.
 
     Examples:
         ```{.python test="skip"}
@@ -390,7 +488,7 @@ class ADKConnector(Connector["App"]):
                 "remove it from ADKConnector(...)"
             )
         for key, reason in _REFUSED.items():
-            if agent_kwargs.get(key):
+            if agent_kwargs.get(key) and (key, agent_kwargs[key]) != ("mode", "chat"):
                 raise ChatomonConfigError(f"ADKConnector does not take {key}: {reason}")
         compaction = app_kwargs.get("events_compaction_config")
         if compaction is not None and getattr(compaction, "summarizer", None) is None:
@@ -449,8 +547,8 @@ class ADKConnector(Connector["App"]):
 
         Raises:
             ChatomonConfigError: If the model id resolves to no ADK model.
-            ValueError: If the model returned no text, or text that does not
-                match `schema`.
+            ValueError: If the model returned an error or no text, or text that
+                does not match `schema`.
         """  # noqa: DOC502 - the first is raised by _resolve(), the second also by pydantic
         resolved = self.resolve_model(model) if self.resolve_model is not None else model
         llm = _resolve(resolved)
@@ -462,7 +560,8 @@ class ADKConnector(Connector["App"]):
         request.set_output_schema(schema)
         async with aclosing(llm.generate_content_async(request, stream=False)) as responses:
             answers = [response async for response in responses]
-        text = _text(answers[-1].content) if answers else ""
+        failed = not answers or answers[-1].error_code is not None
+        text = "" if failed else _text(answers[-1].content)
         if not text:
             raise ValueError(_NO_ANSWER)
         return schema.model_validate_json(text)
