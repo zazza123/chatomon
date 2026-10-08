@@ -107,4 +107,5 @@ body:
         - "framework:pydantic-ai — PydanticAI"
         - "framework:langchain — LangChain / LangGraph"
         - "framework:maf — Microsoft Agent Framework"
+        - "framework:adk — Google ADK"
         - "None / don't know"

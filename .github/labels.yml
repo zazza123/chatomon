@@ -66,6 +66,9 @@
 - name: "framework:maf"
   color: "f9d0c4"
   description: "Microsoft Agent Framework"
+- name: "framework:adk"
+  color: "f9d0c4"
+  description: "Google Agent Development Kit"
 
 # ─── priority: — at most one; absent means normal ────────────────────────────
 - name: "priority:high"
