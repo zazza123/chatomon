@@ -71,6 +71,9 @@ export function createGhost({ svg, stage, onOpen }) {
   front.appendChild(g);
   g.addEventListener("click", onOpen);
 
+  // How large the ghost is drawn on the stage: small next to the nucleus, in its corner as
+  // going around, so that the stage stays the atom's.
+  const SIZE = 0.44;
   const COS = Math.cos((-16 * Math.PI) / 180);
   const SIN = Math.sin((-16 * Math.PI) / 180);
   // The orbit and the corner follow the size of the ring of orbitals, as far as the drawing goes:
@@ -94,7 +97,7 @@ export function createGhost({ svg, stage, onOpen }) {
   let moving = false;
   let look = null;
   let smileTimer = 0;
-  const pos = { x: geo().hx, y: geo().hy, s: 0.52, f: 1 };
+  const pos = { x: geo().hx, y: geo().hy, s: SIZE, f: 1 };
   const hist = [];
   const flying = [];
   const circling = () => (pose === "orbit" || pose === "evaluate") && !stage.busy();
@@ -150,7 +153,7 @@ export function createGhost({ svg, stage, onOpen }) {
       theta = (theta + (dt * 2 * Math.PI) / (pose === "evaluate" ? 3.6 : 9.5)) % (2 * Math.PI);
       const point = orbitPoint(theta);
       const ahead = orbitPoint(theta + 0.05);
-      target = { x: point.x, y: point.y, s: 0.5 * (1 + 0.14 * Math.sin(theta)) };
+      target = { x: point.x, y: point.y, s: SIZE * (1 + 0.14 * Math.sin(theta)) };
       inFront = Math.sin(theta) > 0;
       faceTo = ahead.x >= point.x ? 1 : -1;
       if (pose === "evaluate") {
@@ -160,7 +163,7 @@ export function createGhost({ svg, stage, onOpen }) {
       }
     } else {
       // Asleep it lies still; awake it floats a little.
-      target = { x: hx, y: hy + (pose === "sleep" ? 0 : Math.sin(now / 700) * 3), s: 0.52 };
+      target = { x: hx, y: hy + (pose === "sleep" ? 0 : Math.sin(now / 700) * 3), s: SIZE };
     }
     const k = 1 - Math.exp(-dt * 7);
     pos.x += (target.x - pos.x) * k;
@@ -227,7 +230,7 @@ export function createGhost({ svg, stage, onOpen }) {
   /** Without motion every pose is a still drawing: at home, or at a fixed point of its orbit. */
   function still() {
     const point = circling() ? orbitPoint(0.35 * Math.PI) : { x: geo().hx, y: geo().hy };
-    Object.assign(pos, { x: point.x, y: point.y, s: 0.52, f: circling() ? -1 : 1 });
+    Object.assign(pos, { x: point.x, y: point.y, s: SIZE, f: circling() ? -1 : 1 });
     place();
     if (g.parentNode !== front) front.appendChild(g);
   }

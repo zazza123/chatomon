@@ -449,6 +449,23 @@ def test_with_reduced_motion_the_ghost_stands_still(page: Page, studio: Studio):
     assert before and placed.get_attribute("transform") == before
 
 
+def test_on_the_stage_the_ghost_is_small_next_to_the_nucleus(page: Page, studio: Studio):
+    """The stage is the atom's: in its corner or going around, the ghost does not take the eye."""
+    # Without motion each place is a still drawing, so its size can be measured.
+    page.emulate_media(reduced_motion="reduce")
+    open_studio(page, studio)
+    expect(ghost(page)).to_have_class("ghost pose-sleep")
+    nucleus = page.locator("#atom .nuc").bounding_box()
+    at_home = ghost(page).locator(".g-body").bounding_box()
+    connect(page)
+    page.keyboard.press("Escape")
+    expect(ghost(page)).to_have_class("ghost pose-orbit")
+    around = ghost(page).locator(".g-body").bounding_box()
+    assert nucleus and at_home and around
+    assert at_home["width"] < nucleus["width"] * 0.55
+    assert around["width"] < nucleus["width"] * 0.55
+
+
 def test_in_the_dark_theme_the_ghost_keeps_its_colours(page: Page, studio: Studio):
     page.emulate_media(color_scheme="dark")
     open_studio(page, studio)
