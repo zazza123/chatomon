@@ -159,7 +159,8 @@ async def test_the_history_reaches_the_output_orbitals_too(framework: StudioHarn
     judge = ScriptedOrbital(name="judge")
     agent = make_atom(framework, "two", output_orbitals=[judge]).build()
     await framework.runner.run_from_history(agent, PAST, "again")
-    assert seen(judge, 0)[:2] == [("user", "hello"), ("assistant", "one")]
+    assert judge.contexts[0].message == "two"
+    assert seen(judge, 0) == [("user", "hello"), ("assistant", "one"), ("user", "again")]
 
 
 async def test_a_message_an_orbital_blocks_gets_the_orbitals_reply(framework: StudioHarness):
@@ -198,6 +199,7 @@ async def test_a_history_is_given_in_its_order_whoever_speaks(
     guard = ScriptedOrbital(name="guard")
     agent = make_atom(framework, "ok", input_orbitals=[guard]).build()
     assert await framework.runner.run_from_history(agent, history, "last") == "ok"
+    assert guard.contexts[0].message == "last"
     assert seen(guard, 0) == history
     assert heard(framework) == [*history, ("user", "last")]
 
