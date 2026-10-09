@@ -378,11 +378,14 @@ class Session:
     ) -> Any:
         """Build one more agent from the atom and the chains as they are now.
 
-        It is how something other than the page runs the atom. The copy shares
-        the developer's objects with the studio's own agent and nothing else: it
-        reports its turns to `on_turn`, never to the session, and its spans go
-        to `tracer_provider`. It stays as it was built: after a change build
-        another one, and tell the two apart by `revision`.
+        It is how something other than the page runs the atom. The copy has the
+        atom's connector and the orbitals of the chains, the same objects the
+        studio's own agent has, and shares nothing else with it: it reports its
+        turns to `on_turn`, never to the session, and its spans go to
+        `tracer_provider`. The atom's redactor is not applied, as in the studio's
+        own agent: with `capture_content="full"` the reports carry the text as it
+        is. The copy stays as it was built: after a change build another one, and
+        tell the two apart by `revision`.
 
         Args:
             on_turn: Receives the report of every turn the copy runs.
