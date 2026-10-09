@@ -335,6 +335,9 @@ async def test_disconnecting_lets_a_request_that_runs_finish(spectral, bridges):
     await eventually(lambda: bridge.state()["counts"]["running"] == 1)
     bridge.disconnect()
     assert bridge.state()["status"] == "closing"
+    # A new connection waits for this one to be over.
+    with pytest.raises(RefusedError, match="already connected"):
+        await bridge.connect("SPECTRAL_BRIDGE_API_KEY")
     # What arrives now finds the studio leaving.
     with pytest.raises(Unanswered) as refused:
         await bridge._answer([], "hello")
@@ -535,7 +538,8 @@ async def test_the_counts_start_again_on_request(spectral, bridges):
 
 
 async def test_a_connection_is_active_while_requests_arrive(spectral, bridges, monkeypatch):
-    monkeypatch.setattr(_bridge, "_ACTIVE_FOR", 0.3)
+    # Long enough for a slow machine to read the state before it is over.
+    monkeypatch.setattr(_bridge, "_ACTIVE_FOR", 1.0)
     bridge = bridges(atom_with("Hi"))
     await connected(bridge)
     assert bridge.state()["active"] is False
@@ -544,6 +548,21 @@ async def test_a_connection_is_active_while_requests_arrive(spectral, bridges, m
     assert (state["active"], state["message"]) == (True, "Spectral is sending requests")
     await eventually(lambda: bridge.state()["active"] is False)
     assert bridge.state()["message"] == "Connected to Spectral"
+
+
+async def test_closing_the_studio_fails_the_request_that_runs(spectral, bridges):
+    atom, _ = gated()
+    bridge = bridges(atom)
+    await connected(bridge)
+    asked = asyncio.ensure_future(spectral.request("/v1/responses", HELLO))
+    await eventually(lambda: bridge.state()["counts"]["running"] == 1)
+    await bridge.close()
+    # Its caller went away: the turn was cancelled and is counted as a request that failed.
+    await eventually(lambda: bridge.state()["counts"]["running"] == 0)
+    counts = bridge.state()["counts"]
+    assert (counts["requests"], counts["failed"], sum(counts["final"].values())) == (1, 1, 0)
+    asked.cancel()
+    await asyncio.gather(asked, return_exceptions=True)
 
 
 async def test_since_is_the_time_of_the_connection_that_is_open_now(spectral, bridges):
