@@ -106,6 +106,14 @@ class RelayThread:
         await self._stop.wait()
         await self.relay.stop()
 
+    def ask(self, path: str, body: Any, *, timeout: float = 10) -> dict[str, Any]:
+        """Send a request from the thread of the test and return the payload of its response."""
+        assert self._loop is not None, "the fake relay is not running"
+        asked = asyncio.run_coroutine_threadsafe(
+            self.relay.request(path, body, timeout=timeout), self._loop
+        )
+        return asked.result(timeout + 1)
+
     def __enter__(self) -> FakeRelay:
         self._thread.start()
         assert self._ready.wait(timeout=10), "the fake relay did not start"
