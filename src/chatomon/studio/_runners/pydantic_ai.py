@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+
 from chatomon.connectors.base import Connector
-from chatomon.studio._runners import RunOutcome
+from chatomon.studio._runners import History, RunOutcome
 from chatomon.studio._testgen import Call, Framework, StandIn
 
 _SCRIPTED_NUCLEUS = (
@@ -33,6 +35,26 @@ async def run_turn(agent: Any, message: str, conversation: Any) -> RunOutcome:
     """
     result = await agent.run(message, message_history=list(conversation or ()))
     return RunOutcome(reply=result.output, conversation=result.all_messages())
+
+
+async def run_from_history(agent: Any, history: History, message: str) -> str:
+    """Run one turn on PydanticAI messages made from the texts.
+
+    Args:
+        agent: A native `pydantic_ai.Agent` built from the atom.
+        history: What was said before the message, oldest first.
+        message: The user message.
+
+    Returns:
+        The reply.
+    """
+    past: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=text)])
+        if role == "user"
+        else ModelResponse(parts=[TextPart(content=text)])
+        for role, text in history
+    ]
+    return (await run_turn(agent, message, past)).reply
 
 
 def describe(connector: Connector[Any], agent: Any) -> dict[str, str]:

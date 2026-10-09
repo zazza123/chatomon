@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_framework import AgentSession, HistoryProvider, InMemoryHistoryProvider
+from agent_framework import AgentSession, HistoryProvider, InMemoryHistoryProvider, Message
 
 from chatomon.connectors.base import Connector
 from chatomon.connectors.maf import MAFFoundryConnector
-from chatomon.studio._runners import InterruptedTurnError, RunOutcome
+from chatomon.studio._runners import History, InterruptedTurnError, RunOutcome
 from chatomon.studio._testgen import Call, Framework, StandIn
 
 _INTERRUPTED = (
@@ -88,6 +88,28 @@ async def run_turn(agent: Any, message: str, conversation: Any) -> RunOutcome:
     if response.user_input_requests:
         raise InterruptedTurnError(_INTERRUPTED)
     return RunOutcome(reply=response.text, conversation=session)
+
+
+async def run_from_history(agent: Any, history: History, message: str) -> str:
+    """Run one turn on a new session, with the texts given as the messages before the last.
+
+    Args:
+        agent: The native agent built from the atom.
+        history: What was said before the message, oldest first.
+        message: The user message.
+
+    Returns:
+        The reply.
+
+    Raises:
+        InterruptedTurnError: If a tool asked for an approval.
+    """
+    past = [Message(role, [text]) for role, text in history]
+    said = [*past, Message("user", [message])]
+    response = await agent.run(said, session=agent.create_session())
+    if response.user_input_requests:
+        raise InterruptedTurnError(_INTERRUPTED)
+    return response.text
 
 
 def describe(connector: Connector[Any], agent: Any) -> dict[str, str]:

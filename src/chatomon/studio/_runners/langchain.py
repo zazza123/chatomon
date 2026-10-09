@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import Any
 from uuid import uuid4
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from chatomon.connectors.base import Connector
-from chatomon.studio._runners import InterruptedTurnError, RunOutcome
+from chatomon.studio._runners import History, InterruptedTurnError, RunOutcome
 from chatomon.studio._testgen import Call, Framework, StandIn
 
 _INTERRUPTED = (
@@ -91,6 +91,27 @@ async def run_turn(agent: Any, message: str, conversation: Any) -> RunOutcome:
     if state.get("__interrupt__"):
         raise InterruptedTurnError(_INTERRUPTED)
     return RunOutcome(reply=state["messages"][-1].text, conversation=state["messages"])
+
+
+async def run_from_history(agent: Any, history: History, message: str) -> str:
+    """Run one turn on LangChain messages made from the texts, on a thread of its own.
+
+    Args:
+        agent: The compiled LangGraph agent built from the atom.
+        history: What was said before the message, oldest first.
+        message: The user message.
+
+    Returns:
+        The reply.
+
+    Raises:
+        InterruptedTurnError: If the graph stopped at an interrupt.
+    """  # noqa: DOC502 - raised by run_turn()
+    past: list[BaseMessage] = [
+        HumanMessage(content=text) if role == "user" else AIMessage(content=text)
+        for role, text in history
+    ]
+    return (await run_turn(agent, message, past)).reply
 
 
 def describe(connector: Connector[Any], agent: Any) -> dict[str, str]:

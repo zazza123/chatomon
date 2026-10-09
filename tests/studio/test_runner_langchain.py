@@ -13,7 +13,13 @@ from langgraph.types import interrupt
 from chatomon import Atom
 from chatomon.connectors.langchain import LangChainConnector
 from chatomon.studio._runners import InterruptedTurnError
-from chatomon.studio._runners.langchain import describe, notes, run_turn, saved_test
+from chatomon.studio._runners.langchain import (
+    describe,
+    notes,
+    run_from_history,
+    run_turn,
+    saved_test,
+)
 from tests.contract.harness import ToolCall
 from tests.contract.harness_langchain import ScriptedChatModel
 from tests.fakes import ScriptedOrbital
@@ -127,6 +133,13 @@ async def test_an_interrupt_is_a_failed_turn_and_the_conversation_goes_on(kwargs
     with pytest.raises(InterruptedTurnError, match="stopped to wait for an answer"):
         await run_turn(agent, "what are your hours?", first.conversation)
     assert (await run_turn(agent, "again", first.conversation)).reply == "three"
+
+
+async def test_an_interrupt_stops_a_turn_run_from_a_history():
+    model = ScriptedChatModel(script=[ToolCall(), "three"])
+    agent = atom(LangChainConnector(model, tools=[lookup])).build()
+    with pytest.raises(InterruptedTurnError, match="stopped to wait for an answer"):
+        await run_from_history(agent, [("user", "hello"), ("assistant", "one")], "your hours?")
 
 
 def test_a_saved_test_awaits_its_turns_and_carries_the_messages():

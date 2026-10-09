@@ -1,5 +1,6 @@
 """What every studio runner does, and how the studio finds the runner of a connector."""
 
+import asyncio
 import importlib
 import pkgutil
 from typing import Any
@@ -9,7 +10,7 @@ import pytest
 import chatomon.connectors
 from chatomon import Atom, ChatomonConfigError, Verdict
 from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER
-from chatomon.studio._runners import runner_for
+from chatomon.studio._runners import History, runner_for
 from chatomon.studio._testgen import Framework
 from tests.contract.harness import ToolCall, lookup
 from tests.fakes import FakeConnector, ScriptedOrbital
@@ -128,6 +129,106 @@ async def test_the_conversation_goes_on_with_an_agent_of_another_instance_of_the
     assert seen(guard, 0) == [("user", "hello"), ("assistant", "one")]
 
 
+PAST: History = (("user", "hello"), ("assistant", "one"))
+
+
+async def test_a_turn_runs_on_a_history_given_as_texts(framework: StudioHarness):
+    guard = ScriptedOrbital(name="guard")
+    agent = make_atom(framework, "two", input_orbitals=[guard]).build()
+    assert await framework.runner.run_from_history(agent, PAST, "again") == "two"
+    assert guard.contexts[0].message == "again"
+    assert seen(guard, 0) == [("user", "hello"), ("assistant", "one")]
+
+
+async def test_a_turn_without_a_history_is_a_first_turn(framework: StudioHarness):
+    guard = ScriptedOrbital(name="guard")
+    agent = make_atom(framework, "one", input_orbitals=[guard]).build()
+    assert await framework.runner.run_from_history(agent, (), "hello") == "one"
+    assert seen(guard, 0) == []
+
+
+async def test_the_history_reaches_the_output_orbitals_too(framework: StudioHarness):
+    judge = ScriptedOrbital(name="judge")
+    agent = make_atom(framework, "two", output_orbitals=[judge]).build()
+    await framework.runner.run_from_history(agent, PAST, "again")
+    assert seen(judge, 0)[:2] == [("user", "hello"), ("assistant", "one")]
+
+
+async def test_a_message_an_orbital_blocks_gets_the_orbitals_reply(framework: StudioHarness):
+    guard = ScriptedOrbital(Verdict.block("No."), name="guard")
+    agent = make_atom(framework, "unused", input_orbitals=[guard]).build()
+    assert await framework.runner.run_from_history(agent, PAST, "secret") == "No."
+
+
+async def test_a_history_that_repeats_itself_is_kept_whole(framework: StudioHarness):
+    guard = ScriptedOrbital(name="guard")
+    agent = make_atom(framework, "three", input_orbitals=[guard]).build()
+    history: History = [
+        ("user", "hi"),
+        ("assistant", "same"),
+        ("user", "hi"),
+        ("assistant", "same"),
+    ]
+    assert await framework.runner.run_from_history(agent, history, "hi") == "three"
+    assert seen(guard, 0) == history
+
+
+@pytest.mark.parametrize(
+    "history",
+    [
+        [("user", "a"), ("user", "b")],
+        [("assistant", "welcome"), ("user", "a"), ("assistant", "b")],
+        [("user", "a"), ("assistant", "b"), ("user", "c")],
+        [("user", "ciao 👻 «è»"), ("assistant", "línea\nnueva")],
+    ],
+    ids=["two user messages", "the assistant first", "a user message last", "not ASCII"],
+)
+async def test_a_history_is_given_in_its_order_whoever_speaks(
+    framework: StudioHarness, history: History
+):
+    guard = ScriptedOrbital(name="guard")
+    agent = make_atom(framework, "ok", input_orbitals=[guard]).build()
+    assert await framework.runner.run_from_history(agent, history, "last") == "ok"
+    assert seen(guard, 0) == history
+
+
+async def test_a_history_is_left_as_it_was_given(framework: StudioHarness):
+    history: History = [("user", "hello"), ("assistant", "one")]
+    agent = make_atom(framework, "two").build()
+    await framework.runner.run_from_history(agent, history, "again")
+    assert history == [("user", "hello"), ("assistant", "one")]
+
+
+async def test_a_model_that_fails_raises_its_error_and_the_next_turn_runs(
+    framework: StudioHarness,
+):
+    agent = make_atom(framework, RuntimeError("model down"), "two").build()
+    with pytest.raises(RuntimeError, match="model down"):
+        await framework.runner.run_from_history(agent, PAST, "boom")
+    assert await framework.runner.run_from_history(agent, PAST, "again") == "two"
+
+
+async def test_a_turn_from_a_history_can_call_a_tool(framework: StudioHarness):
+    connector = framework.connector(ToolCall(), "We open at 9.", tools=[lookup])
+    agent = Atom(name="t", instructions="Be brief.", connector=connector).build()
+    assert await framework.runner.run_from_history(agent, PAST, "when?") == "We open at 9."
+
+
+async def test_turns_at_the_same_time_keep_their_own_histories(framework: StudioHarness):
+    guard = ScriptedOrbital(name="guard")
+    agent = make_atom(framework, "a", "b", "c", input_orbitals=[guard]).build()
+    histories: list[History] = [[("user", f"q{n}"), ("assistant", f"r{n}")] for n in range(3)]
+    replies = await asyncio.gather(
+        *(
+            framework.runner.run_from_history(agent, past, f"m{n}")
+            for n, past in enumerate(histories)
+        )
+    )
+    assert sorted(replies) == ["a", "b", "c"]
+    by_message = {ctx.message: [(m.role, m.content) for m in ctx.history] for ctx in guard.contexts}
+    assert by_message == {f"m{n}": histories[n] for n in range(3)}
+
+
 def test_a_runner_names_the_connector_and_supplies_a_saved_test(framework: StudioHarness):
     atom = make_atom(framework, "one")
     described = framework.runner.describe(atom.connector, atom.build())
@@ -169,11 +270,11 @@ def test_a_connector_of_the_developers_own_is_refused_by_name():
         runner_for(FakeConnector())
 
 
-def test_every_connector_module_has_a_runner_with_the_four_functions():
+def test_every_connector_module_has_a_runner_with_the_five_functions():
     frameworks = [m.name for m in pkgutil.iter_modules(chatomon.connectors.__path__)]
     frameworks.remove("base")
     assert frameworks  # the search itself must find chatomon's connectors
     for name in frameworks:
         runner = importlib.import_module(f"chatomon.studio._runners.{name}")
-        for function in ("run_turn", "describe", "notes", "saved_test"):
+        for function in ("run_turn", "run_from_history", "describe", "notes", "saved_test"):
             assert callable(getattr(runner, function, None)), f"{name} has no {function}()"

@@ -11,7 +11,7 @@ from google.adk.runners import InMemoryRunner
 from google.genai import types
 
 from chatomon.connectors.base import Connector
-from chatomon.studio._runners import InterruptedTurnError, RunOutcome
+from chatomon.studio._runners import History, InterruptedTurnError, RunOutcome
 from chatomon.studio._testgen import Call, Framework, StandIn
 
 _USER = "studio"
@@ -77,6 +77,24 @@ def _reply(events: Iterable[Event]) -> str:
     return ""
 
 
+async def _answer(runner: InMemoryRunner, session_id: str, message: str) -> list[Event]:
+    """Run one turn on a session of the runner.
+
+    Returns:
+        The events of the turn.
+
+    Raises:
+        InterruptedTurnError: If the run stopped to wait for an answer.
+    """
+    content = types.Content(role="user", parts=[types.Part(text=message)])
+    turn = runner.run_async(user_id=_USER, session_id=session_id, new_message=content)
+    events = [event async for event in turn]
+    # A request for a confirmation is not the last event of its run.
+    if any(event.long_running_tool_ids for event in events):
+        raise InterruptedTurnError(_INTERRUPTED)
+    return events
+
+
 async def run_turn(agent: Any, message: str, conversation: Any) -> RunOutcome:
     """Run one turn on a copy of the conversation's session, kept in memory.
 
@@ -98,7 +116,7 @@ async def run_turn(agent: Any, message: str, conversation: Any) -> RunOutcome:
         InterruptedTurnError: If the run stopped to wait for an answer, as a
             long-running tool or a request for a confirmation makes it do.
             The conversation that was given is as it was.
-    """
+    """  # noqa: DOC502 - raised by _answer()
     runner = InMemoryRunner(app=agent)
     service = runner.session_service
     session = await service.create_session(
@@ -108,16 +126,40 @@ async def run_turn(agent: Any, message: str, conversation: Any) -> RunOutcome:
     )
     for event in conversation.events if conversation is not None else ():
         await service.append_event(session, event.model_copy(deep=True))
-    content = types.Content(role="user", parts=[types.Part(text=message)])
-    turn = runner.run_async(user_id=_USER, session_id=session.id, new_message=content)
-    events = [event async for event in turn]
-    # A request for a confirmation is not the last event of its run.
-    if any(event.long_running_tool_ids for event in events):
-        raise InterruptedTurnError(_INTERRUPTED)
+    events = await _answer(runner, session.id, message)
     after = await service.get_session(
         app_name=runner.app_name, user_id=_USER, session_id=session.id
     )
     return RunOutcome(reply=_reply(events), conversation=after)
+
+
+async def run_from_history(agent: Any, history: History, message: str) -> str:
+    """Run one turn on a new session in memory, with one event for every text.
+
+    Args:
+        agent: The `google.adk.apps.App` built from the atom.
+        history: What was said before the message, oldest first.
+        message: The user message.
+
+    Returns:
+        The reply.
+
+    Raises:
+        InterruptedTurnError: If the run stopped to wait for an answer.
+    """  # noqa: DOC502 - raised by _answer()
+    runner = InMemoryRunner(app=agent)
+    service = runner.session_service
+    session = await service.create_session(
+        app_name=runner.app_name, user_id=_USER, session_id=uuid4().hex
+    )
+    nucleus = agent.root_agent.name
+    for role, text in history:
+        by_user = role == "user"
+        content = types.Content(role="user" if by_user else "model", parts=[types.Part(text=text)])
+        author = "user" if by_user else nucleus
+        event = Event(author=author, invocation_id=uuid4().hex, content=content)
+        await service.append_event(session, event)
+    return _reply(await _answer(runner, session.id, message))
 
 
 def describe(connector: Connector[Any], agent: Any) -> dict[str, str]:
