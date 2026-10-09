@@ -32,6 +32,13 @@ class RunOutcome:
 
     reply: str
     conversation: Any
+    by_nucleus: bool = True
+    """Whether the nucleus wrote the reply.
+
+    It did not when the turn ended on something else, as the result of a tool that
+    returns directly is: the page shows it, and who answers a request from outside the
+    page takes it as no reply, because no output orbital checked it.
+    """
 
 
 class InterruptedTurnError(ChatomonError):
