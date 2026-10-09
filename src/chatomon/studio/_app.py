@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 import shlex
@@ -21,6 +22,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from chatomon.errors import ChatomonConfigError, ChatomonError
+from chatomon.studio import _spectral as spectral
 from chatomon.studio._chains import InvalidRequestError, UnknownOrbitalError
 from chatomon.studio._events import Event
 from chatomon.studio._files import InvalidPathError, OwnFileExistsError
@@ -44,6 +46,8 @@ _TEST_HELP = (
     'send {"path": "tests/studio/test_turn.py", "turn": "<the id the test came with>"}; '
     '"alone" and "overwrite" are true or false'
 )
+
+_SPECTRAL_HELP = 'send {"api_key_env": "<the name of the variable that holds the key>"}'
 
 
 def _error(status: int, kind: str, message: str, **extra: Any) -> JSONResponse:
@@ -94,6 +98,56 @@ async def _stream(queue: asyncio.Queue[Event | None]) -> AsyncIterator[str]:
         yield f"event: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
+def _spectral_routes(bridge: spectral.Bridge) -> list[Route]:
+    """Build the routes of the Spectral add-on: its state, and what its card asks.
+
+    Returns:
+        The routes, which exist only when the add-on's extra is installed.
+    """
+
+    def shown() -> Response:
+        return JSONResponse(bridge.state(), headers=_NO_STORE)
+
+    async def get_state(request: Request) -> Response:
+        return shown()
+
+    async def connect(request: Request) -> Response:
+        body = await _body(request) or {}
+        name = body.get("api_key_env")
+        if not isinstance(name, str):
+            return _error(422, "InvalidBody", _SPECTRAL_HELP)
+        try:
+            # The body names a variable; its value and the relay's address are read here.
+            await bridge.connect(name)
+        except ChatomonError as exc:
+            return _refusal(exc)
+        return shown()
+
+    async def disconnect(request: Request) -> Response:
+        bridge.disconnect()
+        return shown()
+
+    async def test(request: Request) -> Response:
+        try:
+            # Nothing in the request says what to send: the server writes the message.
+            await bridge.test()
+        except ChatomonError as exc:
+            return _refusal(exc)
+        return shown()
+
+    async def reset_counts(request: Request) -> Response:
+        bridge.reset_counts()
+        return shown()
+
+    return [
+        Route("/api/spectral", get_state, methods=["GET"]),
+        Route("/api/spectral/connect", connect, methods=["POST"]),
+        Route("/api/spectral/disconnect", disconnect, methods=["POST"]),
+        Route("/api/spectral/test", test, methods=["POST"]),
+        Route("/api/spectral/counts/reset", reset_counts, methods=["POST"]),
+    ]
+
+
 def create_app(session: Session, *, token: str, host: str, port: int) -> Starlette:
     """Build the studio's ASGI app for one session.
 
@@ -108,10 +162,14 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
     """
     # On a network address the session refuses a connection that comes from the page.
     session.local = host in LOOPBACK
+    # An add-on: without its extra the page, the state and the routes are as they were.
+    bridge = spectral.Bridge(session) if spectral.available() else None
 
     def state() -> dict[str, Any]:
         current = session.state()
         current["studio"]["local"] = host in LOOPBACK
+        if bridge is not None:
+            current["studio"]["spectral"] = bridge.state()
         return current
 
     async def index(request: Request) -> Response:
@@ -315,6 +373,7 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
         Route("/api/orbitals/undo", undo, methods=["POST"]),
         Route("/api/conversation/reset", post_reset, methods=["POST"]),
         Route("/api/reload", post_reload, methods=["POST"]),
+        *(_spectral_routes(bridge) if bridge is not None else ()),
         Mount("/static", StaticFiles(packages=[("chatomon.studio", "static")]), name="static"),
     ]
 
@@ -328,6 +387,18 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
         # Starlette raises the exception again after this response, so the server logs it.
         return _error(500, "InternalError", "the studio failed; the terminal has the details")
 
+    @contextlib.asynccontextmanager
+    async def until_stopped(app: Starlette) -> AsyncIterator[None]:
+        yield
+        # The studio is stopping: nothing outside reaches the atom after it.
+        if bridge is not None:
+            await bridge.close()
+
     middleware = [Middleware(Guard, token=token, host=host, port=port)]
     handlers = {HTTPException: http_error, Exception: server_error}
-    return Starlette(routes=routes, middleware=middleware, exception_handlers=handlers)
+    return Starlette(
+        routes=routes,
+        middleware=middleware,
+        exception_handlers=handlers,
+        lifespan=until_stopped if bridge is not None else None,
+    )
