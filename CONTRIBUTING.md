@@ -316,7 +316,7 @@ path is written down:
    - a harness in `tests/contract/` passes the whole contract suite, using the
      framework's fake models and no network;
    - a studio runner in `src/chatomon/studio/_runners/<framework>.py`, a module
-     named like the connector's with the four functions of the `Runner`
+     named like the connector's with the five functions of the `Runner`
      protocol, has an entry in `tests/studio/frameworks.py` and passes the
      scenarios of `tests/studio/test_events.py`, `test_runners.py` and
      `test_testgen.py`, and the browser smoke test of
