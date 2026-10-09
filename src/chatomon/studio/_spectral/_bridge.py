@@ -3,6 +3,11 @@
 It puts the pieces together: the adapter that answers requests, the copy of the
 atom the requests run on, the counts of what its orbitals decided, and the
 connection to the relay.
+
+Spectral sends the first message of a conversation and then, turn after turn, the new
+message with the id of the answer before it. So the bridge keeps the conversation each
+answer left, as the runner gives it: in memory, for as long as the connection is open,
+and nowhere else.
 """
 
 from __future__ import annotations
@@ -15,6 +20,7 @@ import secrets
 import socket
 import sys
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -52,6 +58,13 @@ _SENTENCES = {
     ("refused", "stopped"): "The connection to Spectral stopped.",
 }
 _ACTIVE = "Spectral is sending requests"
+_NOT_KEPT = (
+    "The answer this request continues is not kept here: send the whole conversation in input."
+)
+_REPLACED = "The atom was replaced by one of another framework: start the conversation again."
+
+_KEPT = 1000
+"""How many answers have their conversation kept to be continued; the oldest go first."""
 
 # The reports of the turn that runs in this context: how a report finds its request.
 _reports: contextvars.ContextVar[list[TurnReport] | None] = contextvars.ContextVar(
@@ -67,6 +80,14 @@ class _Copy:
     agent: Any
     runner: Runner
     chain: Chain
+
+
+@dataclass(frozen=True)
+class _Kept:
+    """The conversation an answer left, as the runner that ran it gives it."""
+
+    runner: Runner
+    conversation: Any
 
 
 @dataclass(frozen=True)
@@ -119,6 +140,7 @@ class Bridge:
         self._since: datetime | None = None
         self._counts: Counts | None = None
         self._copy: _Copy | None = None
+        self._kept: OrderedDict[str, _Kept] = OrderedDict()
         self._test: dict[str, Any] | None = None
         self._opening = False
         self._running = 0
@@ -146,9 +168,18 @@ class Bridge:
         return self._copy
 
     async def _run(
-        self, history: list[shapes.Said], message: str, *, counts: Counts | None
+        self,
+        asked: shapes.Asked,
+        *,
+        counts: Counts | None,
+        kept: _Kept | None = None,
+        keep_as: str | None = None,
     ) -> _Turn:
         """Run one turn on the copy; `counts` is told when given.
+
+        A request that brings its own history runs on those texts. Any other runs as a
+        turn of a conversation the runner keeps: the one in `kept`, or a new one. What
+        that turn leaves is kept under `keep_as`, when it is given and there is a reply.
 
         Returns:
             How the turn went: its reply, or why there is none to send.
@@ -164,13 +195,24 @@ class Bridge:
             self._running += 1
         started = time.perf_counter()
         copy: _Copy | None = None
+        left: _Kept | None = None
         reply = ""
         failure: Unanswered | None = None
         cancelled = False
         try:
             # A copy that cannot be built is a request that failed, like a turn that raised.
             copy = self._current()
-            reply = await copy.runner.run_from_history(copy.agent, history, message)
+            if asked.history:
+                reply = await copy.runner.run_from_history(copy.agent, asked.history, asked.message)
+            elif kept is not None and kept.runner is not copy.runner:
+                # A conversation of one framework means nothing to another.
+                failure = Unanswered(409, "AtomReplaced", _REPLACED)
+            else:
+                before = kept.conversation if kept is not None else None
+                outcome = await copy.runner.run_turn(copy.agent, asked.message, before)
+                # What a tool returned is not a reply: no output orbital checked it.
+                reply = outcome.reply if outcome.by_nucleus else ""
+                left = _Kept(copy.runner, outcome.conversation)
         except InterruptedTurnError:
             failure = Unanswered(500, "AtomInterrupted", "The atom stopped to wait for an answer.")
         except asyncio.CancelledError:
@@ -180,7 +222,7 @@ class Bridge:
             # The class of the error, never its text: it can quote the conversation.
             failure = Unanswered(502, "AtomFailed", f"The atom failed with {type(exc).__name__}.")
         else:
-            if not reply:
+            if failure is None and not reply:
                 failure = Unanswered(500, "AtomFailed", "The atom gave no reply.")
         finally:
             _reports.reset(token)
@@ -196,22 +238,38 @@ class Bridge:
                     failed=cancelled or failure is not None,
                     duration_ms=duration_ms,
                 )
+        if failure is None and left is not None and keep_as is not None:
+            self._keep(keep_as, left)
         return _Turn(reply, report, duration_ms, failure)
 
-    async def _answer(self, history: list[shapes.Said], message: str) -> str:
+    def _keep(self, answer_id: str, left: _Kept) -> None:
+        """Keep the conversation an answer left, and forget the oldest beyond the limit."""
+        self._kept[answer_id] = left
+        while len(self._kept) > _KEPT:
+            self._kept.popitem(last=False)
+
+    async def _answer(self, asked: shapes.Asked, kept_as: str | None) -> str:
         """Answer a request of the adapter with a turn of the atom.
 
         Returns:
             The reply of the atom.
 
         Raises:
-            Unanswered: When the connection is closing, or the turn left no reply.
+            Unanswered: When the connection is closing, the answer the request
+                continues is not kept, or the turn left no reply.
         """
         relay = self._relay
         if relay is None or relay.state()[0] in {"closing", "off", "refused"}:
             raise Unanswered(503, "Closing", "The studio is disconnecting.")
         relay.seen()
-        turn = await self._run(history, message, counts=self._counts)
+        kept: _Kept | None = None
+        if asked.previous is not None:
+            kept = self._kept.get(asked.previous)
+            if kept is None:
+                # Refused before any turn, like a request that cannot be read.
+                self._rejected()
+                raise Unanswered(400, "UnknownConversation", _NOT_KEPT)
+        turn = await self._run(asked, counts=self._counts, kept=kept, keep_as=kept_as)
         if turn.failure is not None:
             raise turn.failure
         return turn.reply
@@ -230,7 +288,8 @@ class Bridge:
     def state(self) -> dict[str, Any]:
         """Return what the page shows of the connection, as JSON-ready data.
 
-        The key and the key of the adapter are never part of it.
+        The key and the key of the adapter are never part of it, nor is any text of
+        the conversations that are kept: only how many they are.
         """
         status, reason = self._relay.state() if self._relay is not None else ("off", None)
         if status != "connected":
@@ -258,6 +317,7 @@ class Bridge:
             "since": since,
             "test": dict(self._test) if self._test is not None else None,
             "counts": self._counts.to_json() if self._counts is not None else None,
+            "conversations": len(self._kept),
         }
 
     async def connect(self, api_key_env: str) -> None:
@@ -361,6 +421,8 @@ class Bridge:
         self._server = None
         self._port = None
         self._since = None
+        # Nothing can continue them any more: their texts are not kept past the connection.
+        self._kept.clear()
         if said:
             print("chatomon studio: Spectral can no longer reach this atom.", file=sys.stderr)
 
@@ -381,8 +443,7 @@ class Bridge:
             raise StudioBusyError("a test is running; wait for it to finish")
         self._test = {"outcome": "running"}
         try:
-            history, message = shapes.read(shapes.RESPONSES, {"input": SAMPLE})
-            turn = await self._run(history, message, counts=None)
+            turn = await self._run(shapes.read(shapes.RESPONSES, {"input": SAMPLE}), counts=None)
         except BaseException:
             self._test = None
             raise

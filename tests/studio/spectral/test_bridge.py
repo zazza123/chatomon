@@ -11,14 +11,16 @@ import pytest
 
 from chatomon import Atom, ChatomonConfigError, Verdict
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
-from chatomon.schemas import OrbitalContext
+from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER, OrbitalContext
 from chatomon.studio import _loading as loading
 from chatomon.studio._chains import RefusedError
 from chatomon.studio._loading import load, namespace
 from chatomon.studio._session import Session, StudioBusyError
 from chatomon.studio._spectral import Bridge, _bridge
 from chatomon.studio._spectral._adapter import Unanswered
+from chatomon.studio._spectral._shapes import Asked
 from chatomon.studio._values import InvalidSettingError
+from tests.contract.harness import Call
 from tests.fakes import ScriptedOrbital
 from tests.studio import frameworks
 from tests.studio.frameworks import Reply, StudioHarness, scripted
@@ -70,6 +72,7 @@ def test_a_bridge_that_was_never_connected_is_off(bridges, monkeypatch):
         "since": None,
         "test": None,
         "counts": None,
+        "conversations": 0,
     }
 
 
@@ -129,6 +132,172 @@ async def test_the_history_of_a_request_reaches_the_orbitals(spectral, bridges):
     await spectral.request("/v1/responses", {"input": items})
     seen = [(message.role, message.content) for message in guard.contexts[0].history]
     assert seen == [("user", "hello"), ("assistant", "one")]
+
+
+def continuing(answer: dict[str, Any], message: str) -> dict[str, Any]:
+    """What Spectral sends for the turn after an answer: the new message and that answer's id."""
+    return {
+        "model": "any",
+        "input": [{"role": "user", "content": message}],
+        "previous_response_id": answer["body"]["id"],
+    }
+
+
+def text_of(answer: dict[str, Any]) -> str:
+    return answer["body"]["output"][0]["content"][0]["text"]
+
+
+def shown(guard: ScriptedOrbital, turn: int) -> list[tuple[str, str]]:
+    """The conversation an input orbital was given in a turn, counted from 0."""
+    return [(message.role, message.content) for message in guard.contexts[turn].history]
+
+
+async def test_a_request_that_continues_an_answer_meets_the_conversation_so_far(spectral, bridges):
+    guard = ScriptedOrbital(name="guard")
+    bridge = bridges(atom_with("one", "two", "three", input_orbitals=[guard]))
+    await connected(bridge)
+    first = await spectral.request(
+        "/v1/responses", {"input": "hello", "previous_response_id": None}
+    )
+    second = await spectral.request("/v1/responses", continuing(first, "again"))
+    third = await spectral.request("/v1/responses", continuing(second, "and then?"))
+    assert [answer["status"] for answer in (first, second, third)] == [200, 200, 200]
+    assert [text_of(answer) for answer in (first, second, third)] == ["one", "two", "three"]
+    assert shown(guard, 2) == [
+        ("user", "hello"),
+        ("assistant", "one"),
+        ("user", "again"),
+        ("assistant", "two"),
+    ]
+    state = bridge.state()
+    counts = state["counts"]
+    assert (counts["requests"], counts["rejected"], counts["failed"]) == (3, 0, 0)
+    assert state["conversations"] == 3
+
+
+async def test_a_blocked_message_stays_out_of_the_conversation_that_continues(spectral, bridges):
+    """As where the service keeps the conversation: the nucleus never reads what was blocked."""
+    heard: list[Call] = []
+    guard = ScriptedOrbital(Verdict.block("No."), Verdict.allow(), name="guard")
+    connector = PydanticAIConnector(scripted("Sure.", heard=heard))
+    atom = Atom(name="shop", instructions="Be brief.", connector=connector, input_orbitals=[guard])
+    bridge = bridges(atom)
+    await connected(bridge)
+    first = await spectral.request("/v1/responses", {"input": "the secret plan"})
+    assert text_of(first) == "No."
+    second = await spectral.request("/v1/responses", continuing(first, "and now?"))
+    assert text_of(second) == "Sure."
+    said = [text for _, text in heard[0].messages]
+    assert "the secret plan" not in " ".join(said)
+    assert DEFAULT_BLOCKED_PLACEHOLDER in said
+
+
+async def test_a_conversation_is_continued_on_every_framework(framework: StudioHarness, bridges):
+    guard = ScriptedOrbital(Verdict.block("No."), Verdict.allow(), Verdict.allow(), name="guard")
+    atom = Atom(
+        name="shop",
+        instructions="Be brief.",
+        connector=framework.connector("one", "two"),
+        input_orbitals=[guard],
+    )
+    bridge = bridges(atom)
+    first = await bridge._run(Asked([], "the secret plan", None), counts=None, keep_as="resp_1")
+    second = await bridge._run(
+        Asked([], "hello", "resp_1"), counts=None, kept=bridge._kept["resp_1"], keep_as="resp_2"
+    )
+    third = await bridge._run(
+        Asked([], "again", "resp_2"), counts=None, kept=bridge._kept["resp_2"], keep_as="resp_3"
+    )
+    assert (first.reply, second.reply, third.reply) == ("No.", "one", "two")
+    assert shown(guard, 2) == [
+        ("user", DEFAULT_BLOCKED_PLACEHOLDER),
+        ("assistant", "No."),
+        ("user", "hello"),
+        ("assistant", "one"),
+    ]
+
+
+async def test_an_answer_that_is_not_kept_cannot_be_continued(spectral, bridges):
+    bridge = bridges(atom_with("Hi"))
+    await connected(bridge)
+    body = {"input": "again", "previous_response_id": "resp_of_another_day"}
+    answer = await spectral.request("/v1/responses", body)
+    assert answer["status"] == 400
+    assert answer["body"] == {
+        "error": {
+            "type": "UnknownConversation",
+            "message": (
+                "The answer this request continues is not kept here: "
+                "send the whole conversation in input."
+            ),
+        }
+    }
+    counts = bridge.state()["counts"]
+    assert (counts["requests"], counts["rejected"]) == (0, 1)
+
+
+async def test_an_answer_can_be_continued_more_than_once(spectral, bridges):
+    """A turn that is asked again, as after an error, finds the conversation as it was."""
+    guard = ScriptedOrbital(name="guard")
+    bridge = bridges(atom_with("one", "two", "three", input_orbitals=[guard]))
+    await connected(bridge)
+    first = await spectral.request("/v1/responses", HELLO)
+    await spectral.request("/v1/responses", continuing(first, "again"))
+    await spectral.request("/v1/responses", continuing(first, "once more"))
+    assert shown(guard, 2) == [("user", "hello"), ("assistant", "one")]
+
+
+async def test_a_conversation_goes_on_after_the_orbitals_change(spectral, bridges):
+    guard = ScriptedOrbital(name="guard")
+    other = ScriptedOrbital(name="other")
+    bridge = bridges(atom_with("one", "two", input_orbitals=[guard, other]))
+    await connected(bridge)
+    first = await spectral.request("/v1/responses", HELLO)
+    bridge._session.switch("input", "other", False)
+    second = await spectral.request("/v1/responses", continuing(first, "again"))
+    assert text_of(second) == "two"
+    assert shown(guard, 1) == [("user", "hello"), ("assistant", "one")]
+    assert bridge.state()["counts"]["configurations"] == 2
+
+
+async def test_the_conversations_are_forgotten_when_the_connection_closes(spectral, bridges):
+    bridge = bridges(atom_with("one", "two"))
+    await connected(bridge)
+    first = await spectral.request("/v1/responses", HELLO)
+    assert bridge.state()["conversations"] == 1
+    bridge.disconnect()
+    await eventually(lambda: bridge.state()["status"] == "off")
+    assert bridge.state()["conversations"] == 0
+    await connected(bridge)
+    again = await spectral.request("/v1/responses", continuing(first, "again"))
+    assert (again["status"], again["body"]["error"]["type"]) == (400, "UnknownConversation")
+
+
+async def test_only_so_many_conversations_are_kept(spectral, bridges, monkeypatch):
+    monkeypatch.setattr(_bridge, "_KEPT", 2)
+    bridge = bridges(atom_with("a", "b", "c", "d"))
+    await connected(bridge)
+    answers = [await spectral.request("/v1/responses", HELLO) for _ in range(3)]
+    assert bridge.state()["conversations"] == 2
+    oldest = await spectral.request("/v1/responses", continuing(answers[0], "again"))
+    newest = await spectral.request("/v1/responses", continuing(answers[2], "again"))
+    assert (oldest["status"], newest["status"]) == (400, 200)
+
+
+async def test_what_cannot_be_continued_is_not_kept(spectral, bridges):
+    """A turn that failed, a request that brought its own history, a chat completion."""
+    bridge = bridges(atom_with(RuntimeError("boom"), "two", "three"))
+    await connected(bridge)
+    failed = await spectral.request("/v1/responses", HELLO)
+    items = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "one"},
+        {"role": "user", "content": "again"},
+    ]
+    whole = await spectral.request("/v1/responses", {"input": items})
+    chat = await spectral.request("/v1/chat/completions", {"messages": items})
+    assert [answer["status"] for answer in (failed, whole, chat)] == [502, 200, 200]
+    assert bridge.state()["conversations"] == 0
 
 
 async def test_a_message_an_orbital_blocks_is_answered_with_its_reply(spectral, bridges):
@@ -197,7 +366,7 @@ async def test_a_request_that_arrives_during_a_reload_is_answered_by_what_was_lo
     sources("settings.py", 'REPLY = "Before."\n')
     session = Session(load("shop:atom"), source="shop:atom", namespace=namespace("shop:atom"))
     bridge = Bridge(session)
-    assert (await bridge._run([], "hello", counts=None)).reply == "Before."
+    assert (await bridge._run(Asked([], "hello", None), counts=None)).reply == "Before."
     release = threading.Event()
     real = loading.load
 
@@ -209,7 +378,7 @@ async def test_a_request_that_arrives_during_a_reload_is_answered_by_what_was_lo
     sources("settings.py", 'REPLY = "After."\n')
     reload = asyncio.ensure_future(session.reload())
     await asyncio.sleep(0.05)
-    asked = asyncio.ensure_future(bridge._run([], "hello", counts=None))
+    asked = asyncio.ensure_future(bridge._run(Asked([], "hello", None), counts=None))
     await asyncio.sleep(0.05)
     assert not asked.done()
     release.set()
@@ -263,7 +432,7 @@ async def test_every_request_is_counted_with_its_own_report(framework: StudioHar
     bridge = bridges(atom)
     bridge._counts = _bridge.Counts()
     turns = await asyncio.gather(
-        *(bridge._run([], f"m{n}", counts=bridge._counts) for n in range(3))
+        *(bridge._run(Asked([], f"m{n}", None), counts=bridge._counts) for n in range(3))
     )
     assert all(turn.report is not None for turn in turns)
     assert sorted(turn.reply for turn in turns if turn.report.final_action == "blocked") == ["No."]
@@ -283,7 +452,7 @@ async def test_a_reply_that_is_empty_is_a_failed_request(
     atom = Atom(name="shop", instructions="Be brief.", connector=framework.connector(""))
     bridge = bridges(atom)
     bridge._counts = _bridge.Counts()
-    turn = await bridge._run([], "hello", counts=bridge._counts)
+    turn = await bridge._run(Asked([], "hello", None), counts=bridge._counts)
     assert turn.failure is not None
     assert (turn.failure.status, turn.failure.message) == (500, "The atom gave no reply.")
     counts = bridge.state()["counts"]
@@ -340,7 +509,7 @@ async def test_disconnecting_lets_a_request_that_runs_finish(spectral, bridges):
         await bridge.connect("SPECTRAL_BRIDGE_API_KEY")
     # What arrives now finds the studio leaving.
     with pytest.raises(Unanswered) as refused:
-        await bridge._answer([], "hello")
+        await bridge._answer(Asked([], "hello", None), None)
     assert (refused.value.status, refused.value.kind) == (503, "Closing")
     assert refused.value.message == "The studio is disconnecting."
     gate.set()

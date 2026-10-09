@@ -16,11 +16,11 @@ def test_a_chat_request_is_what_was_said_before_and_the_last_message():
             {"role": "user", "content": "again"},
         ]
     }
-    assert shapes.read(CHAT, body) == ([("user", "hello"), ("assistant", "one")], "again")
+    assert shapes.read(CHAT, body) == ([("user", "hello"), ("assistant", "one")], "again", None)
 
 
 def test_a_responses_request_with_a_text_is_a_first_message():
-    assert shapes.read(RESPONSES, {"input": "hello"}) == ([], "hello")
+    assert shapes.read(RESPONSES, {"input": "hello"}) == ([], "hello", None)
 
 
 def test_a_responses_request_with_items_is_read_like_a_chat():
@@ -32,12 +32,17 @@ def test_a_responses_request_with_items_is_read_like_a_chat():
             {"role": "user", "content": [{"type": "input_text", "text": "again"}]},
         ]
     }
-    assert shapes.read(RESPONSES, body) == ([("user", "hello"), ("assistant", "one")], "again")
+    assert shapes.read(RESPONSES, body) == (
+        [("user", "hello"), ("assistant", "one")],
+        "again",
+        None,
+    )
 
 
 def test_the_parts_of_a_text_are_joined_by_line_breaks():
     parts = [{"type": "text", "text": "one"}, {"type": "text", "text": "two"}]
-    assert shapes.read(CHAT, {"messages": [{"role": "user", "content": parts}]}) == ([], "one\ntwo")
+    asked = shapes.read(CHAT, {"messages": [{"role": "user", "content": parts}]})
+    assert asked == ([], "one\ntwo", None)
 
 
 def test_a_chat_keeps_only_what_the_user_and_the_assistant_said():
@@ -60,6 +65,7 @@ def test_a_chat_keeps_only_what_the_user_and_the_assistant_said():
     assert shapes.read(CHAT, body) == (
         [("user", "hello"), ("assistant", "We open at 9.")],
         "thanks",
+        None,
     )
 
 
@@ -83,12 +89,32 @@ def test_a_response_keeps_only_what_the_user_and_the_assistant_said():
     assert shapes.read(RESPONSES, body) == (
         [("user", "hello"), ("assistant", "We open at 9.")],
         "thanks",
+        None,
     )
 
 
 def test_a_request_that_says_it_does_not_stream_is_read():
     body = {"stream": False, "messages": [{"role": "user", "content": "hello"}]}
-    assert shapes.read(CHAT, body) == ([], "hello")
+    assert shapes.read(CHAT, body) == ([], "hello", None)
+
+
+@pytest.mark.parametrize("given", ["again", [{"role": "user", "content": "again"}]])
+def test_a_response_that_continues_an_answer_names_it(given: Any):
+    """Spectral sends the new message only, and the id of the answer it follows."""
+    body = {"model": "any", "input": given, "previous_response_id": "resp_1"}
+    assert shapes.read(RESPONSES, body) == ([], "again", "resp_1")
+    assert shapes.read(RESPONSES, body).previous == "resp_1"
+
+
+def test_a_response_with_no_answer_before_it_is_a_first_message():
+    body = {"input": [{"role": "user", "content": "hello"}], "previous_response_id": None}
+    assert shapes.read(RESPONSES, body) == ([], "hello", None)
+
+
+def test_a_chat_does_not_continue_an_answer():
+    """Chat Completions has no such field: like every field it does not know, it is not read."""
+    body = {"messages": [{"role": "user", "content": "hello"}], "previous_response_id": "resp_1"}
+    assert shapes.read(CHAT, body) == ([], "hello", None)
 
 
 USER = {"role": "user", "content": "hello"}
@@ -115,7 +141,17 @@ IMAGE = {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}}
         (RESPONSES, {"input": "  "}, 422, "must end with"),
         (RESPONSES, {"input": ["hello"]}, 422, "every item of input must be an object"),
         (RESPONSES, {"input": "hello", "stream": True}, 400, "streaming is not supported"),
-        (RESPONSES, {"input": "hello", "previous_response_id": "resp_1"}, 400, "no conversation"),
+        (RESPONSES, {"input": "hello", "previous_response_id": 5}, 422, "must be a text"),
+        (RESPONSES, {"input": "hello", "previous_response_id": " "}, 422, "must be a text"),
+        (
+            RESPONSES,
+            {
+                "input": [USER, {"role": "assistant", "content": "one"}, USER],
+                "previous_response_id": "r",
+            },
+            422,
+            "only the new message",
+        ),
         (
             RESPONSES,
             {"input": [{"role": "user", "content": [{"type": "input_image", "image_url": "x"}]}]},
@@ -162,6 +198,15 @@ def test_a_response_is_answered_with_one_message_of_text():
 
 def test_every_answer_has_an_id_of_its_own():
     assert shapes.reply(CHAT, "Hi")["id"] != shapes.reply(CHAT, "Hi")["id"]
+
+
+def test_an_answer_takes_the_id_it_is_given():
+    """Who keeps the conversation of an answer knows its id before the answer is written."""
+    made = shapes.new_id(RESPONSES)
+    assert made.startswith("resp_") and made != shapes.new_id(RESPONSES)
+    assert shapes.reply(RESPONSES, "Hi", made)["id"] == made
+    assert shapes.new_id(CHAT).startswith("chatcmpl-")
+    assert shapes.reply(CHAT, "Hi", "chatcmpl-1")["id"] == "chatcmpl-1"
 
 
 def test_an_error_has_a_kind_and_a_sentence():

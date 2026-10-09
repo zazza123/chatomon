@@ -25,12 +25,16 @@ MAX_BODY = 16 * 1024 * 1024
 
 _NO_STORE = {"cache-control": "no-store"}
 
-Answer = Callable[[list[shapes.Said], str], Awaitable[str]]
-"""Runs a turn on a conversation and returns the reply, or raises `Unanswered`."""
+Answer = Callable[[shapes.Asked, str | None], Awaitable[str]]
+"""Runs a turn on what a request asks and returns the reply, or raises `Unanswered`.
+
+It is also given the id the answer will have when a later request can name it to
+continue the conversation, and `None` on a route that has no way to name one.
+"""
 
 
 class Unanswered(Exception):
-    """A turn that left no reply to send.
+    """A request that gets no reply: its turn left none, or it could not be run.
 
     Args:
         status: The status of the answer.
@@ -89,9 +93,9 @@ def create_adapter(
     slots = asyncio.Semaphore(MAX_RUNNING)
     host = f"127.0.0.1:{port}"
 
-    async def turn(history: list[shapes.Said], message: str) -> str:
+    async def turn(asked: shapes.Asked, kept_as: str | None) -> str:
         async with slots:
-            return await answer(history, message)
+            return await answer(asked, kept_as)
 
     async def respond(request: Request, receive: Receive) -> Response | None:
         given, slash, rest = request.url.path.removeprefix("/").partition("/")
@@ -115,11 +119,14 @@ def create_adapter(
         except ValueError:
             return _refusal(400, "BadJSON", "The body is not JSON.")
         try:
-            history, message = shapes.read(route, body)
+            asked = shapes.read(route, body)
         except shapes.ShapeError as exc:
             rejected()
             return _refusal(exc.status, "BadRequest", exc.message)
-        running = asyncio.ensure_future(turn(history, message))
+        answer_id = shapes.new_id(route)
+        # Only a response can be named by a later request: a chat brings all of itself.
+        kept_as = answer_id if route == shapes.RESPONSES else None
+        running = asyncio.ensure_future(turn(asked, kept_as))
         gone = asyncio.ensure_future(_gone(receive))
         await asyncio.wait({running, gone}, return_when=asyncio.FIRST_COMPLETED)
         gone.cancel()
@@ -135,7 +142,7 @@ def create_adapter(
             return _refusal(exc.status, exc.kind, exc.message)
         except Exception:
             return _refusal(500, "AdapterFailed", "The adapter failed.")
-        return JSONResponse(shapes.reply(route, text), headers=_NO_STORE)
+        return JSONResponse(shapes.reply(route, text, answer_id), headers=_NO_STORE)
 
     async def app(scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "websocket":

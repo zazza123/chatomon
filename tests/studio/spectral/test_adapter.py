@@ -10,6 +10,7 @@ from starlette.types import Message
 
 from chatomon.studio._spectral import _adapter as adapter
 from chatomon.studio._spectral._adapter import Unanswered, create_adapter
+from chatomon.studio._spectral._shapes import Asked
 
 SECRET = "s3cret-of-this-connection"
 PORT = 49231
@@ -24,14 +25,18 @@ class Atom:
 
     def __init__(self) -> None:
         self.asked: list[tuple[list[tuple[str, str]], str]] = []
+        self.continued: list[str | None] = []
+        self.ids: list[str | None] = []
         self.rejected = 0
         self.reply: str | Exception = "Hi"
         self.gate: asyncio.Event | None = None
         self.running = 0
         self.most = 0
 
-    async def answer(self, history: list[Any], message: str) -> str:
-        self.asked.append((list(history), message))
+    async def answer(self, asked: Asked, answer_id: str | None) -> str:
+        self.asked.append((list(asked.history), asked.message))
+        self.continued.append(asked.previous)
+        self.ids.append(answer_id)
         self.running += 1
         self.most = max(self.most, self.running)
         try:
@@ -78,6 +83,27 @@ async def test_a_chat_request_is_answered_with_the_reply(client, atom):
     assert answer.status_code == 200
     assert answer.json()["choices"][0]["message"] == {"role": "assistant", "content": "Hi"}
     assert atom.asked == [([("user", "hello"), ("assistant", "one")], "again")]
+
+
+async def test_a_response_has_the_id_its_turn_was_given_to_keep_it_by(client, atom):
+    answer = await client.post(RESPONSES, json=HELLO)
+    assert answer.json()["id"].startswith("resp_")
+    assert atom.ids == [answer.json()["id"]]
+    assert atom.continued == [None]
+
+
+async def test_the_answer_a_request_continues_reaches_its_turn(client, atom):
+    body = {"input": [{"role": "user", "content": "again"}], "previous_response_id": "resp_1"}
+    answer = await client.post(RESPONSES, json=body)
+    assert answer.status_code == 200
+    assert (atom.asked, atom.continued) == ([([], "again")], ["resp_1"])
+
+
+async def test_a_chat_answer_has_no_id_to_be_continued_by(client, atom):
+    messages = [{"role": "user", "content": "hello"}]
+    answer = await client.post(CHAT, json={"messages": messages})
+    assert answer.json()["id"].startswith("chatcmpl-")
+    assert atom.ids == [None]
 
 
 @pytest.mark.parametrize(

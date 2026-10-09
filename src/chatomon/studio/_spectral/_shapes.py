@@ -7,7 +7,7 @@ conversation comes out; a reply goes in and the body of the answer comes out.
 from __future__ import annotations
 
 import time
-from typing import Any, Literal
+from typing import Any, Literal, NamedTuple
 from uuid import uuid4
 
 CHAT = "/v1/chat/completions"
@@ -17,6 +17,20 @@ ROUTES = (RESPONSES, CHAT)
 
 Said = tuple[Literal["user", "assistant"], str]
 """Who spoke and what was said."""
+
+
+class Asked(NamedTuple):
+    """What a request asks: a message to answer, and the conversation it belongs to."""
+
+    history: list[Said]
+    """What the request says was said before, oldest first."""
+
+    message: str
+    """The user message to answer."""
+
+    previous: str | None
+    """The id of the answer this request continues, when it brings no history of its own."""
+
 
 _SPEAKERS = ("user", "assistant")
 _CHAT_PARTS = frozenset({"text"})
@@ -89,34 +103,41 @@ def _spoken(items: list[Any], kinds: frozenset[str], what: str) -> list[Said]:
     return said
 
 
-def read(route: str, body: object) -> tuple[list[Said], str]:
-    """Read a request into the conversation it carries.
+def read(route: str, body: object) -> Asked:
+    """Read a request into what it asks.
+
+    A response can continue an answer given before, named in `previous_response_id`:
+    it then brings the new message only, and whoever keeps the conversation of that
+    answer has the rest. A chat always brings all of its conversation.
 
     Args:
         route: `CHAT` or `RESPONSES`.
         body: The body of the request, parsed from JSON.
 
     Returns:
-        What was said before, oldest first, and the user message to answer.
+        What was said before, oldest first, the user message to answer, and the id of
+        the answer the request continues, if any.
 
     Raises:
-        ShapeError: If the request asks for streaming or for a conversation kept
-            by the server, or its body cannot be read.
+        ShapeError: If the request asks for streaming, or its body cannot be read.
     """
     if not isinstance(body, dict):
         raise ShapeError(422, "the body must be a JSON object")
     if body.get("stream") is True:
         raise ShapeError(400, "streaming is not supported: send the request without stream")
     said: list[Said]
+    previous: str | None = None
     if route == CHAT:
         messages = body.get("messages")
         if not isinstance(messages, list) or not messages:
             raise ShapeError(422, "messages must be a list with at least one message")
         said = _spoken(messages, _CHAT_PARTS, "message")
     else:
-        if body.get("previous_response_id") is not None:
-            # Ignoring it would lose the conversation without a word.
-            raise ShapeError(400, "no conversation is kept here: send all of it in input")
+        continued = body.get("previous_response_id")
+        if continued is not None:
+            if not isinstance(continued, str) or not continued.strip():
+                raise ShapeError(422, "previous_response_id must be a text")
+            previous = continued
         given = body.get("input")
         if isinstance(given, str):
             said = [("user", given)] if given.strip() else []
@@ -126,10 +147,24 @@ def read(route: str, body: object) -> tuple[list[Said], str]:
             raise ShapeError(422, "input must be a text or a list with at least one item")
     if not said or said[-1][0] != "user":
         raise ShapeError(422, "the conversation must end with a message of the user")
-    return said[:-1], said[-1][1]
+    if previous is not None and len(said) > 1:
+        # Two histories, the one that is kept and the one that is sent, cannot be told apart.
+        raise ShapeError(
+            422, "with previous_response_id, input must hold only the new message of the user"
+        )
+    return Asked(said[:-1], said[-1][1], previous)
 
 
-def reply(route: str, text: str) -> dict[str, Any]:
+def new_id(route: str) -> str:
+    """Make the id of an answer, before the answer is written.
+
+    Returns:
+        `chatcmpl-…` for a chat completion, `resp_…` for a response.
+    """
+    return f"chatcmpl-{uuid4().hex}" if route == CHAT else f"resp_{uuid4().hex}"
+
+
+def reply(route: str, text: str, answer_id: str | None = None) -> dict[str, Any]:
     """Write the body that answers a request with a reply.
 
     The model is always named `chatomon`: the name of the atom does not leave.
@@ -137,15 +172,17 @@ def reply(route: str, text: str) -> dict[str, Any]:
     Args:
         route: `CHAT` or `RESPONSES`.
         text: The reply.
+        answer_id: The id of the answer; a new one when it is not given.
 
     Returns:
         A chat completion or a response, as the route wants it.
     """
     now = int(time.time())
+    answer_id = answer_id or new_id(route)
     if route == CHAT:
         message = {"role": "assistant", "content": text}
         return {
-            "id": f"chatcmpl-{uuid4().hex}",
+            "id": answer_id,
             "object": "chat.completion",
             "created": now,
             "model": "chatomon",
@@ -160,7 +197,7 @@ def reply(route: str, text: str) -> dict[str, Any]:
         "content": [part],
     }
     return {
-        "id": f"resp_{uuid4().hex}",
+        "id": answer_id,
         "object": "response",
         "created_at": now,
         "status": "completed",
