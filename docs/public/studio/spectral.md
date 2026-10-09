@@ -46,7 +46,7 @@ Open the Spectral card from the ghost on the stage or from the **Spectral** chip
 | **Adapter** | The local address that receives the requests, while connected | Nothing: it opens when you connect and closes when you disconnect |
 | **Atom** | How the last test request went | **Send a test request** runs one turn on a sample message, built like a request from Spectral. It is not counted and not added to the conversation |
 
-Before you connect, the card lists what the studio noted about your atom when it started, such as a place the turns write to.
+Before you connect, the card lists what there is to know about your atom, such as a place the turns write to. The notes are about the atom as it is now: after a reload of your code, they are the new atom's.
 
 **Connect** opens the connection. Then, on Spectral, open your target, press **Test connection** and launch an evaluation. **Disconnect** closes the connection and lets the requests that are running finish. Stopping the studio closes it too.
 
@@ -97,7 +97,9 @@ These turns are not in the conversation of the page and have no report to open. 
 
 A target on the **Responses** protocol sends the first message of a conversation, and then each new message with the name of the answer before it. So the studio keeps the conversations Spectral can continue, in the form the atom's framework keeps them. A message an orbital blocked stays out of the conversation, replaced by the atom's placeholder, as where your application keeps the conversation itself.
 
-These conversations are held in memory, only while the connection is open. They are never shown, logged or written, and they are forgotten when you disconnect. The studio keeps the conversation of the last thousand answers, within a limit of size: beyond that the oldest are forgotten, and a request that continues one of them is answered with an error.
+These conversations are held in memory, only while the connection is open. They are never shown, logged or written, and they are forgotten when you disconnect.
+
+There is room for the conversations of a thousand answers, and for about 32 million characters in all. When the room ends, the studio first forgets the answers that a later one already continued, then the oldest. A conversation that grows beyond about 4 million characters is not kept at all. A request that continues an answer that is no longer kept is answered with an error.
 
 A target on the **Chat Completions** protocol sends the whole conversation with every message, and the studio keeps nothing. There a message an orbital blocked comes back as it was written, in the history of the next turn: it is what happens wherever the client keeps the conversation.
 
@@ -114,7 +116,7 @@ The card counts the requests of the connection. The counts start again when you 
 | The pills | How the turns ended: `answered`, `guided_refusal`, `orbital_response`, `blocked`, `fallback_refusal` |
 | **allow**, **block**, **respond** | For each orbital, what it decided |
 | **error** | The times the orbital failed |
-| **not run** | The requests the orbital was on for and did not see, because an earlier orbital ended the turn |
+| **not run** | The requests the orbital was on for and did not see: an earlier orbital ended the turn, or the turn failed before reaching it |
 | **average** | How long the orbital's check took |
 
 An output orbital runs once for every attempt of the nucleus, so its numbers can add up to more than the requests.
