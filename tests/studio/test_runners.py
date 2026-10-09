@@ -9,7 +9,7 @@ import pytest
 
 import chatomon.connectors
 from chatomon import Atom, ChatomonConfigError, Verdict
-from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER
+from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER, OrbitalContext
 from chatomon.studio._runners import History, runner_for
 from chatomon.studio._testgen import Framework
 from tests.contract.harness import ToolCall, lookup
@@ -26,6 +26,11 @@ def make_atom(framework: StudioHarness, *replies: Reply, **kwargs: Any) -> Atom:
 def seen(guard: ScriptedOrbital, turn: int) -> list[tuple[str, str]]:
     """The conversation an input orbital was given in a turn, counted from 0."""
     return [(message.role, message.content) for message in guard.contexts[turn].history]
+
+
+def heard(framework: StudioHarness, call: int = 0) -> list[tuple[str, str]]:
+    """What the nucleus was sent in a call, counted from 0: who spoke and what was said."""
+    return framework.heard()[call].messages
 
 
 async def test_the_second_turn_sees_the_first(framework: StudioHarness):
@@ -138,6 +143,8 @@ async def test_a_turn_runs_on_a_history_given_as_texts(framework: StudioHarness)
     assert await framework.runner.run_from_history(agent, PAST, "again") == "two"
     assert guard.contexts[0].message == "again"
     assert seen(guard, 0) == [("user", "hello"), ("assistant", "one")]
+    # The nucleus is sent the same conversation, by the framework's own code.
+    assert heard(framework) == [("user", "hello"), ("assistant", "one"), ("user", "again")]
 
 
 async def test_a_turn_without_a_history_is_a_first_turn(framework: StudioHarness):
@@ -171,6 +178,7 @@ async def test_a_history_that_repeats_itself_is_kept_whole(framework: StudioHarn
     ]
     assert await framework.runner.run_from_history(agent, history, "hi") == "three"
     assert seen(guard, 0) == history
+    assert heard(framework) == [*history, ("user", "hi")]
 
 
 @pytest.mark.parametrize(
@@ -190,6 +198,7 @@ async def test_a_history_is_given_in_its_order_whoever_speaks(
     agent = make_atom(framework, "ok", input_orbitals=[guard]).build()
     assert await framework.runner.run_from_history(agent, history, "last") == "ok"
     assert seen(guard, 0) == history
+    assert heard(framework) == [*history, ("user", "last")]
 
 
 async def test_a_history_is_left_as_it_was_given(framework: StudioHarness):
@@ -214,8 +223,28 @@ async def test_a_turn_from_a_history_can_call_a_tool(framework: StudioHarness):
     assert await framework.runner.run_from_history(agent, PAST, "when?") == "We open at 9."
 
 
+class Meeting(ScriptedOrbital):
+    """Holds every turn until all the turns that are expected have arrived.
+
+    A scripted nucleus answers without ever waiting, so turns that are started
+    together would otherwise run one after another on some frameworks.
+    """
+
+    def __init__(self, turns: int, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.turns = turns
+        self.all_here = asyncio.Event()
+
+    async def check(self, ctx: OrbitalContext) -> Verdict:
+        verdict = await super().check(ctx)
+        if len(self.contexts) == self.turns:
+            self.all_here.set()
+        await asyncio.wait_for(self.all_here.wait(), timeout=5)
+        return verdict
+
+
 async def test_turns_at_the_same_time_keep_their_own_histories(framework: StudioHarness):
-    guard = ScriptedOrbital(name="guard")
+    guard = Meeting(3, name="guard")
     agent = make_atom(framework, "a", "b", "c", input_orbitals=[guard]).build()
     histories: list[History] = [[("user", f"q{n}"), ("assistant", f"r{n}")] for n in range(3)]
     replies = await asyncio.gather(
