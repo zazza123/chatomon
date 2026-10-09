@@ -284,6 +284,36 @@ async def test_only_so_many_conversations_are_kept(spectral, bridges, monkeypatc
     assert (oldest["status"], newest["status"]) == (400, 200)
 
 
+async def test_the_conversations_that_are_kept_have_a_size_in_all(spectral, bridges, monkeypatch):
+    """A count of answers bounds nothing when one message can be as large as a request."""
+    monkeypatch.setattr(_bridge, "_KEPT_CHARS", 60)
+    bridge = bridges(atom_with("y" * 10, "y" * 10, "y" * 10, "last"))
+    await connected(bridge)
+    asked = {"input": "x" * 20}
+    answers = [await spectral.request("/v1/responses", asked) for _ in range(3)]
+    # Thirty characters each: the two newest fit, the oldest was forgotten.
+    assert bridge.state()["conversations"] == 2
+    oldest = await spectral.request("/v1/responses", continuing(answers[0], "again"))
+    newest = await spectral.request("/v1/responses", continuing(answers[2], "again"))
+    assert (oldest["status"], newest["status"]) == (400, 200)
+
+
+async def test_a_conversation_grows_with_its_turns_until_it_is_too_large_to_keep(
+    spectral, bridges, monkeypatch
+):
+    monkeypatch.setattr(_bridge, "_KEPT_CHARS", 50)
+    bridge = bridges(atom_with("y" * 10, "y" * 10, "y" * 10))
+    await connected(bridge)
+    first = await spectral.request("/v1/responses", {"input": "x" * 10})
+    assert bridge.state()["conversations"] == 1
+    # Twenty characters so far, and thirty-five more: what the second turn leaves is too much.
+    second = await spectral.request("/v1/responses", continuing(first, "x" * 25))
+    assert second["status"] == 200
+    assert bridge.state()["conversations"] == 0
+    third = await spectral.request("/v1/responses", continuing(second, "again"))
+    assert (third["status"], third["body"]["error"]["type"]) == (400, "UnknownConversation")
+
+
 async def test_what_cannot_be_continued_is_not_kept(spectral, bridges):
     """A turn that failed, a request that brought its own history, a chat completion."""
     bridge = bridges(atom_with(RuntimeError("boom"), "two", "three"))

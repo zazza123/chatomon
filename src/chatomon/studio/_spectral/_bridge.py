@@ -66,6 +66,13 @@ _REPLACED = "The atom was replaced by one of another framework: start the conver
 _KEPT = 1000
 """How many answers have their conversation kept to be continued; the oldest go first."""
 
+_KEPT_CHARS = 32 * 1024 * 1024
+"""How many characters the kept conversations hold in all; the oldest go first.
+
+A count of answers alone bounds nothing: a request can be as large as the adapter
+reads, and a conversation that is kept grows with every turn.
+"""
+
 # The reports of the turn that runs in this context: how a report finds its request.
 _reports: contextvars.ContextVar[list[TurnReport] | None] = contextvars.ContextVar(
     "chatomon_spectral_reports", default=None
@@ -88,6 +95,8 @@ class _Kept:
 
     runner: Runner
     conversation: Any
+    weight: int
+    """About how many characters it holds: the messages and the replies of its turns."""
 
 
 @dataclass(frozen=True)
@@ -141,6 +150,7 @@ class Bridge:
         self._counts: Counts | None = None
         self._copy: _Copy | None = None
         self._kept: OrderedDict[str, _Kept] = OrderedDict()
+        self._weight = 0
         self._test: dict[str, Any] | None = None
         self._opening = False
         self._running = 0
@@ -212,7 +222,8 @@ class Bridge:
                 outcome = await copy.runner.run_turn(copy.agent, asked.message, before)
                 # What a tool returned is not a reply: no output orbital checked it.
                 reply = outcome.reply if outcome.by_nucleus else ""
-                left = _Kept(copy.runner, outcome.conversation)
+                weight = (kept.weight if kept is not None else 0) + len(asked.message) + len(reply)
+                left = _Kept(copy.runner, outcome.conversation, weight)
         except InterruptedTurnError:
             failure = Unanswered(500, "AtomInterrupted", "The atom stopped to wait for an answer.")
         except asyncio.CancelledError:
@@ -243,10 +254,15 @@ class Bridge:
         return _Turn(reply, report, duration_ms, failure)
 
     def _keep(self, answer_id: str, left: _Kept) -> None:
-        """Keep the conversation an answer left, and forget the oldest beyond the limit."""
+        """Keep the conversation an answer left, and forget the oldest beyond the limits.
+
+        A conversation that is larger than the limit by itself is forgotten at once.
+        """
         self._kept[answer_id] = left
-        while len(self._kept) > _KEPT:
-            self._kept.popitem(last=False)
+        self._weight += left.weight
+        while self._kept and (len(self._kept) > _KEPT or self._weight > _KEPT_CHARS):
+            _, gone = self._kept.popitem(last=False)
+            self._weight -= gone.weight
 
     async def _answer(self, asked: shapes.Asked, kept_as: str | None) -> str:
         """Answer a request of the adapter with a turn of the atom.
@@ -423,6 +439,7 @@ class Bridge:
         self._since = None
         # Nothing can continue them any more: their texts are not kept past the connection.
         self._kept.clear()
+        self._weight = 0
         if said:
             print("chatomon studio: Spectral can no longer reach this atom.", file=sys.stderr)
 
