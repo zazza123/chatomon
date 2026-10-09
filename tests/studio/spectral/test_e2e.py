@@ -1,6 +1,8 @@
 """The Spectral add-on of the page in Chromium: the ghost, the chip and the card."""
 
 import sys
+import threading
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -80,7 +82,7 @@ def test_the_ghost_sleeps_on_the_stage_and_the_chip_opens_the_card(page: Page, s
     page.keyboard.press("Enter")
     expect(card(page).get_by_role("heading", name="Spectral")).to_be_visible()
     for row in ("Key", "Relay", "Adapter", "Atom"):
-        expect(card(page).locator(".check .label", has_text=row)).to_be_visible()
+        expect(card(page).locator(".sp-row .sp-name", has_text=row)).to_be_visible()
     expect(card(page).get_by_label("Key")).to_have_value("SPECTRAL_BRIDGE_API_KEY")
     expect(card(page).locator("#sp-env-pill")).to_have_text("set")
     expect(card(page)).to_contain_text("While connected, Spectral can send messages to this atom.")
@@ -120,7 +122,7 @@ def test_requests_move_the_counts_while_the_card_stays_open(
     open_studio(page, studio)
     connect(page)
     name = card(page).get_by_label("Key")
-    page.evaluate("document.querySelector('#dlg-body').dataset.same = 'yes'")
+    field = name.element_handle()
 
     first = relay.ask("/v1/responses", {"input": "Are you open?"})
     again = {"input": [{"role": "user", "content": "And on Sunday?"}]}
@@ -129,18 +131,18 @@ def test_requests_move_the_counts_while_the_card_stays_open(
     assert second["body"]["output"][0]["content"][0]["text"] == REPLY
 
     stats = card(page).locator("#sp-stats")
-    expect(stats.locator(".stat-nums b").first).to_have_text("2")
+    expect(stats.locator(".sp-nums b").first).to_have_text("2")
     expect(stats).to_contain_text("answered 2")
     guard = stats.locator("tbody tr", has_text="guard")
     expect(guard.locator("td").first).to_have_text("2")
     expect(card(page).locator("#sp-kept")).to_contain_text("2 conversations are held in memory")
     expect(card(page).locator("#sp-next")).to_be_hidden()
     # The numbers changed in place: the card was not drawn again under the developer's hands.
-    expect(page.locator("#dlg-body")).to_have_attribute("data-same", "yes")
+    assert field.evaluate("field => field.isConnected")
     expect(name).to_be_disabled()
 
     card(page).get_by_role("button", name="Reset the counts").click()
-    expect(stats.locator(".stat-nums b").first).to_have_text("0")
+    expect(stats.locator(".sp-nums b").first).to_have_text("0")
     expect(page.locator("#toast")).to_contain_text("The counts start again")
 
     card(page).get_by_role("button", name="Disconnect").click()
@@ -156,16 +158,158 @@ def test_while_requests_arrive_the_stage_says_what_the_atom_is_doing(
     open_studio(page, studio)
     connect(page)
     page.keyboard.press("Escape")
-    relay.ask("/v1/responses", {"input": "Are you open?"})
-    expect(chip(page)).to_contain_text("1 request")
+
+    def evaluation() -> None:
+        for _ in range(5):
+            relay.ask("/v1/responses", {"input": "Are you open?"})
+            time.sleep(0.6)
+
+    running_evaluation = threading.Thread(target=evaluation)
+    running_evaluation.start()
+    expect(chip(page)).to_contain_text("request")
     expect(ghost(page)).to_have_class("ghost pose-evaluate")
     expect(page.locator("#phase-title")).to_have_text("Answering Spectral")
     expect(page.locator("#phase-sub")).to_have_text("Its requests are counted, not shown here")
+    running_evaluation.join(timeout=20)
+    expect(chip(page)).to_contain_text("connected")
     # A moment after the last request the atom waits for a message again.
     expect(page.locator("#phase-title")).to_have_text("Waiting for a message", timeout=8000)
     expect(ghost(page)).to_have_class("ghost pose-orbit")
     # Nothing of the request is in the conversation of the page.
     expect(page.locator("article.turn")).to_have_count(0)
+
+
+def test_a_card_left_open_keeps_its_numbers_where_they_are(
+    page: Page, studio: Studio, relay: RelayThread
+):
+    """Nothing changed: a table scrolled sideways, or a number selected to copy, stays so."""
+    open_studio(page, studio)
+    connect(page)
+    relay.ask("/v1/responses", {"input": "Are you open?"})
+    row = card(page).locator("#sp-stats tbody tr").first
+    expect(row).to_contain_text("guard")
+    # The connection is said to be at work for two seconds after a request.
+    expect(chip(page)).to_contain_text("connected")
+    drawn = row.element_handle()
+    page.wait_for_timeout(2500)
+    assert drawn.evaluate("row => row.isConnected")
+
+
+def test_a_screen_reader_hears_of_the_connection_not_of_every_request(
+    page: Page, studio: Studio, relay: RelayThread
+):
+    open_studio(page, studio)
+    connect(page)
+    page.keyboard.press("Escape")
+    page.evaluate(
+        """() => {
+            window.heard = [];
+            const region = document.querySelector("#spectral-live");
+            new MutationObserver(() => window.heard.push(region.textContent))
+                .observe(region, { childList: true, characterData: true, subtree: true });
+        }"""
+    )
+    for _ in range(2):
+        relay.ask("/v1/responses", {"input": "Are you open?"})
+        # Long enough for the connection to be said to be idle again.
+        page.wait_for_timeout(3200)
+    assert page.evaluate("window.heard") == ["Spectral is sending requests"]
+    expect(chip(page)).to_have_attribute(
+        "aria-label", "Connected to Spectral. Open the Spectral card"
+    )
+
+
+def test_one_answer_that_does_not_come_does_not_stop_the_asking(
+    page: Page, studio: Studio, relay: RelayThread
+):
+    open_studio(page, studio)
+    connect(page)
+    failed: list[str] = []
+
+    def once(route: Route) -> None:
+        if route.request.method == "GET" and not failed:
+            failed.append(route.request.url)
+            route.abort()
+        else:
+            route.continue_()
+
+    page.route("**/api/spectral", once)
+    expect(chip(page)).to_contain_text("connected")
+    page.wait_for_timeout(1500)
+    assert failed
+    relay.ask("/v1/responses", {"input": "Are you open?"})
+    expect(card(page).locator("#sp-stats")).to_contain_text("answered 1", timeout=10000)
+
+
+def test_an_answer_that_comes_late_does_not_undo_what_the_card_did(page: Page, studio: Studio):
+    """What was asked before a change says how things were: it must not be shown after it."""
+    open_studio(page, studio)
+    held: list[tuple[Route, Any]] = []
+
+    def hold(route: Route) -> None:
+        if route.request.method == "GET" and not held:
+            # Read now, while nothing is connected; answered later.
+            held.append((route, route.fetch()))
+        else:
+            route.continue_()
+
+    page.route("**/api/spectral", hold)
+    chip(page).click()
+    page.wait_for_timeout(1300)
+    assert held, "the card did not ask while it was open"
+    card(page).get_by_role("button", name="Connect").click()
+    expect(chip(page)).to_contain_text("connected")
+    late, before = held[0]
+    assert before.json()["status"] == "off"
+    late.fulfill(response=before)
+    page.wait_for_timeout(300)
+    # Looked at once, with no waiting: the next answer would put a wrong card right again.
+    assert "connected" in (chip(page).text_content() or "")
+    assert card(page).get_by_role("button", name="Disconnect").is_visible()
+
+
+def test_with_many_orbitals_the_ghost_at_home_stays_on_the_stage(page: Page, relay: RelayThread):
+    orbitals = [ScriptedOrbital(name=f"o{n}") for n in range(10)]
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(FunctionModel(respond)),
+        input_orbitals=orbitals[:5],
+        output_orbitals=orbitals[5:],
+    )
+    with running(atom) as handle:
+        open_studio(page, handle)
+        expect(ghost(page)).to_have_class("ghost pose-sleep")
+        page.wait_for_timeout(800)
+        stage = page.locator("#atom").bounding_box()
+        body = ghost(page).locator(".g-body").bounding_box()
+        assert stage and body
+        assert body["y"] + body["height"] <= stage["y"] + stage["height"] + 1
+        assert body["x"] >= stage["x"] - 1
+
+
+def test_asleep_in_its_corner_the_ghost_asks_for_no_frames(page: Page, studio: Studio):
+    """Not connected, the add-on costs the page nothing: what does not change is not drawn again."""
+    open_studio(page, studio)
+    expect(ghost(page)).to_have_class("ghost pose-sleep")
+    page.evaluate(
+        """() => {
+            window.asked = 0;
+            const ask = window.requestAnimationFrame.bind(window);
+            window.requestAnimationFrame = (draw) => { window.asked += 1; return ask(draw); };
+        }"""
+    )
+    # Time to come to rest in its corner.
+    page.wait_for_timeout(1500)
+    before = page.evaluate("window.asked")
+    page.wait_for_timeout(500)
+    assert page.evaluate("window.asked") == before
+    # Connected, it moves again.
+    connect(page)
+    page.keyboard.press("Escape")
+    expect(ghost(page)).to_have_class("ghost pose-orbit")
+    page.wait_for_timeout(300)
+    assert page.evaluate("window.asked") > before
 
 
 def test_a_name_that_is_not_set_is_said_under_the_field_and_stays_typed(page: Page, studio: Studio):
@@ -205,7 +349,7 @@ def test_a_test_request_says_how_the_atom_answered(page: Page, studio: Studio):
     open_studio(page, studio)
     chip(page).click()
     card(page).get_by_role("button", name="Send a test request").click()
-    atom_row = card(page).locator(".check", has_text="Atom")
+    atom_row = card(page).locator(".sp-row", has_text="Atom")
     expect(atom_row.locator(".pill")).to_have_text("answered")
     # It is not a turn of the conversation, and it is not counted.
     expect(page.locator("article.turn")).to_have_count(0)
@@ -286,7 +430,7 @@ def test_on_a_phone_the_chip_is_the_ghost_alone_and_nothing_overflows(page: Page
     page.set_viewport_size({"width": 400, "height": 800})
     open_studio(page, studio)
     expect(chip(page).locator("svg")).to_be_visible()
-    expect(chip(page).locator(".txt")).to_be_hidden()
+    expect(chip(page).locator(".sp-txt")).to_be_hidden()
     assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
     chip(page).click()
     expect(card(page).get_by_role("button", name="Connect")).to_be_visible()

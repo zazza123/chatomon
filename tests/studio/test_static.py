@@ -60,6 +60,25 @@ def test_the_mint_of_the_spectral_add_on_matches_the_docs():
     assert studio == {"mint": {"#7df7d6"}, "mint-deep": {"#0a7560", "#7df7d6"}}
 
 
+def classes(css: str) -> set[str]:
+    """The class names in the selectors of a stylesheet."""
+    plain = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)
+    selectors = [
+        text for text in re.findall(r"([^{}]+)\{", plain) if not text.strip().startswith("@")
+    ]
+    return {
+        name for selector in selectors for name in re.findall(r"\.(-?[_a-zA-Z][\w-]*)", selector)
+    }
+
+
+def test_the_styles_of_the_spectral_add_on_name_only_its_own_classes():
+    """Loaded beside the studio's, they must leave every card of the studio as it was."""
+    own = classes((STATIC / "spectral.css").read_text(encoding="utf-8"))
+    studio = classes((STATIC / "studio.css").read_text(encoding="utf-8"))
+    assert own and studio
+    assert own & studio == set()
+
+
 def test_fredoka_and_the_favicon_are_the_docs_copies():
     brand = ROOT / "docs" / "public" / "assets"
     assert (STATIC / "fonts" / "Fredoka.woff2").read_bytes() == (

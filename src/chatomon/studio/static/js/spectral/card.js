@@ -1,4 +1,4 @@
-import { $, esc, fmtMs, rich } from "../util.js";
+import { $, esc, fmtMs, plural, rich } from "../util.js";
 import { send } from "../api.js";
 import { openDialog } from "../cards.js";
 import { ghostIcon, ghostLive } from "./ghost.js";
@@ -11,6 +11,8 @@ const WARN_ON = "Spectral can reach this atom until you disconnect or stop the s
 const NOT_LOCAL = "Spectral can be connected only when the studio listens on this machine.";
 const FINAL = ["answered", "guided_refusal", "orbital_response", "blocked", "fallback_refusal"];
 const REFUSED = { key: "key refused", protocol: "upgrade needed" };
+// What an orbital did with a request, in the order its bar shows it.
+const DECIDED = ["allow", "respond", "block", "error", "not_run"];
 
 /** How a state of the connection looks: the ghost's pose, the colour of the chip and its last words. */
 export function look(state) {
@@ -26,23 +28,22 @@ export function look(state) {
 
 // A count is drawn as a number, whatever arrived in its place.
 const num = (value) => Number(value) || 0;
-const many = (n, word) => `${num(n)} ${word}${num(n) === 1 ? "" : "s"}`;
+const many = (n, word) => plural(num(n), word);
 const held = (state) => ["connecting", "connected", "lost", "closing"].includes(state.status);
 /** Only an address the server gave, and only one a browser opens as a page. */
 const link = (site) => (typeof site === "string" && site.startsWith("https://") ? esc(site) : "");
 
 function statsMarkup(counts) {
   const finals = FINAL.filter((name) => num(counts.final[name]) > 0).map((name) => `<span class="pill fa-${name}">${name} ${num(counts.final[name])}</span>`).join("");
-  const cell = (n) => `<td${num(n) ? "" : ' class="zero"'}>${num(n)}</td>`;
-  const bar = (row) => [["a", row.allow], ["r", row.respond], ["b", row.block], ["e", row.error], ["s", row.not_run]]
-    .filter(([, n]) => num(n) > 0).map(([name, n]) => `<i class="${name}" style="flex:${num(n)}"></i>`).join("");
+  const cell = (n) => `<td${num(n) ? "" : ' class="sp-zero"'}>${num(n)}</td>`;
+  const bar = (row) => DECIDED.filter((name) => num(row[name]) > 0).map((name) => `<i data-k="${name}" style="flex:${num(row[name])}"></i>`).join("");
   const rows = counts.orbitals.map((row) =>
-    `<tr><th scope="row"><b>${esc(row.name)}</b><i>${esc(row.side)} · ${esc(row.kind)}</i><div class="os-bar" aria-hidden="true">${bar(row)}</div></th>${cell(row.allow)}${cell(row.block)}${cell(row.respond)}${cell(row.error)}${cell(row.not_run)}<td>${num(row.runs) ? fmtMs(num(row.duration_ms_total) / num(row.runs)) : "—"}</td></tr>`).join("");
+    `<tr><th scope="row"><b>${esc(row.name)}</b><i>${esc(row.side)} · ${esc(row.kind)}</i><div class="sp-bar" aria-hidden="true">${bar(row)}</div></th>${cell(row.allow)}${cell(row.block)}${cell(row.respond)}${cell(row.error)}${cell(row.not_run)}<td>${num(row.runs) ? fmtMs(num(row.duration_ms_total) / num(row.runs)) : "—"}</td></tr>`).join("");
   const table = rows
-    ? `<div class="os-scroll"><table class="os"><thead><tr><th scope="col">orbital</th><th scope="col">allow</th><th scope="col">block</th><th scope="col">respond</th><th scope="col">error</th><th scope="col">not run</th><th scope="col">average</th></tr></thead><tbody>${rows}</tbody></table></div>`
+    ? `<div class="sp-os-scroll"><table class="sp-os"><thead><tr><th scope="col">orbital</th><th scope="col">allow</th><th scope="col">block</th><th scope="col">respond</th><th scope="col">error</th><th scope="col">not run</th><th scope="col">average</th></tr></thead><tbody>${rows}</tbody></table></div>`
     : "";
   const requests = num(counts.requests);
-  const failed = num(counts.failed) ? `<div class="bad"><b>${num(counts.failed)}</b><span>failed</span></div>` : "";
+  const failed = num(counts.failed) ? `<div class="sp-bad"><b>${num(counts.failed)}</b><span>failed</span></div>` : "";
   const changes = num(counts.configurations) - 1;
   const mixed = changes > 0
     ? `<p class="note warn">The orbitals changed ${changes === 1 ? "once" : `${changes} times`} while these counts were running, so the numbers mix more than one configuration. Reset the counts to start clean.</p>`
@@ -50,12 +51,12 @@ function statsMarkup(counts) {
   const rejected = num(counts.rejected)
     ? `<p class="note warn">${many(counts.rejected, "request")} got no turn: Spectral sent something this studio does not read, or continued a conversation that is no longer kept.</p>`
     : "";
-  return `<div class="stat-nums"><div><b>${requests}</b><span>requests</span></div><div><b>${num(counts.running)}</b><span>running now</span></div><div><b>${requests ? fmtMs(num(counts.duration_ms_total) / requests) : "—"}</b><span>average turn</span></div>${failed}</div>
-    ${finals ? `<div class="finals">${finals}</div>` : `<p class="muted">No request yet.</p>`}${table}${mixed}${rejected}`;
+  return `<div class="sp-nums"><div><b>${requests}</b><span>requests</span></div><div><b>${num(counts.running)}</b><span>running now</span></div><div><b>${requests ? fmtMs(num(counts.duration_ms_total) / requests) : "—"}</b><span>average turn</span></div>${failed}</div>
+    ${finals ? `<div class="sp-finals">${finals}</div>` : `<p class="muted">No request yet.</p>`}${table}${mixed}${rejected}`;
 }
 
 const keptText = (n) => (num(n)
-  ? `Spectral continues a conversation by naming the answer before it: ${many(n, "conversation")} ${n === 1 ? "is" : "are"} held in memory for that until you disconnect, never shown and never written.`
+  ? `Spectral continues a conversation by naming the answer before it: ${many(n, "conversation")} ${num(n) === 1 ? "is" : "are"} held in memory for that until you disconnect, never shown and never written.`
   : "");
 
 export function createCard({ chip, live, ghost, stage, toast }) {
@@ -66,9 +67,14 @@ export function createCard({ chip, live, ghost, stage, toast }) {
   let problem = "";
   let drawn = "";
   let chipDrawn = "";
+  let lastStats = "";
   let said = "";
+  let saidBusy = false;
   let resting = false;
+  let connecting = false;
   let timer = 0;
+  // Grows when the card changes something on the server: an answer asked before it is out of date.
+  let epoch = 0;
 
   /** What decides the parts of the card: when it changes, the card is drawn again. */
   const shape = () => JSON.stringify([
@@ -82,14 +88,14 @@ export function createCard({ chip, live, ghost, stage, toast }) {
     const signature = `${pose}:${tone}:${tail}`;
     if (signature !== chipDrawn) {
       chipDrawn = signature;
-      const words = tail === "requests" ? `<span class="n">${requests}</span> <span class="unit"></span>` : tail;
+      const words = tail === "requests" ? `<span class="sp-n"></span> <span class="sp-unit"></span>` : tail;
       chip.dataset.tone = tone;
-      chip.innerHTML = `${ghostIcon(pose)}<span class="txt">Spectral${words ? `<span class="long"> · ${words}</span>` : ""}</span>`;
+      chip.innerHTML = `${ghostIcon(pose)}<span class="sp-txt">Spectral${words ? `<span class="sp-tail"> · ${words}</span>` : ""}</span>`;
     }
-    const n = $(".n", chip);
+    const n = $(".sp-n", chip);
     if (n) {
       n.textContent = requests;
-      $(".unit", chip).textContent = requests === 1 ? "request" : "requests";
+      $(".sp-unit", chip).textContent = requests === 1 ? "request" : "requests";
     }
     chip.title = state.message;
     chip.setAttribute("aria-label", `${state.message}. Open the Spectral card`);
@@ -107,14 +113,28 @@ export function createCard({ chip, live, ghost, stage, toast }) {
     ghost.settle();
   }
 
+  /** Tell a screen reader of the connection, not of every request that comes and goes. */
+  function announce() {
+    const key = `${state.status}:${state.reason}`;
+    if (key !== said) {
+      said = key;
+      saidBusy = state.active;
+      live.textContent = state.message;
+    } else if (state.active && !saidBusy) {
+      // Requests began to arrive: said once for a connection. The chip's label says the rest.
+      saidBusy = true;
+      live.textContent = state.message;
+    }
+  }
+
   /** What the relay row says: the server's sentence, and since when the connection is open. */
   function relayText() {
     const since = state.since ? ` · since ${new Date(state.since).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "";
     return `${state.message}${since}`;
   }
 
-  function checks() {
-    if (!state.local) return `<p class="note warn">${NOT_LOCAL}</p>`;
+  function rows() {
+    if (!state.local) return `<p class="note warn" id="sp-rows">${NOT_LOCAL}</p>`;
     const locked = held(state);
     const on = state.adapter !== null;
     const name = typed ?? state.api_key_env;
@@ -127,19 +147,19 @@ export function createCard({ chip, live, ghost, stage, toast }) {
       : test.outcome === "running" ? "Running one turn…"
       : test.outcome === "failed" ? esc(test.message)
       : `<span class="pill fa-${esc(test.final_action)}">${esc(test.final_action)}</span><span class="mono">${fmtMs(num(test.duration_ms))}</span>`;
-    return `<div class="checks">
-      <div class="check"><label class="label" for="sp-env">Key</label>
-        <span class="what"><input id="sp-env" class="mono" type="text" value="${esc(name)}" autocapitalize="none" autocomplete="off" spellcheck="false" aria-describedby="sp-env-help sp-error"${locked ? " disabled" : ""}>${pill}</span><span></span>
-        <span class="help" id="sp-env-help">The name of an environment variable. Its value stays on the server.${locked ? " Disconnect to change it." : ""}</span></div>
-      <div class="check"><span class="label">Relay</span>
-        <span class="what"><span class="mono">${esc(state.relay)}</span><span class="probe${bad ? " err" : ""}" id="sp-relay">${esc(relayText())}</span></span><span></span>
-        <span class="help">The address comes from where the studio was started, never from this page.</span></div>
-      <div class="check"><span class="label">Adapter</span>
-        <span class="what">${on ? `<span class="mono">127.0.0.1:${Number(state.adapter.port)}</span><span class="probe">Open while connected · answers ${routes}</span>` : `<span class="probe">Closed. It opens when you connect.</span>`}</span><span></span>
-        <span class="help">A small server that only this machine can reach: spectral-bridge hands it each request. Its address also carries a key of this connection, which is never shown.</span></div>
-      <div class="check"><span class="label">Atom</span>
-        <span class="what"><span class="probe${test && test.outcome === "failed" ? " err" : ""}" role="status">${tested}</span></span><button class="btn sm" type="button" data-sp="test"${test && test.outcome === "running" ? " disabled" : ""}>Send a test request</button>
-        <span class="help">One real turn on a sample message, built like a request from Spectral. It is not added to the conversation and not counted.</span></div>
+    return `<div class="sp-rows" id="sp-rows">
+      <div class="sp-row"><label class="label sp-name" for="sp-env">Key</label>
+        <span class="sp-what"><input id="sp-env" class="mono sp-field" type="text" value="${esc(name)}" autocapitalize="none" autocomplete="off" spellcheck="false" aria-describedby="sp-env-help sp-error"${locked ? " disabled" : ""}>${pill}</span><span></span>
+        <span class="sp-help" id="sp-env-help">The name of an environment variable. Its value stays on the server.${locked ? " Disconnect to change it." : ""}</span></div>
+      <div class="sp-row"><span class="label sp-name">Relay</span>
+        <span class="sp-what"><span class="mono">${esc(state.relay)}</span><span class="probe sp-said${bad ? " err" : ""}" id="sp-relay">${esc(relayText())}</span></span><span></span>
+        <span class="sp-help">The address comes from where the studio was started, never from this page.</span></div>
+      <div class="sp-row"><span class="label sp-name">Adapter</span>
+        <span class="sp-what">${on ? `<span class="mono">127.0.0.1:${num(state.adapter.port)}</span><span class="probe sp-said">Open while connected · answers ${routes}</span>` : `<span class="probe sp-said">Closed. It opens when you connect.</span>`}</span><span></span>
+        <span class="sp-help">A small server that only this machine can reach: spectral-bridge hands it each request. Its address also carries a key of this connection, which is never shown.</span></div>
+      <div class="sp-row"><span class="label sp-name">Atom</span>
+        <span class="sp-what"><span class="probe sp-said${test && test.outcome === "failed" ? " err" : ""}" role="status">${tested}</span></span><button class="btn sm" type="button" data-sp="test"${test && test.outcome === "running" ? " disabled" : ""}>Send a test request</button>
+        <span class="sp-help">One real turn on a sample message, built like a request from Spectral. It is not added to the conversation and not counted.</span></div>
     </div>`;
   }
 
@@ -151,22 +171,23 @@ export function createCard({ chip, live, ghost, stage, toast }) {
       : "";
     const notice = !state.local ? "" : `<p class="note${on ? "" : " warn"}">${on ? WARN_ON : WARN_OFF}</p>`;
     const next = `<p class="note" id="sp-next"${connected && state.counts && !state.counts.requests ? "" : " hidden"}>Next: in Spectral, open your target, press <b>Test connection</b>, then launch an evaluation.</p>`;
+    lastStats = state.counts ? statsMarkup(state.counts) : "";
     const stats = state.counts
-      ? `<section class="stats"><div class="stats-head"><h3 class="label">Requests from Spectral</h3><button class="tbtn" type="button" data-sp="reset">Reset the counts</button></div>
-          <div class="stats" id="sp-stats">${statsMarkup(state.counts)}</div>
+      ? `<section class="sp-stats"><div class="sp-stats-head"><h3 class="label">Requests from Spectral</h3><button class="tbtn" type="button" data-sp="reset">Reset the counts</button></div>
+          <div class="sp-stats" id="sp-stats">${lastStats}</div>
           <p class="foot">Counts only: these requests are not shown, and they are not in the conversation below.</p>
           <p class="foot" id="sp-kept"${state.conversations ? "" : " hidden"}>${keptText(state.conversations)}</p></section>`
       : "";
-    return `${checks()}<p class="field-err" id="sp-error" role="alert"${problem ? "" : " hidden"}>${rich(problem)}</p>${notice}${notes}${next}${stats}`;
+    return `${rows()}<p class="field-err" id="sp-error" role="alert"${problem ? "" : " hidden"}>${rich(problem)}</p>${notice}${notes}${next}${stats}`;
   }
 
   function actions() {
     const site = link(state.site);
-    const open_ = site ? `<a class="btn" href="${site}" target="_blank" rel="noopener noreferrer">Open Spectral</a>` : "";
+    const out = site ? `<a class="btn" href="${site}" target="_blank" rel="noopener noreferrer">Open Spectral</a>` : "";
     const main = !state.local ? ""
       : held(state) ? `<button class="btn danger" type="button" data-sp="disconnect"${state.status === "closing" ? " disabled" : ""}>${state.status === "connecting" ? "Cancel" : "Disconnect"}</button>`
       : `<button class="btn primary" type="button" data-sp="connect">Connect</button>`;
-    return `${main}${open_}<span class="spacer"></span><button class="btn" type="button" data-dlg="close">Done</button>`;
+    return `${main}${out}<span class="spacer"></span><button class="btn" type="button" data-dlg="close">Done</button>`;
   }
 
   function show() {
@@ -182,7 +203,7 @@ export function createCard({ chip, live, ghost, stage, toast }) {
       size: "l",
       lead: ghostLive(look(state).pose, state.message),
       title: "Spectral",
-      sub: `Evaluation at scale, by Principled Intelligence${site ? ` · <a href="${site}" target="_blank" rel="noopener noreferrer">${esc(new URL(state.site).host)}</a>` : ""}`,
+      sub: `Evaluation at scale, by Principled Intelligence${site ? ` · <a class="sp-link" href="${site}" target="_blank" rel="noopener noreferrer">${esc(new URL(state.site).host)}</a>` : ""}`,
       body: body(),
       actions: actions(),
       onClose: () => { open = false; problem = ""; plan(); },
@@ -209,41 +230,64 @@ export function createCard({ chip, live, ghost, stage, toast }) {
   /** What changes while an evaluation runs, shown without drawing the card again. */
   function syncCard() {
     if (!open) return;
+    // Another card took the dialog without closing this one: it is no longer this card's to draw.
+    if (!$("#sp-rows")) { open = false; return; }
     if (shape() !== drawn) { show(); return; }
     const { pose } = look(state);
     const lead = $("#dlg-lead svg");
     if (lead && !lead.classList.contains(`pose-${pose}`)) $("#dlg-lead").innerHTML = ghostLive(pose, state.message);
+    else if (lead) lead.setAttribute("aria-label", state.message);
     const relay = $("#sp-relay");
-    if (relay) relay.textContent = relayText();
+    if (relay && relay.textContent !== relayText()) relay.textContent = relayText();
     if (!state.counts) return;
-    $("#sp-stats").innerHTML = statsMarkup(state.counts);
+    // Numbers that did not change are left alone: a table scrolled sideways stays where it is.
+    const markup = statsMarkup(state.counts);
+    if (markup !== lastStats) {
+      lastStats = markup;
+      $("#sp-stats").innerHTML = markup;
+    }
     $("#sp-next").hidden = !(state.status === "connected" && !state.counts.requests);
-    $("#sp-kept").hidden = !state.conversations;
-    $("#sp-kept").textContent = keptText(state.conversations);
+    const kept = keptText(state.conversations);
+    $("#sp-kept").hidden = !kept;
+    if ($("#sp-kept").textContent !== kept) $("#sp-kept").textContent = kept;
   }
 
   function apply(next) {
     state = next;
     syncChip();
     syncStage();
-    if (state.message !== said) {
-      said = state.message;
-      live.textContent = said;
-    }
+    announce();
     syncCard();
     plan();
   }
 
-  /** Ask again in a second, while something can change and the page is in view. */
-  function plan() {
+  /** The card changed something on the server: its answer is the state, whatever was asked before. */
+  function changed(next) {
+    epoch += 1;
+    apply(next);
+  }
+
+  /** Ask again in a while, as long as something can change and the page is in view. */
+  function plan(delay = 1000) {
     clearTimeout(timer);
     if (document.hidden || !state || !(open || state.status !== "off")) return;
+    const asked = epoch;
     timer = setTimeout(async () => {
-      // The studio says so itself when it stops answering: here a failure only ends the asking.
-      try { apply(await send("GET", "/api/spectral")); } catch { /* nothing to show */ }
-    }, 1000);
+      let next;
+      try {
+        next = await send("GET", "/api/spectral");
+      } catch (error) {
+        // One answer that does not come is not the end: ask again, less often. A page the
+        // studio no longer lets in stops, and the studio says so itself when it is gone.
+        if (error.status !== 401) plan(5000);
+        return;
+      }
+      // What was asked before the card changed something says how things were: it is not shown.
+      if (asked === epoch) apply(next);
+      else plan();
+    }, delay);
   }
-  document.addEventListener("visibilitychange", plan);
+  document.addEventListener("visibilitychange", () => plan());
 
   function refuse(error) {
     problem = error.message;
@@ -252,15 +296,20 @@ export function createCard({ chip, live, ghost, stage, toast }) {
   }
 
   async function connect() {
+    // Enter pressed again while the first answer is on its way asks for nothing more.
+    if (connecting) return;
+    connecting = true;
     const name = typed ?? state.api_key_env;
     problem = "";
     try {
       const next = await send("POST", "/api/spectral/connect", { api_key_env: name });
       typed = null;
-      apply(next);
+      changed(next);
     } catch (error) {
       refuse(error);
       $("#sp-env")?.focus();
+    } finally {
+      connecting = false;
     }
   }
 
@@ -270,16 +319,16 @@ export function createCard({ chip, live, ghost, stage, toast }) {
     const what = button.dataset.sp;
     if (what === "connect") { await connect(); return; }
     try {
-      if (what === "disconnect") apply(await send("POST", "/api/spectral/disconnect", {}));
+      if (what === "disconnect") changed(await send("POST", "/api/spectral/disconnect", {}));
       if (what === "reset") {
-        apply(await send("POST", "/api/spectral/counts/reset", {}));
+        changed(await send("POST", "/api/spectral/counts/reset", {}));
         toast("The counts start again");
       }
       if (what === "test") {
         button.disabled = true;
         // The answer comes when the turn has ended: meanwhile the card says that one is running.
         plan();
-        apply(await send("POST", "/api/spectral/test", {}));
+        changed(await send("POST", "/api/spectral/test", {}));
       }
     } catch (error) {
       refuse(error);

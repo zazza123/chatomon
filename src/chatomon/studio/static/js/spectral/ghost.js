@@ -26,8 +26,8 @@ export function ghostMarkup(pose) {
 
 /** What a pose adds around the ghost, in the ghost's own coordinates. */
 export function ghostExtras(pose) {
-  if (pose === "sleep") return `<text class="g-zz" x="90" y="22">z</text><text class="g-zz z2" x="104" y="4">z</text>`;
-  if (pose === "connect") return `<circle class="g-dot" cx="34" cy="120" r="5"/><circle class="g-dot d2" cx="50" cy="120" r="5"/><circle class="g-dot d3" cx="66" cy="120" r="5"/>`;
+  if (pose === "sleep") return `<text class="g-zz" x="90" y="22">z</text><text class="g-zz g-z2" x="104" y="4">z</text>`;
+  if (pose === "connect") return `<circle class="g-dot" cx="34" cy="120" r="5"/><circle class="g-dot g-d2" cx="50" cy="120" r="5"/><circle class="g-dot g-d3" cx="66" cy="120" r="5"/>`;
   if (pose === "refused") {
     const shape = `<polygon points="86,24 97,26 80,38"/><rect x="80" y="-16" width="44" height="34" rx="15"/>`;
     return `<g class="g-pop"><g class="g-no-out">${shape}</g><g class="g-no-in">${shape}</g><path class="g-no-x" d="M95 -6l14 14M109 -6l-14 14"/></g>`;
@@ -43,7 +43,7 @@ export function ghostIcon(pose) {
 /** The ghost at the top of its card, where the card that is open hides the stage. */
 export function ghostLive(pose, label) {
   const sending = pose === "evaluate"
-    ? `<g class="g-pop"><rect class="gb-out" x="88" y="-12" width="34" height="24" rx="11"/><rect class="gb-fill" x="88" y="-12" width="34" height="24" rx="11"/><circle class="g-dot" cx="97" cy="0" r="3"/><circle class="g-dot d2" cx="105" cy="0" r="3"/><circle class="g-dot d3" cx="113" cy="0" r="3"/></g>`
+    ? `<g class="g-pop"><rect class="gb-out" x="88" y="-12" width="34" height="24" rx="11"/><rect class="gb-fill" x="88" y="-12" width="34" height="24" rx="11"/><circle class="g-dot" cx="97" cy="0" r="3"/><circle class="g-dot g-d2" cx="105" cy="0" r="3"/><circle class="g-dot g-d3" cx="113" cy="0" r="3"/></g>`
     : "";
   return `<svg class="ghost glive pose-${pose}" viewBox="-8 -22 136 150" role="img" aria-label="${esc(label)}"><g class="g-bob">${ghostMarkup(pose)}</g>${ghostExtras(pose)}${sending}</svg>`;
 }
@@ -64,7 +64,7 @@ export function createGhost({ svg, stage, onOpen }) {
   const back = svg.insertBefore(make("g", { id: "gh-back" }), root);
   const front = svg.appendChild(make("g", { id: "gh-front" }));
   const fx = svg.appendChild(make("g", { id: "gh-fx" }));
-  const squares = [0, 1, 2].map((i) => back.appendChild(make("rect", { class: `g-trail t${i}`, rx: 1, opacity: 0 })));
+  const squares = [0, 1, 2].map((i) => back.appendChild(make("rect", { class: `g-trail g-t${i}`, rx: 1, opacity: 0 })));
   const g = make("g", { id: "gh" });
   g.appendChild(make("title")).textContent = "Spectral";
   const posG = g.appendChild(make("g"));
@@ -73,11 +73,12 @@ export function createGhost({ svg, stage, onOpen }) {
 
   const COS = Math.cos((-16 * Math.PI) / 180);
   const SIN = Math.sin((-16 * Math.PI) / 180);
-  // The orbit and the corner follow the size of the ring of orbitals.
+  // The orbit and the corner follow the size of the ring of orbitals, as far as the drawing goes:
+  // with a large ring the corner stops at the edge, above the words under the stage.
   const geo = () => {
     const { r, scale } = stage.ring();
     const R = r * scale;
-    return { rx: R + 54, ry: R + 8, hx: 100 - R - 42, hy: 108 + R + 22 };
+    return { rx: R + 54, ry: R + 8, hx: Math.max(100 - R - 42, 6), hy: Math.min(108 + R + 22, 194) };
   };
   const orbitPoint = (t) => {
     const { rx, ry } = geo();
@@ -90,6 +91,7 @@ export function createGhost({ svg, stage, onOpen }) {
   let shown = "";
   let theta = 0.35 * Math.PI;
   let last = 0;
+  let moving = false;
   let look = null;
   let smileTimer = 0;
   const pos = { x: geo().hx, y: geo().hy, s: 0.52, f: 1 };
@@ -157,7 +159,8 @@ export function createGhost({ svg, stage, onOpen }) {
         if (theta < before) fly("out");
       }
     } else {
-      target = { x: hx, y: hy + Math.sin(now / 700) * 3, s: 0.52 };
+      // Asleep it lies still; awake it floats a little.
+      target = { x: hx, y: hy + (pose === "sleep" ? 0 : Math.sin(now / 700) * 3), s: 0.52 };
     }
     const k = 1 - Math.exp(-dt * 7);
     pos.x += (target.x - pos.x) * k;
@@ -205,6 +208,19 @@ export function createGhost({ svg, stage, onOpen }) {
         landed(item);
       }
     }
+    // Asleep in its corner with nothing in the air, the drawing no longer changes: no frame is
+    // asked for until something does.
+    const rested = Math.abs(pos.x - target.x) < 0.05 && Math.abs(pos.y - target.y) < 0.05 && Math.abs(pos.s - target.s) < 0.002 && pos.f > 0.99;
+    if (pose === "sleep" && rested && !flying.length) {
+      moving = false;
+      return;
+    }
+    requestAnimationFrame(frame);
+  }
+  function move() {
+    if (moving) return;
+    moving = true;
+    last = 0;
     requestAnimationFrame(frame);
   }
 
@@ -218,7 +234,7 @@ export function createGhost({ svg, stage, onOpen }) {
 
   draw();
   if (reduceMotion) still();
-  else requestAnimationFrame(frame);
+  else move();
 
   return {
     /** Show another pose. The ghost goes where the pose belongs by itself. */
@@ -227,10 +243,12 @@ export function createGhost({ svg, stage, onOpen }) {
       clearTimeout(smileTimer);
       draw();
       if (reduceMotion) still();
+      else move();
     },
-    /** The ring changed its size, or a turn started or ended: a still ghost is put in its place. */
+    /** The ring changed its size, or a turn started or ended: a ghost at rest goes to its place. */
     settle() {
       if (reduceMotion) still();
+      else move();
     },
   };
 }
