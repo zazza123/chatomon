@@ -23,7 +23,8 @@ async function call(method, path, body) {
   return response;
 }
 
-const send = async (method, path, body) => (await call(method, path, body)).json();
+/** Call the studio and read the JSON it answers; a refusal is thrown with its type and its words. */
+export const send = async (method, path, body) => (await call(method, path, body)).json();
 
 export const getState = () => send("GET", "/api/state");
 export const resetConversation = () => send("POST", "/api/conversation/reset", {});
