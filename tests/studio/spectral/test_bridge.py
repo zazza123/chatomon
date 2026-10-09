@@ -314,6 +314,44 @@ async def test_a_conversation_grows_with_its_turns_until_it_is_too_large_to_keep
     assert (third["status"], third["body"]["error"]["type"]) == (400, "UnknownConversation")
 
 
+async def test_a_conversation_too_large_to_keep_makes_no_other_forgotten(
+    spectral, bridges, monkeypatch
+):
+    """What will not be kept must not push out what is: it is turned away before, not after."""
+    monkeypatch.setattr(_bridge, "_KEPT_EACH", 40)
+    monkeypatch.setattr(_bridge, "_KEPT_CHARS", 100)
+    bridge = bridges(atom_with("y" * 10, "y" * 10, "y" * 10, "again", "again"))
+    await connected(bridge)
+    small = [await spectral.request("/v1/responses", {"input": "x" * 20}) for _ in range(2)]
+    large = await spectral.request("/v1/responses", {"input": "x" * 50})
+    assert large["status"] == 200
+    assert bridge.state()["conversations"] == 2
+    kept = [await spectral.request("/v1/responses", continuing(one, "again")) for one in small]
+    assert [answer["status"] for answer in kept] == [200, 200]
+    lost = await spectral.request("/v1/responses", continuing(large, "again"))
+    assert (lost["status"], lost["body"]["error"]["type"]) == (400, "UnknownConversation")
+
+
+async def test_what_a_later_answer_continued_is_forgotten_before_what_is_still_open(
+    spectral, bridges, monkeypatch
+):
+    """An answer that was continued is kept for a turn asked again: it goes before a live one."""
+    monkeypatch.setattr(_bridge, "_KEPT", 3)
+    bridge = bridges(atom_with("b", "a", "a2", "c", "b2"))
+    await connected(bridge)
+    b1 = await spectral.request("/v1/responses", HELLO)
+    a1 = await spectral.request("/v1/responses", HELLO)
+    a2 = await spectral.request("/v1/responses", continuing(a1, "again"))
+    await spectral.request("/v1/responses", HELLO)
+    # Four answers for three places: the one that was continued went, not the oldest.
+    assert bridge.state()["conversations"] == 3
+    still = await spectral.request("/v1/responses", continuing(b1, "again"))
+    assert (still["status"], text_of(still)) == (200, "b2")
+    gone = await spectral.request("/v1/responses", continuing(a1, "once more"))
+    assert gone["status"] == 400
+    assert a2["status"] == 200
+
+
 async def test_what_cannot_be_continued_is_not_kept(spectral, bridges):
     """A turn that failed, a request that brought its own history, a chat completion."""
     bridge = bridges(atom_with(RuntimeError("boom"), "two", "three"))

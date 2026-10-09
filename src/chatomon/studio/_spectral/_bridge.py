@@ -67,10 +67,17 @@ _KEPT = 1000
 """How many answers have their conversation kept to be continued; the oldest go first."""
 
 _KEPT_CHARS = 32 * 1024 * 1024
-"""How many characters the kept conversations hold in all; the oldest go first.
+"""How many characters the kept conversations hold in all.
 
 A count of answers alone bounds nothing: a request can be as large as the adapter
 reads, and a conversation that is kept grows with every turn.
+"""
+
+_KEPT_EACH = 4 * 1024 * 1024
+"""How many characters one kept conversation can hold: a larger one is not kept.
+
+It is an eighth of what is kept in all, so that no conversation alone can take the
+place of all the others.
 """
 
 # The reports of the turn that runs in this context: how a report finds its request.
@@ -150,6 +157,7 @@ class Bridge:
         self._counts: Counts | None = None
         self._copy: _Copy | None = None
         self._kept: OrderedDict[str, _Kept] = OrderedDict()
+        self._continued: set[str] = set()
         self._weight = 0
         self._test: dict[str, Any] | None = None
         self._opening = False
@@ -250,19 +258,27 @@ class Bridge:
                     duration_ms=duration_ms,
                 )
         if failure is None and left is not None and keep_as is not None:
-            self._keep(keep_as, left)
+            self._keep(keep_as, left, asked.previous)
         return _Turn(reply, report, duration_ms, failure)
 
-    def _keep(self, answer_id: str, left: _Kept) -> None:
-        """Keep the conversation an answer left, and forget the oldest beyond the limits.
+    def _keep(self, answer_id: str, left: _Kept, continued: str | None) -> None:
+        """Keep the conversation an answer left, within the limits.
 
-        A conversation that is larger than the limit by itself is forgotten at once.
+        A conversation that is too large is turned away before anything is forgotten
+        for it. When there is no room, what goes first is an answer a later one
+        continued, which is kept only for a turn that is asked again; then the oldest.
         """
+        if left.weight > _KEPT_EACH:
+            return
+        if continued in self._kept:
+            self._continued.add(continued)
         self._kept[answer_id] = left
         self._weight += left.weight
-        while self._kept and (len(self._kept) > _KEPT or self._weight > _KEPT_CHARS):
-            _, gone = self._kept.popitem(last=False)
-            self._weight -= gone.weight
+        while len(self._kept) > _KEPT or self._weight > _KEPT_CHARS:
+            old = next((key for key in self._kept if key in self._continued), None)
+            old = old if old is not None else next(iter(self._kept))
+            self._weight -= self._kept.pop(old).weight
+            self._continued.discard(old)
 
     async def _answer(self, asked: shapes.Asked, kept_as: str | None) -> str:
         """Answer a request of the adapter with a turn of the atom.
@@ -439,6 +455,7 @@ class Bridge:
         self._since = None
         # Nothing can continue them any more: their texts are not kept past the connection.
         self._kept.clear()
+        self._continued.clear()
         self._weight = 0
         if said:
             print("chatomon studio: Spectral can no longer reach this atom.", file=sys.stderr)
