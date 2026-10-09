@@ -78,7 +78,8 @@ class Runner(Protocol):
         they are; a framework may read them as one message.
 
         Returns:
-            The reply; for a message an orbital stops, the reply the user gets.
+            The reply; for a message an orbital stops, the reply the user gets. An
+            empty text when the turn ended with no reply: nothing else says so here.
 
         Raises:
             InterruptedTurnError: If the agent stopped to wait for an answer.

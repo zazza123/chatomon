@@ -103,6 +103,11 @@ async def test_a_request_for_an_approval_stops_a_turn_run_from_a_history():
         await run_from_history(agent, [("user", "hello"), ("assistant", "one")], "your hours?")
 
 
+async def test_a_nucleus_that_says_nothing_from_a_history_gives_an_empty_text():
+    agent = built(MAFConnector(ScriptedClient([""], [])))
+    assert await run_from_history(agent, [("user", "hello"), ("assistant", "one")], "again") == ""
+
+
 async def test_the_copy_a_turn_runs_on_is_still_the_same_conversation():
     seen: list[str | None] = []
     client = ScriptedClient(["one", "two"], [])

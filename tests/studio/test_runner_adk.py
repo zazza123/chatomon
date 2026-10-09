@@ -86,6 +86,11 @@ async def test_a_run_that_waits_for_an_answer_stops_a_turn_run_from_a_history():
         await run_from_history(agent, [("user", "hello"), ("assistant", "one")], "may I?")
 
 
+async def test_a_nucleus_that_says_nothing_from_a_history_gives_an_empty_text():
+    agent = built(ADKConnector(ScriptedLlm(script=[""])))
+    assert await run_from_history(agent, [("user", "hello"), ("assistant", "one")], "again") == ""
+
+
 def pay(amount: int) -> str:
     """Pay an amount."""
     return f"paid {amount}"

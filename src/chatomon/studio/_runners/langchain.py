@@ -102,7 +102,8 @@ async def run_from_history(agent: Any, history: History, message: str) -> str:
         message: The user message.
 
     Returns:
-        The reply.
+        The reply; an empty text when the run ended on something the nucleus did not
+        write, as the result of a tool that returns directly is.
 
     Raises:
         InterruptedTurnError: If the graph stopped at an interrupt.
@@ -111,7 +112,9 @@ async def run_from_history(agent: Any, history: History, message: str) -> str:
         HumanMessage(content=text) if role == "user" else AIMessage(content=text)
         for role, text in history
     ]
-    return (await run_turn(agent, message, past)).reply
+    outcome = await run_turn(agent, message, past)
+    # No output orbital checked what a tool returned: it is not a reply to give out.
+    return outcome.reply if isinstance(outcome.conversation[-1], AIMessage) else ""
 
 
 def describe(connector: Connector[Any], agent: Any) -> dict[str, str]:

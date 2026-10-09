@@ -142,6 +142,27 @@ async def test_an_interrupt_stops_a_turn_run_from_a_history():
         await run_from_history(agent, [("user", "hello"), ("assistant", "one")], "your hours?")
 
 
+@tool("lookup", return_direct=True)
+def direct_lookup() -> str:
+    """Look up the opening hours, and end the turn with them."""
+    return "Monday to Friday, 9-18"
+
+
+async def test_a_turn_from_a_history_that_ends_on_a_tool_gives_no_reply():
+    """What a tool returned is not a reply: the nucleus did not write it and no orbital saw it."""
+    judge = ScriptedOrbital(name="judge")
+    model = ScriptedChatModel(script=[ToolCall()])
+    connector = LangChainConnector(model, tools=[direct_lookup])
+    agent = atom(connector, output_orbitals=[judge]).build()
+    assert await run_from_history(agent, [("user", "hello"), ("assistant", "one")], "hours?") == ""
+    assert judge.contexts == []
+
+
+async def test_a_nucleus_that_says_nothing_from_a_history_gives_an_empty_text():
+    agent = atom(LangChainConnector(ScriptedChatModel(script=[""]))).build()
+    assert await run_from_history(agent, [("user", "hello"), ("assistant", "one")], "again") == ""
+
+
 def test_a_saved_test_awaits_its_turns_and_carries_the_messages():
     plain = saved_test(LangChainConnector(ScriptedChatModel()))
     # The studio runs the agent with ainvoke: so does the test, or tools and middleware
