@@ -111,14 +111,27 @@ async def test_a_value_in_place_of_a_name_is_refused_and_does_not_come_back(clie
     assert pasted not in (await client.get("/api/state")).text
 
 
-async def test_a_variable_that_is_not_set_is_named(client, monkeypatch):
+async def test_a_variable_that_is_not_set_is_refused_without_its_name(client, monkeypatch):
     monkeypatch.delenv("OTHER_KEY", raising=False)
     asked = {"api_key_env": "OTHER_KEY"}
     answer = await client.post("/api/spectral/connect", json=asked, headers=ORIGIN)
     assert answer.status_code == 422
-    assert answer.json()["error"]["message"] == "the environment variable OTHER_KEY is not set"
-    state = (await client.get("/api/spectral")).json()
-    assert (state["api_key_env"], state["key_set"]) == ("OTHER_KEY", False)
+    assert answer.json()["error"] == {
+        "type": "InvalidSetting",
+        "message": "the environment variable that api_key_env names is not set",
+        "setting": "api_key_env",
+    }
+    # What was sent may be a key that reads as a name: the state does not take it.
+    assert "OTHER_KEY" not in (await client.get("/api/state")).text
+
+
+async def test_a_relay_address_that_cannot_be_read_leaves_the_studio_working(client, monkeypatch):
+    monkeypatch.setenv("SPECTRAL_BRIDGE_RELAY_URL", "wss://[bad")
+    state = await client.get("/api/state")
+    assert state.status_code == 200
+    assert state.json()["studio"]["spectral"]["relay"] == ""
+    refused = await client.post("/api/spectral/connect", json=NAMED, headers=ORIGIN)
+    assert (refused.status_code, refused.json()["error"]["type"]) == (409, "Refused")
 
 
 async def test_a_second_connection_is_refused(client):

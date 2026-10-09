@@ -404,19 +404,42 @@ async def test_what_is_not_the_name_of_a_variable_is_refused_and_not_kept(bridge
     assert bridge.state()["api_key_env"] == "SPECTRAL_BRIDGE_API_KEY"
 
 
-async def test_a_variable_that_is_not_set_is_named_and_kept_as_the_last_tried(bridges, monkeypatch):
+async def test_a_variable_that_is_not_set_is_refused_and_its_name_is_not_kept(bridges, monkeypatch):
     monkeypatch.delenv("MY_SPECTRAL_KEY", raising=False)
     bridge = bridges(atom_with("Hi"))
-    with pytest.raises(
-        InvalidSettingError, match="the environment variable MY_SPECTRAL_KEY is not set"
-    ):
+    with pytest.raises(InvalidSettingError, match="api_key_env names is not set") as error:
         await bridge.connect(" MY_SPECTRAL_KEY ")
+    assert error.value.setting == "api_key_env"
     state = bridge.state()
-    assert (state["api_key_env"], state["key_set"], state["status"]) == (
-        "MY_SPECTRAL_KEY",
-        False,
-        "off",
-    )
+    assert (state["api_key_env"], state["status"]) == ("SPECTRAL_BRIDGE_API_KEY", "off")
+
+
+# A key can be made of letters, digits and underscores only: it reads as a name.
+@pytest.mark.parametrize(
+    "pasted",
+    ["a3f9c0d1e2b4a5968778695a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5", "sk_live_0123456789abcdef"],
+)
+async def test_a_pasted_key_that_reads_as_a_name_is_not_kept_and_not_sent_back(
+    bridges, monkeypatch, pasted
+):
+    monkeypatch.delenv(pasted, raising=False)
+    bridge = bridges(atom_with("Hi"))
+    with pytest.raises(InvalidSettingError) as error:
+        await bridge.connect(pasted)
+    assert pasted not in str(error.value)
+    assert pasted not in json.dumps(bridge.state())
+
+
+async def test_the_state_names_the_variable_a_connection_was_opened_with(
+    spectral, bridges, monkeypatch
+):
+    monkeypatch.setenv("MY_SPECTRAL_KEY", spectral.key)
+    monkeypatch.delenv("SPECTRAL_BRIDGE_API_KEY")
+    bridge = bridges(atom_with("Hi"))
+    await bridge.connect(" MY_SPECTRAL_KEY ")
+    await eventually(lambda: bridge.state()["status"] == "connected")
+    state = bridge.state()
+    assert (state["api_key_env"], state["key_set"]) == ("MY_SPECTRAL_KEY", True)
 
 
 async def test_a_relay_that_is_not_wss_is_refused(bridges, monkeypatch):
@@ -428,6 +451,17 @@ async def test_a_relay_that_is_not_wss_is_refused(bridges, monkeypatch):
     ):
         await bridge.connect("SPECTRAL_BRIDGE_API_KEY")
     assert bridge.state()["adapter"] is None
+
+
+async def test_a_relay_address_that_cannot_be_read_is_shown_empty_and_refused(bridges, monkeypatch):
+    monkeypatch.setenv("SPECTRAL_BRIDGE_API_KEY", KEY)
+    monkeypatch.setenv("SPECTRAL_BRIDGE_RELAY_URL", "wss://[bad")
+    bridge = bridges(atom_with("Hi"))
+    assert bridge.state()["relay"] == ""
+    with pytest.raises(RefusedError, match="check SPECTRAL_BRIDGE_RELAY_URL"):
+        await bridge.connect("SPECTRAL_BRIDGE_API_KEY")
+    state = bridge.state()
+    assert (state["status"], state["adapter"]) == ("off", None)
 
 
 async def test_a_studio_on_a_network_address_does_not_connect(spectral, bridges):

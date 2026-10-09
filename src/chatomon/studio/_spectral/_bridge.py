@@ -79,6 +79,19 @@ class _Turn:
     failure: Unanswered | None
 
 
+def _address(url: str) -> tuple[str, str]:
+    """Read the scheme and the host of an address.
+
+    Returns:
+        The two, in lower case; both empty for an address that cannot be read.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return "", ""
+    return parts.scheme.lower(), parts.hostname or ""
+
+
 def _collect(report: TurnReport) -> None:
     turn = _reports.get()
     if turn is not None:
@@ -237,7 +250,7 @@ class Bridge:
             "notes": self._notes(),
             "api_key_env": self._env,
             "key_set": bool(os.environ.get(self._env, "").strip()),
-            "relay": urlsplit(_relay.relay_url()).hostname or "",
+            "relay": _address(_relay.relay_url())[1],
             "adapter": adapter,
             "since": since,
             "test": dict(self._test) if self._test is not None else None,
@@ -271,14 +284,16 @@ class Bridge:
                 "api_key_env takes the name of an environment variable, not its value",
                 setting="api_key_env",
             )
-        self._env = name
         key = os.environ.get(name, "").strip()
         if not key:
+            # A key can read as a name: what names no variable is not kept or repeated either.
             raise InvalidSettingError(
-                f"the environment variable {name} is not set", setting="api_key_env"
+                "the environment variable that api_key_env names is not set",
+                setting="api_key_env",
             )
+        self._env = name
         url = _relay.relay_url()
-        scheme = urlsplit(url).scheme.lower()
+        scheme, host = _address(url)
         if scheme != "wss" and not (self.insecure and scheme == "ws"):
             raise RefusedError(f"the relay must be a wss:// address: check {RELAY_ENV}")
         # Nothing is awaited before this: a second request to connect finds the first.
@@ -287,7 +302,6 @@ class Bridge:
             await self._open(url, key)
         finally:
             self._opening = False
-        host = urlsplit(url).hostname or ""
         print(f"chatomon studio: connecting this atom to Spectral through {host}", file=sys.stderr)
 
     async def _open(self, url: str, key: str) -> None:
