@@ -20,6 +20,8 @@ from typing import Any
 
 from chatomon.errors import MissingExtraError
 
+logger = logging.getLogger(__name__)
+
 KEY_ENV = "SPECTRAL_BRIDGE_API_KEY"
 """The variable that holds the key of a target, unless the page names another one."""
 
@@ -149,8 +151,10 @@ class Relay:
     def _ended(self, task: asyncio.Task[None]) -> None:
         logging.getLogger(_LOGGER).removeHandler(self._reasons)
         logging.getLogger(_HTTP_LOGGER).removeFilter(self._hidden)
-        if not task.cancelled():
-            task.exception()  # read, so that asyncio does not report it as never retrieved
+        error = None if task.cancelled() else task.exception()
+        if error is not None:
+            # The class of the error, never its text: the state can only say that it stopped.
+            logger.warning("the client of spectral-bridge stopped with %s", type(error).__name__)
         # The client holds the key: nothing keeps it once the connection is over.
         self._client = None
         self._on_end()

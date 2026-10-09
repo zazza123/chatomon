@@ -109,6 +109,30 @@ async def test_a_stop_before_the_relay_answered_is_off_too(relay, connect):
     assert (link.state(), ends.times) == (("off", None), 1)
 
 
+async def test_a_client_that_stops_on_its_own_is_logged_by_the_class_of_its_error(
+    relay, connect, monkeypatch, caplog
+):
+    async def broken(self: object) -> None:
+        raise RuntimeError("the key is good-key")
+
+    monkeypatch.setattr("spectral_bridge.RelayClient.run", broken)
+    caplog.set_level("WARNING", logger="chatomon")
+    link, ends = connect()
+    await eventually(lambda: link.state() == ("refused", "stopped"))
+    assert ends.times == 1
+    assert "the client of spectral-bridge stopped with RuntimeError" in caplog.text
+    assert "good-key" not in caplog.text
+
+
+async def test_a_stop_that_was_asked_for_is_not_logged(relay, connect, caplog):
+    caplog.set_level("WARNING", logger="chatomon")
+    link, _ = connect()
+    await eventually(lambda: link.state() == ("connected", None))
+    link.stop()
+    await link.wait(5)
+    assert "stopped with" not in caplog.text
+
+
 async def test_a_request_that_arrives_means_the_connection_was_there(relay, connect):
     url = relay.url
     await relay.stop()
