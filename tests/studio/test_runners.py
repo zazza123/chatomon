@@ -3,6 +3,7 @@
 import asyncio
 import importlib
 import pkgutil
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
@@ -199,6 +200,31 @@ async def test_a_history_is_given_in_its_order_whoever_speaks(
     assert await framework.runner.run_from_history(agent, history, "last") == "ok"
     assert seen(guard, 0) == history
     assert heard(framework) == [*history, ("user", "last")]
+
+
+def joined(said: Sequence[tuple[str, str]]) -> list[tuple[str, str]]:
+    """A conversation with what one speaker said in a row as one text, joined by line breaks."""
+    out: list[tuple[str, str]] = []
+    for role, text in said:
+        if out and out[-1][0] == role:
+            out[-1] = (role, f"{out[-1][1]}\n{text}")
+        else:
+            out.append((role, text))
+    return out
+
+
+async def test_assistant_texts_in_a_row_keep_their_words_apart(framework: StudioHarness):
+    """A framework may take them as one message; the words of one never run into the next."""
+    guard = ScriptedOrbital(name="guard")
+    agent = make_atom(framework, "ok", input_orbitals=[guard]).build()
+    history: History = [
+        ("user", "when do you open?"),
+        ("assistant", "Let me check."),
+        ("assistant", "We open at 9."),
+    ]
+    assert await framework.runner.run_from_history(agent, history, "thanks") == "ok"
+    assert joined(seen(guard, 0)) == joined(history)
+    assert joined(heard(framework)) == joined([*history, ("user", "thanks")])
 
 
 async def test_a_history_is_left_as_it_was_given(framework: StudioHarness):

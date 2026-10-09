@@ -74,8 +74,10 @@ class Runner(Protocol):
             history: What was said before the message, oldest first. It is not changed.
             message: The user message.
 
-        Texts of the same speaker that follow one another are given in order, as
-        they are; a framework may read them as one message.
+        Texts of the same speaker that follow one another are given in order. A
+        framework that reads what the assistant said in a row as one message gets
+        it joined by line breaks, so that the words of one text do not run into
+        the next.
 
         Returns:
             The reply; for a message an orbital stops, the reply the user gets. An

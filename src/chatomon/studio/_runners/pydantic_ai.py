@@ -48,11 +48,19 @@ async def run_from_history(agent: Any, history: History, message: str) -> str:
     Returns:
         The reply.
     """
+    said: list[tuple[bool, str]] = []
+    for role, text in history:
+        by_user = role == "user"
+        if not by_user and said and not said[-1][0]:
+            # PydanticAI reads responses in a row as one: a line break keeps their words apart.
+            said[-1] = (False, f"{said[-1][1]}\n{text}")
+        else:
+            said.append((by_user, text))
     past: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content=text)])
-        if role == "user"
+        if by_user
         else ModelResponse(parts=[TextPart(content=text)])
-        for role, text in history
+        for by_user, text in said
     ]
     return (await run_turn(agent, message, past)).reply
 
