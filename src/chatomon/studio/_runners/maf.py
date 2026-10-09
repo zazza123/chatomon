@@ -104,7 +104,8 @@ async def run_from_history(agent: Any, history: History, message: str) -> str:
     Raises:
         InterruptedTurnError: If a tool asked for an approval.
     """
-    past = [Message(role, [text]) for role, text in history]
+    # Whoever is not the user is the assistant, as in every other runner.
+    past = [Message("user" if role == "user" else "assistant", [text]) for role, text in history]
     said = [*past, Message("user", [message])]
     response = await agent.run(said, session=agent.create_session())
     if response.user_input_requests:
