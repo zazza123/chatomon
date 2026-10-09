@@ -13,9 +13,12 @@ def text_files():
     return [path for path in STATIC.rglob("*") if path.suffix in {".html", ".css", ".js", ".svg"}]
 
 
-def tokens(css: str) -> dict[str, set[str]]:
+MINT_TOKEN_RE = re.compile(r"--cm-(?P<name>mint|mint-deep):\s*(?P<value>#[0-9a-fA-F]{3,8})")
+
+
+def tokens(css: str, pattern: re.Pattern[str] = BRAND_TOKEN_RE) -> dict[str, set[str]]:
     found: dict[str, set[str]] = {}
-    for match in BRAND_TOKEN_RE.finditer(css):
+    for match in pattern.finditer(css):
         found.setdefault(match["name"], set()).add(match["value"].lower())
     return found
 
@@ -48,6 +51,13 @@ def test_brand_tokens_match_the_docs():
     assert tokens((STATIC / "studio.css").read_text(encoding="utf-8")) == tokens(
         DOCS_CSS.read_text(encoding="utf-8")
     )
+
+
+def test_the_mint_of_the_spectral_add_on_matches_the_docs():
+    """Spectral's colour is a brand token like the others: one value in the studio and the docs."""
+    studio = tokens((STATIC / "spectral.css").read_text(encoding="utf-8"), MINT_TOKEN_RE)
+    assert studio == tokens(DOCS_CSS.read_text(encoding="utf-8"), MINT_TOKEN_RE)
+    assert studio == {"mint": {"#7df7d6"}, "mint-deep": {"#0a7560", "#7df7d6"}}
 
 
 def test_fredoka_and_the_favicon_are_the_docs_copies():

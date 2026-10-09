@@ -1,0 +1,117 @@
+/* The Spectral add-on of the studio: its chip in the header, the ghost on the stage and its
+   card. The page asks for this file only when the add-on is there. Mint is Spectral's colour;
+   amber stays the orbitals'. */
+
+:root {
+  --cm-mint: #7df7d6; --cm-mint-deep: #0a7560;
+  --mint: var(--cm-mint); --mint-deep: var(--cm-mint-deep); --mint-tint: #7df7d640;
+  --g-line: var(--cm-ink); --g-eye: var(--cm-ink);
+  --g-off: #dcdde6; --g-off-line: #9a9cab; --g-off-eye: #6b6e80;
+  --g-blue: #3192ff; --g-violet: #6644ff;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --cm-mint-deep: #7df7d6;
+    --mint-tint: #7df7d626; --g-line: var(--cm-mint); --g-eye: var(--cm-night);
+    --g-off: #353849; --g-off-line: #4d5167; --g-off-eye: #9a9db5;
+    --g-blue: #6fb1ff; --g-violet: #9d86ff;
+  }
+}
+:root[data-theme="dark"] {
+  --cm-mint-deep: #7df7d6;
+  --mint-tint: #7df7d626; --g-line: var(--cm-mint); --g-eye: var(--cm-night);
+  --g-off: #353849; --g-off-line: #4d5167; --g-off-eye: #9a9db5;
+  --g-blue: #6fb1ff; --g-violet: #9d86ff;
+}
+
+/* The chip */
+.chip-spectral {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 11px 3px 7px; border-radius: 999px; font-size: 12.5px; font-weight: 500; white-space: nowrap;
+  border: 1px solid var(--line-2); background: transparent; color: var(--fg-2); cursor: pointer;
+}
+.chip-spectral:hover { border-color: var(--fg-3); color: var(--fg); }
+.chip-spectral[data-tone="on"] { color: var(--mint-deep); background: var(--mint-tint); border-color: color-mix(in srgb, var(--mint-deep) 35%, transparent); }
+.chip-spectral[data-tone="warn"] { color: var(--warning); background: color-mix(in srgb, var(--warning) 9%, transparent); border-color: color-mix(in srgb, var(--warning) 30%, transparent); }
+.chip-spectral[data-tone="block"] { color: var(--blocked); background: color-mix(in srgb, var(--blocked) 9%, transparent); border-color: color-mix(in srgb, var(--blocked) 30%, transparent); }
+.chip-spectral .n { font-variant-numeric: tabular-nums; }
+.gicon { width: 21px; height: 20px; flex: none; }
+
+/* The ghost: the Pixel shape in mint. Outline and eyes are ink on paper; on night the outline
+   is the body's own colour. */
+.ghost { --gb: var(--mint); --gl: var(--g-line); --ge: var(--g-eye); --gp: var(--g-line); }
+.ghost.pose-sleep { --gb: var(--g-off); --gl: var(--g-off-line); --ge: var(--g-off-eye); --gp: var(--g-off-line); }
+#gh { cursor: pointer; }
+.g-body { fill: var(--gb); stroke: var(--gl); stroke-width: 8; stroke-linejoin: round; }
+.g-pix { fill: var(--gp); animation: g-lag 1.3s ease-in-out infinite alternate; }
+.g-eye { fill: var(--ge); }
+.g-cut { fill: none; stroke: var(--ge); stroke-width: 4.5; stroke-linecap: round; }
+.g-eyes { transform-box: fill-box; transform-origin: center; animation: blink 4.6s infinite; }
+.ghost.pose-connect .g-all { animation: g-fade 1.1s ease-in-out infinite alternate; }
+.ghost.pose-lost .g-body { stroke-dasharray: 9 8; fill-opacity: .55; }
+.ghost.pose-lost .g-all { animation: g-flicker 1.9s steps(1) infinite; }
+.ghost.pose-refused .g-all { animation: shake .34s ease-in-out 2; }
+.g-zz { fill: var(--g-off-line); font: 600 18px var(--font-display); animation: drift 2.4s ease-in-out infinite; }
+.g-zz.z2 { font-size: 25px; animation-delay: .6s; }
+.g-dot { fill: var(--mint-deep); animation: dots 1.1s infinite; }
+.g-dot.d2 { animation-delay: .15s; } .g-dot.d3 { animation-delay: .3s; }
+.g-pop { transform-box: fill-box; transform-origin: center; animation: pop .25s ease-out; }
+.g-no-out { fill: var(--blocked); stroke: var(--blocked); stroke-width: 9; stroke-linejoin: round; }
+.g-no-in { fill: var(--blocked-tint); }
+.g-no-x { fill: none; stroke: var(--blocked); stroke-width: 4.5; stroke-linecap: round; }
+.gb-out { fill: var(--ink); stroke: var(--ink); stroke-width: 6; stroke-linejoin: round; }
+.gb-fill { fill: var(--bg); }
+.gb-dot { fill: var(--mint-deep); }
+.gb-chk { fill: none; stroke: var(--mint-deep); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.g-trail.t0 { fill: var(--mint-deep); } .g-trail.t1 { fill: var(--g-blue); } .g-trail.t2 { fill: var(--g-violet); }
+.nuc.gh-squash { animation: squash .6s ease-out; }
+@keyframes g-lag { from { transform: translate(0, 0); } to { transform: translate(-2.5px, 2.5px); } }
+@keyframes g-fade { from { opacity: .28; } to { opacity: 1; } }
+@keyframes g-flicker { 0% { opacity: 1; } 18% { opacity: .5; } 26% { opacity: .9; } 55% { opacity: .45; } 62% { opacity: .8; } 80% { opacity: .4; } 88% { opacity: 1; } }
+@keyframes g-bob { from { transform: translateY(2px); } to { transform: translateY(-3px); } }
+
+/* The ghost at the top of the card */
+.dlg-lead { margin: -8px -4px -10px -6px; }
+.glive { display: block; width: 64px; height: 70px; overflow: visible; }
+.glive .g-bob { animation: g-bob 2.6s ease-in-out infinite alternate; }
+.glive.pose-sleep .g-bob { animation: none; }
+
+/* The card */
+.dlg-sub a, .note a { color: var(--link); text-underline-offset: 3px; }
+a.btn { text-decoration: none; }
+.checks { display: grid; gap: 14px; }
+.check { display: grid; grid-template-columns: 58px minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; }
+.check .what { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 13.5px; overflow-wrap: anywhere; }
+.check .help { grid-column: 2 / -1; font-size: 12px; line-height: 1.4; color: var(--fg-2); }
+.check input { width: min(100%, 270px); min-width: 0; padding: 7px 10px; border: 1px solid var(--line-2); border-radius: 9px; background: var(--raised); font-size: 13px; }
+.check input:focus { outline: none; border-color: var(--amber); box-shadow: 0 0 0 3px var(--amber-tint); }
+.check input[disabled] { opacity: .6; }
+.check .probe { flex: 1 1 200px; }
+.stats { display: grid; gap: 12px; }
+.stats-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.stat-nums { display: flex; flex-wrap: wrap; gap: 8px 28px; }
+.stat-nums div { display: grid; }
+.stat-nums b { font: 600 24px/1.1 var(--font-display); font-variant-numeric: tabular-nums; color: var(--fg); }
+.stat-nums span { font-size: 12px; color: var(--fg-2); }
+.stat-nums .bad b, .stat-nums .bad span { color: var(--warning); }
+.finals { display: flex; flex-wrap: wrap; gap: 6px; }
+.os-scroll { overflow-x: auto; }
+.os { width: 100%; min-width: 520px; border-collapse: collapse; font-size: 13px; }
+.os th, .os td { padding: 7px 8px; text-align: right; font-variant-numeric: tabular-nums; border-bottom: 1px solid var(--line); vertical-align: top; font-weight: 400; }
+.os thead th { font: 500 11.5px/1.2 var(--font-mono); color: var(--fg-2); }
+.os th:first-child { text-align: left; padding-left: 0; }
+.os tbody th b { display: block; font: 500 13px/1.3 var(--font-mono); overflow-wrap: anywhere; }
+.os tbody th i { display: block; font-style: normal; font-size: 11.5px; color: var(--fg-2); }
+.os .zero { color: var(--fg-3); }
+.os-bar { display: flex; height: 5px; max-width: 280px; margin-top: 6px; border-radius: 3px; overflow: hidden; background: var(--line); }
+.os-bar i { display: block; }
+.os-bar .a { background: var(--amber); } .os-bar .r { background: var(--link); } .os-bar .b { background: var(--blocked); } .os-bar .e { background: var(--warning); } .os-bar .s { background: var(--line-2); }
+
+@media (max-width: 880px) { .chip-spectral .long { display: none; } }
+@media (max-width: 560px) {
+  .chip-spectral { padding: 3px 6px; }
+  .chip-spectral .txt { display: none; }
+  .check { grid-template-columns: minmax(0, 1fr) auto; }
+  .check .label { grid-column: 1 / -1; }
+  .check .help { grid-column: 1 / -1; }
+}
+@media (prefers-reduced-motion: reduce) { .ghost * { animation: none !important; } }
