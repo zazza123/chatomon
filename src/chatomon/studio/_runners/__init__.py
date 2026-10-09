@@ -2,7 +2,7 @@
 
 One module per framework, named like the connector's module: a connector
 defined in `chatomon.connectors.<framework>` is run by
-`chatomon.studio._runners.<framework>`. Each module has the four functions of
+`chatomon.studio._runners.<framework>`. Each module has the five functions of
 [Runner][chatomon.studio._runners.Runner].
 """
 
@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 from chatomon.connectors.base import Connector
 from chatomon.errors import ChatomonConfigError, ChatomonError
@@ -20,6 +21,9 @@ if TYPE_CHECKING:
     from chatomon.studio._testgen import Framework
 
 _CONNECTORS = "chatomon.connectors."
+
+History = Sequence[tuple[Literal["user", "assistant"], str]]
+"""A conversation as plain texts, oldest first: who spoke, and what was said."""
 
 
 @dataclass(frozen=True)
@@ -52,6 +56,32 @@ class Runner(Protocol):
         Returns:
             The reply and the conversation after it, blocked messages already
             replaced by the placeholder.
+
+        Raises:
+            InterruptedTurnError: If the agent stopped to wait for an answer.
+            Exception: Whatever the model or a tool raised.
+        """
+        ...
+
+    async def run_from_history(self, agent: Any, history: History, message: str) -> str:
+        """Run one turn, without streaming, on a conversation given as plain texts.
+
+        This is how a turn that does not come from the page reaches the atom: there
+        is no conversation of the framework's to go on from, only what was said.
+
+        Args:
+            agent: A native agent built from the atom.
+            history: What was said before the message, oldest first. It is not changed.
+            message: The user message.
+
+        Texts of the same speaker that follow one another are given in order. A
+        framework that reads what the assistant said in a row as one message gets
+        it joined by line breaks, so that the words of one text do not run into
+        the next.
+
+        Returns:
+            The reply; for a message an orbital stops, the reply the user gets. An
+            empty text when the turn ended with no reply: nothing else says so here.
 
         Raises:
             InterruptedTurnError: If the agent stopped to wait for an answer.

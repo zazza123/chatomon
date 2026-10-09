@@ -15,15 +15,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar
 
+from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 from pydantic_core import to_json
 
 from chatomon._version import __version__
 from chatomon.atom import Atom
+from chatomon.engine import TurnCallback
 from chatomon.errors import ChatomonConfigError, ChatomonError
 from chatomon.orbitals.base import Orbital
-from chatomon.schemas import OrbitalContext, Side, TurnReport, Verdict
+from chatomon.schemas import CaptureContent, OrbitalContext, Side, TurnReport, Verdict
 from chatomon.studio import _codegen as codegen
 from chatomon.studio import _files as files
 from chatomon.studio import _kinds as kinds
@@ -52,6 +54,39 @@ def _always_recording_provider() -> TracerProvider:
     finally:
         if disabled is not None:
             os.environ["OTEL_SDK_DISABLED"] = disabled
+
+
+def _copy(
+    a: Atom[Any],
+    chains: Chains,
+    *,
+    on_turn: TurnCallback,
+    capture_content: CaptureContent,
+    tracer_provider: trace.TracerProvider,
+) -> Any:
+    """Build an agent from a copy of an atom that has the orbitals `chains` has on.
+
+    The atom that is given is read, never changed.
+
+    Returns:
+        The native agent of the atom's framework.
+    """
+    copy: Atom[Any] = Atom(
+        name=a.name,
+        instructions=a.instructions,
+        connector=a.connector,
+        knowledge=a.knowledge,
+        input_orbitals=chains.enabled("input"),
+        output_orbitals=chains.enabled("output"),
+        refusal=a.refusal,
+        blocked_placeholder=a.blocked_placeholder,
+        blocked_guidance=a.blocked_guidance,
+        max_retries=a.max_retries,
+        on_turn=on_turn,
+        capture_content=capture_content,
+        tracer_provider=tracer_provider,
+    )
+    return copy.build()
 
 
 def _in_thread(function: Callable[[], _T]) -> asyncio.Future[_T]:
@@ -310,6 +345,9 @@ class Session:
         self._reload: asyncio.Task[Reloaded] | None = None
         self._probing = False
         self.reloads = 0
+        self.revision = 0
+        """Grows by one each time the chains or the atom are replaced: an agent built
+        from the session before a change is told from one built after it by this number."""
         self._running: TurnRecord | None = None
         self._report: TurnReport | None = None
         self.chains = Chains.from_atom(atom)
@@ -323,22 +361,47 @@ class Session:
             self._undo = None
 
     def _build(self, a: Atom[Any], chains: Chains) -> Any:
-        copy: Atom[Any] = Atom(
-            name=a.name,
-            instructions=a.instructions,
-            connector=a.connector,
-            knowledge=a.knowledge,
-            input_orbitals=chains.enabled("input"),
-            output_orbitals=chains.enabled("output"),
-            refusal=a.refusal,
-            blocked_placeholder=a.blocked_placeholder,
-            blocked_guidance=a.blocked_guidance,
-            max_retries=a.max_retries,
+        return _copy(
+            a,
+            chains,
             on_turn=self._record,
             capture_content="full",
             tracer_provider=self.provider,
         )
-        return copy.build()
+
+    def build_copy(
+        self,
+        *,
+        on_turn: TurnCallback,
+        capture_content: CaptureContent,
+        tracer_provider: trace.TracerProvider,
+    ) -> Any:
+        """Build one more agent from the atom and the chains as they are now.
+
+        It is how something other than the page runs the atom. The copy has the
+        atom's connector and the orbitals of the chains, the same objects the
+        studio's own agent has, and shares nothing else with it: it reports its
+        turns to `on_turn`, never to the session, and its spans go to
+        `tracer_provider`. The atom's redactor is not applied, as in the studio's
+        own agent: with `capture_content="full"` the reports carry the text as it
+        is. The copy stays as it was built: after a change build another one, and
+        tell the two apart by `revision`.
+
+        Args:
+            on_turn: Receives the report of every turn the copy runs.
+            capture_content: How much text those reports carry.
+            tracer_provider: Where the spans of the copy go.
+
+        Returns:
+            The native agent of the atom's framework.
+        """
+        return _copy(
+            self.atom,
+            self.chains,
+            on_turn=on_turn,
+            capture_content=capture_content,
+            tracer_provider=tracer_provider,
+        )
 
     def _adopt(self, candidate: Chains, *, undo: str | None = None) -> None:
         """Take the candidate chains if the atom builds with them; otherwise change nothing.
@@ -350,6 +413,7 @@ class Session:
         previous = self.chains
         self.chains, self._agent = candidate, agent
         self._undo = (previous, undo) if undo is not None else None
+        self.revision += 1
 
     def switch(self, side: str, name: str, enabled: bool) -> None:
         """Turn an orbital on or off for the next turns.
@@ -739,6 +803,16 @@ class Session:
         self._reload = task
         return await asyncio.shield(task)
 
+    async def settled(self) -> None:
+        """Wait until no reload is running; return at once when none is.
+
+        What a reload raises belongs to whoever asked for it: this only waits,
+        also for a reload that starts as the one before ends. It is how a turn
+        that does not come from the page avoids an atom that is being replaced.
+        """
+        while (reload := self._reload) is not None and not reload.done():
+            await asyncio.wait({reload})
+
     async def _reloaded(self) -> Reloaded:
         loaded = await _in_thread(self._loaded)
         restarted = None
@@ -755,6 +829,7 @@ class Session:
         self.chains, self._agent = loaded.chains, loaded.agent
         self._undo = None
         self.reloads += 1
+        self.revision += 1
         return Reloaded(dropped=loaded.dropped, restarted=restarted, notes=told)
 
     def _loaded(self) -> _Loaded:

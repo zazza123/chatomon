@@ -9,7 +9,7 @@ from agent_framework import HistoryProvider, InMemoryHistoryProvider, Message, t
 from chatomon import Atom
 from chatomon.connectors.maf import MAFConnector, MAFFoundryConnector
 from chatomon.studio._runners import InterruptedTurnError
-from chatomon.studio._runners.maf import describe, notes, run_turn, saved_test
+from chatomon.studio._runners.maf import describe, notes, run_from_history, run_turn, saved_test
 from tests.contract.harness import ToolCall
 from tests.contract.harness_maf import FakeProjectClient, ScriptedMAFClient
 from tests.fakes import ScriptedOrbital
@@ -94,6 +94,18 @@ async def test_a_request_for_an_approval_is_a_failed_turn_and_the_conversation_g
         ("user", "hello"),
         ("assistant", "one"),
     ]
+
+
+async def test_a_request_for_an_approval_stops_a_turn_run_from_a_history():
+    client = ScriptedClient([ToolCall(), "three"], [])
+    agent = built(MAFConnector(client, tools=[lookup]))
+    with pytest.raises(InterruptedTurnError, match="the turn is left unfinished"):
+        await run_from_history(agent, [("user", "hello"), ("assistant", "one")], "your hours?")
+
+
+async def test_a_nucleus_that_says_nothing_from_a_history_gives_an_empty_text():
+    agent = built(MAFConnector(ScriptedClient([""], [])))
+    assert await run_from_history(agent, [("user", "hello"), ("assistant", "one")], "again") == ""
 
 
 async def test_the_copy_a_turn_runs_on_is_still_the_same_conversation():

@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 from langchain_core.tools import tool
+from opentelemetry.trace import NoOpTracerProvider
 from orbitals.scope_guard_v2 import AsyncScopeGuardV2
 from orbitals.types import AIServiceDescriptionV2
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
@@ -23,12 +24,18 @@ from chatomon.errors import MissingExtraError
 from chatomon.orbitals import JudgeOrbital, MessageLengthOrbital
 from chatomon.orbitals.base import Orbital
 from chatomon.orbitals.principled import ScopeGuardOrbital
-from chatomon.schemas import DEFAULT_BLOCKED_GUIDANCE, DEFAULT_BLOCKED_PLACEHOLDER, OrbitalContext
+from chatomon.schemas import (
+    DEFAULT_BLOCKED_GUIDANCE,
+    DEFAULT_BLOCKED_PLACEHOLDER,
+    OrbitalContext,
+    TurnReport,
+)
 from chatomon.studio import _kinds as kinds
 from chatomon.studio import _loading as loading
 from chatomon.studio._chains import InvalidRequestError, RefusedError, UnknownOrbitalError
 from chatomon.studio._loading import load, namespace
 from chatomon.studio._presets import InvalidPresetError
+from chatomon.studio._runners import pydantic_ai as pydantic_ai_runner
 from chatomon.studio._session import Reloaded, Session, StudioBusyError, UnknownTurnError
 from chatomon.studio._values import InvalidSettingError
 from tests.contract.harness import ToolCall
@@ -1761,3 +1768,151 @@ async def test_one_test_at_a_time_and_a_turn_is_not_held_by_it():
     gate.set()
     assert (await first).reason == "done"
     assert (await session.probe("input", name="slow")).outcome == "answered"
+
+
+def copy_of(session: Session, reports: list[TurnReport]) -> Any:
+    """An agent as something other than the page builds it: no text, none of the studio's spans."""
+    return session.build_copy(
+        on_turn=reports.append, capture_content="none", tracer_provider=NoOpTracerProvider()
+    )
+
+
+def test_the_revision_grows_with_every_change_that_is_adopted():
+    session = Session(make_atom(input_orbitals=[ScriptedOrbital(name="guard")]), source="app:atom")
+    start = session.revision
+    session.switch("input", "guard", False)
+    session.switch("input", "guard", True)
+    assert session.revision == start + 2
+
+
+def test_a_change_that_is_refused_is_not_a_new_revision():
+    first = ScriptedOrbital(Verdict.allow(annotations={"x": 1}), name="first")
+    reader = ScriptedOrbital(name="reader", reads=["first"])
+    session = Session(make_atom(input_orbitals=[first, reader]), source="app:atom")
+    start = session.revision
+    with pytest.raises(ChatomonConfigError, match="reads 'first'"):
+        session.switch("input", "first", False)
+    assert session.revision == start
+
+
+async def test_a_reload_is_a_new_revision_and_one_that_fails_is_not(shop):
+    session = started()
+    start = session.revision
+    shop("settings.py", "INSTRUCTIONS = \n")
+    with pytest.raises(ChatomonConfigError, match="could not import 'shop'"):
+        await session.reload()
+    assert session.revision == start
+    shop("settings.py", SETTINGS.replace("brief", "kind"))
+    await session.reload()
+    assert session.revision == start + 1
+
+
+async def test_a_copy_reports_to_its_own_callback_and_leaves_the_session_alone(
+    framework: StudioHarness,
+):
+    reports: list[TurnReport] = []
+    session = Session(framework_atom(framework, "one", "two"), source="app:atom")
+    copy = copy_of(session, reports)
+    assert (await framework.runner.run_turn(copy, "from outside", None)).reply == "one"
+    said = [(report.final_action, report.user_message) for report in reports]
+    assert said == [("answered", None)]
+    assert session.turns == [] and session.conversation is None
+    # The session's own turn still reports to the session, with its text.
+    turn = await say(session, "hello")
+    assert (turn.reply, turn.report.user_message) == ("two", "hello")
+    assert len(reports) == 1
+
+
+async def test_a_copy_has_the_orbitals_of_the_moment_it_was_built():
+    guard = ScriptedOrbital(Verdict.block("No."), name="guard")
+    session = Session(make_atom(input_orbitals=[guard]), source="app:atom")
+    before = copy_of(session, [])
+    session.switch("input", "guard", False)
+    after = copy_of(session, [])
+    assert (await pydantic_ai_runner.run_turn(before, "hello", None)).reply == "No."
+    assert (await pydantic_ai_runner.run_turn(after, "hello", None)).reply == "Hi"
+
+
+async def test_a_copy_running_beside_a_turn_leaves_the_turn_its_report_and_its_events():
+    session, gate = gated_session(input_orbitals=[ScriptedOrbital(name="guard")])
+    reports: list[TurnReport] = []
+    queue = session.start_turn("hello")
+    # Built while the turn runs: nothing of the session is busy for a copy.
+    copy = copy_of(session, reports)
+    beside = asyncio.ensure_future(pydantic_ai_runner.run_turn(copy, "from outside", None))
+    await asyncio.sleep(0.05)
+    gate.set()
+    events = await asyncio.wait_for(drain(queue), timeout=2)
+    assert (await beside).reply == "Hi"
+    assert [event["type"] for event in events].count("orbital_started") == 1
+    assert events[-1]["turn"]["report"]["user_message"] == "hello"
+    assert [report.user_message for report in reports] == [None]
+
+
+async def test_settled_returns_at_once_when_nothing_is_being_reloaded():
+    session = Session(make_atom(), source="app:atom")
+    await asyncio.wait_for(session.settled(), timeout=1)
+
+
+def held_reload(monkeypatch: pytest.MonkeyPatch, *, fails: bool = False) -> threading.Event:
+    """Make the next reload wait for the returned event, then load or fail."""
+    release = threading.Event()
+    real = loading.load
+
+    def slow(spec: str) -> Atom:
+        release.wait(timeout=5)
+        if fails:
+            raise RuntimeError("the code is broken")
+        return real(spec)
+
+    monkeypatch.setattr(loading, "load", slow)
+    return release
+
+
+async def test_settled_waits_for_the_reload_that_is_running(shop, monkeypatch):
+    session = started()
+    start = session.revision
+    release = held_reload(monkeypatch)
+    reload = asyncio.ensure_future(session.reload())
+    await asyncio.sleep(0.05)
+    waiting = asyncio.ensure_future(session.settled())
+    await asyncio.sleep(0.05)
+    assert not waiting.done()
+    release.set()
+    await asyncio.wait_for(waiting, timeout=5)
+    # Whoever waited sees the atom that was loaded.
+    assert session.revision == start + 1
+    await reload
+
+
+async def test_settled_does_not_raise_what_a_reload_raised(shop, monkeypatch):
+    session = started()
+    release = held_reload(monkeypatch, fails=True)
+    reload = asyncio.ensure_future(session.reload())
+    await asyncio.sleep(0.05)
+    waiting = asyncio.ensure_future(session.settled())
+    release.set()
+    await asyncio.wait_for(waiting, timeout=5)
+    with pytest.raises(ChatomonConfigError, match="the reloaded atom could not be built"):
+        await reload
+
+
+async def test_settled_waits_for_a_reload_that_starts_as_the_one_before_ends(shop, monkeypatch):
+    session = started()
+    start = session.revision
+    release = held_reload(monkeypatch)
+    first = asyncio.ensure_future(session.reload())
+    await asyncio.sleep(0.05)
+    assert session._reload is not None
+    second: list[asyncio.Future[Reloaded]] = []
+    # Asked for before whoever waits can wake: the second reload starts as the first ends.
+    session._reload.add_done_callback(
+        lambda done: second.append(asyncio.ensure_future(session.reload()))
+    )
+    waiting = asyncio.ensure_future(session.settled())
+    await asyncio.sleep(0.05)
+    release.set()
+    await asyncio.wait_for(waiting, timeout=5)
+    assert session.revision == start + 2
+    await first
+    await second[0]

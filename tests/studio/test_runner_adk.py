@@ -13,7 +13,7 @@ from google.genai import types
 from chatomon import Atom
 from chatomon.connectors.adk import ADKConnector
 from chatomon.studio._runners import InterruptedTurnError
-from chatomon.studio._runners.adk import describe, notes, run_turn, saved_test
+from chatomon.studio._runners.adk import describe, notes, run_from_history, run_turn, saved_test
 from tests.contract.harness_adk import ScriptedLlm, said
 from tests.fakes import ScriptedOrbital
 
@@ -77,6 +77,18 @@ async def test_a_run_that_waits_for_an_answer_is_a_failed_turn_and_the_conversat
         ("user", "hello"),
         ("assistant", "one"),
     ]
+
+
+async def test_a_run_that_waits_for_an_answer_stops_a_turn_run_from_a_history():
+    model = ScriptedLlm(script=[asking(), "three"])
+    agent = built(ADKConnector(model, tools=[LongRunningFunctionTool(func=approve)]))
+    with pytest.raises(InterruptedTurnError, match="the turn is left unfinished"):
+        await run_from_history(agent, [("user", "hello"), ("assistant", "one")], "may I?")
+
+
+async def test_a_nucleus_that_says_nothing_from_a_history_gives_an_empty_text():
+    agent = built(ADKConnector(ScriptedLlm(script=[""])))
+    assert await run_from_history(agent, [("user", "hello"), ("assistant", "one")], "again") == ""
 
 
 def pay(amount: int) -> str:
