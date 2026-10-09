@@ -80,6 +80,14 @@ The conversation is an ADK session. ADK keeps the message of a turn that failed 
 
 The plugins you gave the connector run on every turn of the studio too, after chatomon's, and write where they usually write: one that sends analytics sends the studio's turns. The note at start names them.
 
+## Requests from Spectral
+
+With the [Spectral add-on](spectral.md), requests that come from an evaluation run on a second agent built from the same atom, with nothing shown and nothing captured. What this page says of each framework holds for that agent too.
+
+A request that continues a conversation runs as the next turn of that conversation, kept in the form its framework keeps it: the table at the top of this page says which. A request that brings its whole conversation as texts starts from them: the user's messages and the assistant's replies are given to the framework as its own messages, in their order. With a checkpointer or a history provider of your own, every request writes a conversation of its own there.
+
+Two things differ from a turn of the page. A turn that waits for an answer, and a turn that ends with no reply, are answered to Spectral with an error and counted as failed. And on LangChain a run that ends on the result of a tool that returns directly counts as no reply: no output orbital checked that text.
+
 ## Limits
 
 - **A turn that waits for an answer is shown as failed.** The studio cannot answer a LangGraph interrupt, approve a tool call in Microsoft Agent Framework, nor answer a long-running tool or a request for a confirmation in Google ADK. The conversation goes on as it was before that turn. With a history provider of your own, what the framework wrote to it before stopping stays there.
@@ -98,6 +106,7 @@ The plugins you gave the connector run on every turn of the studio too, after ch
 
 ## Related Documentation
 
+- [Evaluating with Spectral](spectral.md) — the add-on that sends requests from an evaluation
 - [Studio](index.md) — installing and starting the studio
 - [Saving a Turn as a Test](testing.md) — the test the studio writes for each framework
 - [Connectors](../connectors/index.md) — how each connector builds a native agent

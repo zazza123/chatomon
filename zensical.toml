@@ -20,6 +20,7 @@ nav = [
       { "Reloading the code" = "studio/reload.md" },
       { "Saving a turn as a test" = "studio/testing.md" },
       { "Frameworks" = "studio/frameworks.md" },
+      { "Evaluating with Spectral" = "studio/spectral.md" },
     ] },
     { "Deployment" = [
       { "Overview" = "deployment/index.md" },

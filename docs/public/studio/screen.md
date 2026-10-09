@@ -2,7 +2,7 @@
 
 ## Overview
 
-The studio page has three parts: the atom drawer on the left, the atom on stage in the middle, and the conversation under it. This page explains what each one shows. Changing the orbitals from the drawer is covered in [Tuning Orbitals](tuning.md).
+The studio page has three parts: the atom drawer on the left, the atom on stage in the middle, and the conversation under it. This page explains what each one shows, and what the Spectral add-on puts on the stage. Changing the orbitals from the drawer is covered in [Tuning Orbitals](tuning.md).
 
 ## The Atom Drawer
 
@@ -35,6 +35,23 @@ The atom in the middle shows the turn as it happens. The dashes on its left are 
 
 **Slow motion**, the default, gives every step time to be seen: the checks of local orbitals take a fraction of a millisecond. **Real time** shows the events as they arrive. When the atom scrolls out of view, a small copy of it stays above the message box.
 
+## The Spectral Ghost
+
+With the [Spectral add-on](spectral.md) installed, a ghost shares the stage with the atom and a **Spectral** chip sits in the header. Both open the Spectral card. Without the add-on neither is there.
+
+The ghost sleeps in the bottom left corner until you connect. Connected, it goes around the atom, and faster, with a trail, while requests arrive. During a turn of yours it goes back to its corner. It never lights the dashes: they show your turns only.
+
+| Pose | | When |
+|------|---|------|
+| sleep | ![](../assets/brand/mascot/spectral/animated/sleep-light.svg#only-light){ width="64" }![](../assets/brand/mascot/spectral/animated/sleep-dark.svg#only-dark){ width="64" } | Spectral is not connected |
+| connect | ![](../assets/brand/mascot/spectral/animated/connect-light.svg#only-light){ width="64" }![](../assets/brand/mascot/spectral/animated/connect-dark.svg#only-dark){ width="64" } | The connection is opening or closing |
+| orbit | ![](../assets/brand/mascot/spectral/animated/orbit-light.svg#only-light){ width="64" }![](../assets/brand/mascot/spectral/animated/orbit-dark.svg#only-dark){ width="64" } | Connected: Spectral can reach the atom |
+| evaluate | ![](../assets/brand/mascot/spectral/animated/evaluate-light.svg#only-light){ width="64" }![](../assets/brand/mascot/spectral/animated/evaluate-dark.svg#only-dark){ width="64" } | Requests are arriving |
+| lost | ![](../assets/brand/mascot/spectral/animated/lost-light.svg#only-light){ width="64" }![](../assets/brand/mascot/spectral/animated/lost-dark.svg#only-dark){ width="64" } | The connection fell and is being tried again |
+| refused | ![](../assets/brand/mascot/spectral/animated/refused-light.svg#only-light){ width="64" }![](../assets/brand/mascot/spectral/animated/refused-dark.svg#only-dark){ width="64" } | Spectral refused the connection |
+
+While requests arrive and no turn of yours runs, the caption under the atom says **Answering Spectral**, and the atom does not doze.
+
 ## Turns and Reports
 
 The conversation flows under the atom. Every turn is a block with your message, the reply, a trail with one mark per orbital and a dot for the nucleus, the final action and the duration. A `↻` counts the times the nucleus wrote the reply again.
@@ -50,6 +67,7 @@ The report also says how many changes the session had against your code when the
 - [Studio](index.md) — installing, starting, content and security
 - [Tuning Orbitals](tuning.md) — changing the orbitals from the drawer and the cards
 - [Saving a Turn as a Test](testing.md) — a turn from its report to a pytest file
+- [Evaluating with Spectral](spectral.md) — the card the ghost opens
 - [Concepts](../concepts.md) — what happens to a message during a turn, and the final actions
 - [Observability and Audit](../observability.md) — the turn report
 
