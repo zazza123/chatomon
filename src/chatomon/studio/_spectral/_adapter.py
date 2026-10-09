@@ -11,7 +11,7 @@ import json
 import secrets
 from collections.abc import Awaitable, Callable
 
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -144,7 +144,11 @@ def create_adapter(
             return
         if scope["type"] != "http":
             return
-        response = await respond(Request(scope, receive), receive)
+        try:
+            response = await respond(Request(scope, receive), receive)
+        except ClientDisconnect:
+            # The caller went away while its request was being read: nobody is left to answer.
+            return
         if response is not None:
             await response(scope, receive, send)
 

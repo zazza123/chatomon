@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import socket
 import threading
 import time
 from typing import Any
@@ -464,6 +465,35 @@ async def test_a_relay_address_that_cannot_be_read_is_shown_empty_and_refused(br
     assert (state["status"], state["adapter"]) == ("off", None)
 
 
+async def test_an_adapter_that_cannot_listen_is_a_refusal(spectral, bridges, monkeypatch):
+    def refuse(self: socket.socket, address: object) -> None:
+        raise OSError("no address to give")
+
+    monkeypatch.setattr(socket.socket, "bind", refuse)
+    bridge = bridges(atom_with("Hi"))
+    with pytest.raises(RefusedError, match="the adapter could not start"):
+        await bridge.connect("SPECTRAL_BRIDGE_API_KEY")
+    state = bridge.state()
+    assert (state["status"], state["adapter"], state["counts"]) == ("off", None, None)
+
+
+async def test_an_address_the_client_refuses_leaves_no_adapter_and_no_counts(
+    spectral, bridges, monkeypatch
+):
+    def refusing(*args: Any, **kwargs: Any) -> Any:
+        raise ValueError("relay url must use wss://")
+
+    monkeypatch.setattr(_bridge, "Relay", refusing)
+    bridge = bridges(atom_with("Hi"))
+    with pytest.raises(RefusedError, match="not one the client takes"):
+        await bridge.connect("SPECTRAL_BRIDGE_API_KEY")
+    state = bridge.state()
+    assert (state["status"], state["adapter"], state["counts"]) == ("off", None, None)
+    # The adapter that was opened for it is closed.
+    assert bridge._serving is not None
+    await asyncio.wait_for(bridge._serving, timeout=5)
+
+
 async def test_a_studio_on_a_network_address_does_not_connect(spectral, bridges):
     bridge = bridges(atom_with("Hi"))
     bridge._session.local = False
@@ -514,6 +544,18 @@ async def test_a_connection_is_active_while_requests_arrive(spectral, bridges, m
     assert (state["active"], state["message"]) == (True, "Spectral is sending requests")
     await eventually(lambda: bridge.state()["active"] is False)
     assert bridge.state()["message"] == "Connected to Spectral"
+
+
+async def test_since_is_the_time_of_the_connection_that_is_open_now(spectral, bridges):
+    bridge = bridges(atom_with("Hi"))
+    await connected(bridge)
+    assert bridge.state()["since"] is not None
+    await spectral.stop()
+    await eventually(lambda: bridge.state()["status"] == "lost")
+    assert bridge.state()["since"] is None
+    await spectral.start()
+    await eventually(lambda: bridge.state()["status"] == "connected", timeout=10)
+    assert bridge.state()["since"] is not None
 
 
 async def test_closing_the_studio_closes_everything_at_once(spectral, bridges):

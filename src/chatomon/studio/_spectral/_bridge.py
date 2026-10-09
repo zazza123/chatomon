@@ -233,7 +233,10 @@ class Bridge:
         The key and the key of the adapter are never part of it.
         """
         status, reason = self._relay.state() if self._relay is not None else ("off", None)
-        if status == "connected" and self._since is None:
+        if status != "connected":
+            # The time is of the connection that is open now: a lost one has none.
+            self._since = None
+        elif self._since is None:
             self._since = datetime.now(UTC)
         recent = time.monotonic() - self._last < _ACTIVE_FOR
         active = status == "connected" and (self._running > 0 or recent)
@@ -311,7 +314,11 @@ class Bridge:
             RefusedError: If the adapter does not start, or the client refuses the address.
         """
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.bind(("127.0.0.1", 0))
+        try:
+            sock.bind(("127.0.0.1", 0))
+        except OSError:
+            sock.close()
+            raise RefusedError("the adapter could not start") from None
         port = sock.getsockname()[1]
         secret = secrets.token_urlsafe(32)
         app = create_adapter(secret=secret, port=port, answer=self._answer, rejected=self._rejected)
@@ -328,9 +335,6 @@ class Bridge:
                 raise RefusedError("the adapter could not start")
             await asyncio.sleep(0.01)
         self._server, self._serving, self._port = server, serving, port
-        self._counts = Counts()
-        self._since = None
-        self._last = float("-inf")
         try:
             self._relay = Relay(
                 url,
@@ -345,6 +349,10 @@ class Bridge:
             raise RefusedError(
                 f"the relay's address is not one the client takes: check {RELAY_ENV}"
             ) from None
+        # The counts start again with a connection that exists; no request can come before this.
+        self._counts = Counts()
+        self._since = None
+        self._last = float("-inf")
 
     def _ended(self, *, said: bool = True) -> None:
         """Close the adapter when the connection is over, for whatever reason."""

@@ -190,18 +190,9 @@ async def test_four_requests_run_at_a_time_and_the_others_wait(client, atom):
     assert (atom.most, len(atom.asked)) == (4, 7)
 
 
-async def test_a_caller_that_goes_away_stops_its_turn(atom):
-    atom.gate = asyncio.Event()
-    app = create_adapter(secret=SECRET, port=PORT, answer=atom.answer, rejected=atom.count_rejected)
-    body = json.dumps(HELLO).encode()
-    inbox: asyncio.Queue[Message] = asyncio.Queue()
-    await inbox.put({"type": "http.request", "body": body, "more_body": False})
-    sent: list[Message] = []
-
-    async def send(message: Message) -> None:
-        sent.append(message)
-
-    scope = {
+def a_post() -> dict[str, Any]:
+    """The scope of a request the adapter answers, as the server gives it."""
+    return {
         "type": "http",
         "method": "POST",
         "path": RESPONSES,
@@ -216,12 +207,39 @@ async def test_a_caller_that_goes_away_stops_its_turn(atom):
         "client": ("127.0.0.1", 50000),
         "http_version": "1.1",
     }
-    call = asyncio.ensure_future(app(scope, inbox.get, send))
+
+
+async def test_a_caller_that_goes_away_stops_its_turn(atom):
+    atom.gate = asyncio.Event()
+    app = create_adapter(secret=SECRET, port=PORT, answer=atom.answer, rejected=atom.count_rejected)
+    body = json.dumps(HELLO).encode()
+    inbox: asyncio.Queue[Message] = asyncio.Queue()
+    await inbox.put({"type": "http.request", "body": body, "more_body": False})
+    sent: list[Message] = []
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    call = asyncio.ensure_future(app(a_post(), inbox.get, send))
     await asyncio.sleep(0.05)
     assert atom.running == 1
     await inbox.put({"type": "http.disconnect"})
     await asyncio.wait_for(call, timeout=2)
     assert (atom.running, sent) == (0, [])
+
+
+async def test_a_caller_that_goes_away_before_its_body_is_no_error(atom):
+    app = create_adapter(secret=SECRET, port=PORT, answer=atom.answer, rejected=atom.count_rejected)
+    sent: list[Message] = []
+
+    async def receive() -> Message:
+        return {"type": "http.disconnect"}
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    await app(a_post(), receive, send)
+    assert (atom.asked, atom.rejected, sent) == ([], 0, [])
 
 
 async def test_a_websocket_is_closed(atom):
