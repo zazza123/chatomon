@@ -801,14 +801,13 @@ class Session:
         return await asyncio.shield(task)
 
     async def settled(self) -> None:
-        """Wait for a reload that is running; return at once when none is.
+        """Wait until no reload is running; return at once when none is.
 
-        What the reload raises belongs to whoever asked for it: this only waits.
-        It is how a turn that does not come from the page avoids an atom that is
-        being replaced.
+        What a reload raises belongs to whoever asked for it: this only waits,
+        also for a reload that starts as the one before ends. It is how a turn
+        that does not come from the page avoids an atom that is being replaced.
         """
-        reload = self._reload
-        if reload is not None and not reload.done():
+        while (reload := self._reload) is not None and not reload.done():
             await asyncio.wait({reload})
 
     async def _reloaded(self) -> Reloaded:

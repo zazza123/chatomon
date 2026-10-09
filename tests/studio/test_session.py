@@ -1895,3 +1895,24 @@ async def test_settled_does_not_raise_what_a_reload_raised(shop, monkeypatch):
     await asyncio.wait_for(waiting, timeout=5)
     with pytest.raises(ChatomonConfigError, match="the reloaded atom could not be built"):
         await reload
+
+
+async def test_settled_waits_for_a_reload_that_starts_as_the_one_before_ends(shop, monkeypatch):
+    session = started()
+    start = session.revision
+    release = held_reload(monkeypatch)
+    first = asyncio.ensure_future(session.reload())
+    await asyncio.sleep(0.05)
+    assert session._reload is not None
+    second: list[asyncio.Future[Reloaded]] = []
+    # Asked for before whoever waits can wake: the second reload starts as the first ends.
+    session._reload.add_done_callback(
+        lambda done: second.append(asyncio.ensure_future(session.reload()))
+    )
+    waiting = asyncio.ensure_future(session.settled())
+    await asyncio.sleep(0.05)
+    release.set()
+    await asyncio.wait_for(waiting, timeout=5)
+    assert session.revision == start + 2
+    await first
+    await second[0]
