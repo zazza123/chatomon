@@ -81,6 +81,8 @@ async def run_turn(agent: Any, message: str, conversation: Any) -> RunOutcome:
 
     Returns:
         The reply and every message of the conversation, blocked ones already redacted.
+        The reply is not the nucleus's own when the run ended on the result of a tool
+        that returns directly.
 
     Raises:
         InterruptedTurnError: If the graph stopped at an interrupt.
@@ -90,7 +92,10 @@ async def run_turn(agent: Any, message: str, conversation: Any) -> RunOutcome:
     state = await agent.ainvoke({"messages": messages}, config)
     if state.get("__interrupt__"):
         raise InterruptedTurnError(_INTERRUPTED)
-    return RunOutcome(reply=state["messages"][-1].text, conversation=state["messages"])
+    last = state["messages"][-1]
+    return RunOutcome(
+        reply=last.text, conversation=state["messages"], by_nucleus=isinstance(last, AIMessage)
+    )
 
 
 async def run_from_history(agent: Any, history: History, message: str) -> str:
@@ -114,7 +119,7 @@ async def run_from_history(agent: Any, history: History, message: str) -> str:
     ]
     outcome = await run_turn(agent, message, past)
     # No output orbital checked what a tool returned: it is not a reply to give out.
-    return outcome.reply if isinstance(outcome.conversation[-1], AIMessage) else ""
+    return outcome.reply if outcome.by_nucleus else ""
 
 
 def describe(connector: Connector[Any], agent: Any) -> dict[str, str]:

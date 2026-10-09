@@ -158,6 +158,14 @@ async def test_a_turn_from_a_history_that_ends_on_a_tool_gives_no_reply():
     assert judge.contexts == []
 
 
+async def test_a_turn_that_ends_on_a_tool_says_its_reply_is_not_the_nucleus_s_own():
+    """The page shows what the tool returned; who answers a request from outside can tell."""
+    model = ScriptedChatModel(script=[ToolCall()])
+    agent = atom(LangChainConnector(model, tools=[direct_lookup])).build()
+    outcome = await run_turn(agent, "hours?", None)
+    assert (outcome.reply, outcome.by_nucleus) == ("Monday to Friday, 9-18", False)
+
+
 async def test_a_nucleus_that_says_nothing_from_a_history_gives_an_empty_text():
     agent = atom(LangChainConnector(ScriptedChatModel(script=[""]))).build()
     assert await run_from_history(agent, [("user", "hello"), ("assistant", "one")], "again") == ""

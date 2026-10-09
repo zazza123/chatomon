@@ -43,6 +43,12 @@ async def test_the_second_turn_sees_the_first(framework: StudioHarness):
     assert seen(guard, 1) == [("user", "hello"), ("assistant", "one")]
 
 
+async def test_a_reply_the_nucleus_wrote_is_said_to_be_its_own(framework: StudioHarness):
+    agent = make_atom(framework, "one").build()
+    outcome = await framework.runner.run_turn(agent, "hello", None)
+    assert (outcome.reply, outcome.by_nucleus) == ("one", True)
+
+
 async def test_the_same_reply_twice_is_kept_twice(framework: StudioHarness):
     guard = ScriptedOrbital(name="guard")
     agent = make_atom(framework, "same", "same", "other", input_orbitals=[guard]).build()
