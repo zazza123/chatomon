@@ -68,6 +68,7 @@ def test_a_bridge_that_was_never_connected_is_off(bridges, monkeypatch):
         "api_key_env": "SPECTRAL_BRIDGE_API_KEY",
         "key_set": True,
         "relay": "bridge.spectral.principled.app",
+        "site": "https://spectral.principled.app",
         "adapter": None,
         "since": None,
         "test": None,

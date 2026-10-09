@@ -63,6 +63,9 @@ _NOT_KEPT = (
 )
 _REPLACED = "The atom was replaced by one of another framework: start the conversation again."
 
+_SITE = "https://spectral.principled.app"
+"""Where the card's link to Spectral goes. The page holds no address of its own."""
+
 _KEPT = 1000
 """How many answers have their conversation kept to be continued; the oldest go first."""
 
@@ -345,6 +348,7 @@ class Bridge:
             "api_key_env": self._env,
             "key_set": bool(os.environ.get(self._env, "").strip()),
             "relay": _address(_relay.relay_url())[1],
+            "site": _SITE,
             "adapter": adapter,
             "since": since,
             "test": dict(self._test) if self._test is not None else None,
