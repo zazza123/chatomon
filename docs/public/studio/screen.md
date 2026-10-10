@@ -4,6 +4,9 @@
 
 The studio page has three parts: the atom drawer on the left, the atom on stage in the middle, and the conversation under it. This page explains what each one shows, and what the Spectral add-on puts on the stage. Changing the orbitals from the drawer is covered in [Tuning Orbitals](tuning.md).
 
+![The studio page: the atom drawer on the left, the atom on stage after a blocked message, and a conversation of two turns](../assets/studio/overview-light.webp#only-light){ .cm-shot width="1120" loading=lazy }
+![The studio page: the atom drawer on the left, the atom on stage after a blocked message, and a conversation of two turns](../assets/studio/overview-dark.webp#only-dark){ .cm-shot width="1120" loading=lazy }
+
 ## The Atom Drawer
 
 The drawer lists the atom in the order a turn runs: input orbitals, the nucleus, output orbitals. The **Atom** button in the header shows and hides it; a dot on the button means the session differs from your code.
@@ -59,6 +62,9 @@ The conversation flows under the atom. Every turn is a block with your message, 
 A message with a dashed red outline was blocked: it is kept out of the conversation history, where the atom's placeholder replaces it. **Re-run** sends the same message again with the orbitals as they are now, which is how you compare a turn before and after a change. **New conversation** clears the history.
 
 The lens of a turn opens its report: every orbital with its action, reason, duration, guidance, annotations and fingerprint, then the attempts of the nucleus and the reply that was sent. Each attempt shows the text the nucleus wrote, also when it was rejected or replaced, and says what chatomon decided about that reply: **accepted**, **replaced** by another text, or **rejected** when the nucleus was asked to write it again; an attempt whose check was still running when the turn was aborted is **interrupted**. It is the turn's `TurnReport`, described in [Observability and Audit](../observability.md). A turn keeps the names and fingerprints its orbitals had when it ran, so earlier turns still tell you which settings produced them.
+
+![The report of a turn: the input chain with the orbital that blocked the message, the attempt of the nucleus and the reply that was sent](../assets/studio/report-light.webp#only-light){ .cm-shot width="824" loading=lazy }
+![The report of a turn: the input chain with the orbital that blocked the message, the attempt of the nucleus and the reply that was sent](../assets/studio/report-dark.webp#only-dark){ .cm-shot width="824" loading=lazy }
 
 The report also says how many changes the session had against your code when the turn ran. **Save as test** turns the turn into a pytest file, in which a reply that an output orbital stopped is repeated: see [Saving a Turn as a Test](testing.md).
 

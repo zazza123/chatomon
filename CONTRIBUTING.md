@@ -382,6 +382,49 @@ down too:
 
 What an orbital may and may not do is in [`CLAUDE.md`](CLAUDE.md).
 
+## Studio screenshots
+
+The home page and the pages under `docs/public/studio/` show screenshots of
+the studio. Nobody takes them by hand: each one is a scene in
+`tests/studio/test_screenshots.py` (the Spectral add-on's is in
+`tests/studio/spectral/test_screenshots.py`) that brings the page to a state,
+with fake models and no network, and takes the image in the light and in the
+dark theme.
+
+The scenes run with the browser tests, so a change to the page that breaks one
+fails CI. A change to what the studio shows regenerates the images in the same
+pull request:
+
+```bash
+uv run playwright install chromium   # once
+CHATOMON_E2E=1 CHATOMON_SCREENSHOTS=1 uv run pytest \
+  tests/studio/test_screenshots.py tests/studio/spectral/test_screenshots.py
+```
+
+Add `-k` and the name of a scene's test to run that scene alone: `-k orbital_card`
+for `orbital-card`. Without `CHATOMON_SCREENSHOTS=1` the images go to a temporary
+directory and `docs/public/assets/studio/` is left alone.
+
+- **What `git status` shows.** What changes at every run, such as a port or a
+  duration, is made constant, so a scene whose screen did not change usually
+  writes the same file again. Not always: Chromium can draw a small icon a few
+  pixels differently from one run to the next, and that is enough to change
+  the file. An image listed as modified that shows the same screen is put
+  back with `git restore`. Another operating system or another version of
+  Chromium draws text a little differently and rewrites every image: commit
+  only those of the scenes you changed.
+- **Weight.** An image weighs at most 150 KB and the folder at most 1 MB. A
+  scene that goes over is refused: frame less, or show less. The limits are
+  in `tests/studio/shots.py` and are raised only with the maintainer.
+- **Nothing of your machine.** A scene that shows a path of the machine it
+  runs on is refused: replace it on the page with `reword` before the image.
+- **A new image.** Add a scene, then name the image in the page once per
+  theme, with a real alternative text and its width in CSS pixels:
+  `![…](../assets/studio/<scene>-light.webp#only-light){ .cm-shot width="824" loading=lazy }`
+  and the same line with `dark`. `tests/tooling/test_docs_screenshots.py`
+  checks that every image is named in both themes and that none is left
+  unused.
+
 ## Versioning and releases
 
 chatomon follows [Semantic Versioning](https://semver.org/). While the version

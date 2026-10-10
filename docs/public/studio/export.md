@@ -8,6 +8,11 @@ A studio session ends when the command stops. There are two ways to keep what yo
 
 **Copy as code**, at the foot of the drawer, shows the atom's two orbital lists as they are in the session, with the imports they need. Paste the lists over `input_orbitals` and `output_orbitals` in your atom; the rest of the atom is not written, because the studio does not change it.
 
+![The Copy as code card: the imports and the two orbital lists as Python, with the setting changed in the studio](../assets/studio/copy-as-code-light.webp#only-light){ .cm-shot width="824" loading=lazy }
+![The Copy as code card: the imports and the two orbital lists as Python, with the setting changed in the studio](../assets/studio/copy-as-code-dark.webp#only-dark){ .cm-shot width="824" loading=lazy }
+
+A session with more changes reads like this:
+
 ```{.python test="skip"}
 # Imports
 from chatomon.orbitals import JudgeOrbital, MessageLengthOrbital, TurnLimitOrbital

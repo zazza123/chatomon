@@ -167,6 +167,17 @@
   }
 }
 
+/* A screenshot of the studio: never wider than the column, at its own size when smaller */
+.md-typeset .cm-shot {
+  display: block;
+  clear: both;
+  max-width: 100%;
+  height: auto;
+  margin: 1.25rem auto;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.6rem;
+}
+
 /* 404 page: the mascot asleep */
 .md-typeset .cm-not-found {
   text-align: center;

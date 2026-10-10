@@ -69,3 +69,8 @@ def test_every_package_export_is_listed_in_the_reference_index():
         if name != "__version__"
     }
     assert {export for export in exports if f"`{export.rsplit('.', 1)[1]}`" not in section} == set()
+
+
+def test_the_studio_has_a_tab_of_its_own():
+    tabs = [name for entry in CONFIG["nav"] for name in entry]
+    assert tabs.index("Studio") == tabs.index("Connectors") + 1

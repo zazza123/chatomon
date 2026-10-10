@@ -166,6 +166,21 @@ An atom with one input orbital that turns refund requests into a guided refusal.
     asyncio.run(main())
     ```
 
+## Studio
+
+The studio is a local page for trying an atom before it goes anywhere. You chat with it, watch every orbital decide while the turn runs, tune the orbitals until they behave, and take the result back as code and as tests. It is a development tool: it runs on your machine and never changes your code.
+
+Install the `studio` extra together with the extra of your framework, for example `pip install 'chatomon[studio,pydantic-ai]'`, and give the command your atom:
+
+```bash
+chatomon studio speedypack.app:atom
+```
+
+![The studio page: the atom drawer on the left, the atom on stage after a blocked message, and a conversation of two turns](assets/studio/overview-light.webp#only-light){ .cm-shot width="1120" loading=lazy }
+![The studio page: the atom drawer on the left, the atom on stage after a blocked message, and a conversation of two turns](assets/studio/overview-dark.webp#only-dark){ .cm-shot width="1120" loading=lazy }
+
+[Studio](studio/index.md) explains the screen, how to tune the orbitals and how to take the result back to your code.
+
 ## Table of Contents
 
 <div class="grid cards" markdown>

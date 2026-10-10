@@ -12,16 +12,6 @@ nav = [
   { "Guide" = [
     { "Concepts" = "concepts.md" },
     { "Observability and audit" = "observability.md" },
-    { "Studio" = [
-      { "Overview" = "studio/index.md" },
-      { "Reading the screen" = "studio/screen.md" },
-      { "Tuning orbitals" = "studio/tuning.md" },
-      { "Back to code" = "studio/export.md" },
-      { "Reloading the code" = "studio/reload.md" },
-      { "Saving a turn as a test" = "studio/testing.md" },
-      { "Frameworks" = "studio/frameworks.md" },
-      { "Evaluating with Spectral" = "studio/spectral.md" },
-    ] },
     { "Deployment" = [
       { "Overview" = "deployment/index.md" },
       { "ScopeGuard on Cloud Run" = "deployment/cloud_run.md" },
@@ -40,6 +30,16 @@ nav = [
     { "LangChain / LangGraph" = "connectors/langchain.md" },
     { "Microsoft Agent Framework" = "connectors/maf.md" },
     { "Google ADK" = "connectors/adk.md" },
+  ] },
+  { "Studio" = [
+    { "Overview" = "studio/index.md" },
+    { "Reading the screen" = "studio/screen.md" },
+    { "Tuning orbitals" = "studio/tuning.md" },
+    { "Back to code" = "studio/export.md" },
+    { "Reloading the code" = "studio/reload.md" },
+    { "Saving a turn as a test" = "studio/testing.md" },
+    { "Frameworks" = "studio/frameworks.md" },
+    { "Evaluating with Spectral" = "studio/spectral.md" },
   ] },
   { "API reference" = [
     { "Overview" = "reference/index.md" },
