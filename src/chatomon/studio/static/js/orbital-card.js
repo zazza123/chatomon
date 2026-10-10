@@ -11,6 +11,15 @@ let settling = Promise.resolve(true);
 let pressedBlock = null;
 // The card whose test is on its way: its outcome goes to the row that is there when it arrives.
 let testing = null;
+// The changes the card sent that have no answer yet. A card can close before they arrive:
+// one opened meanwhile waits for them, so that it is drawn from what the server has.
+const sending = new Set();
+function sent(request) {
+  sending.add(request);
+  const landed = () => sending.delete(request);
+  request.then(landed, landed);
+  return request;
+}
 const cardKey = () => ($("#card-switch", dlg) ? `${view.side}/${view.name}` : "form");
 
 const find = (state, side, name) => state.orbitals[side].find((o) => o.name === name);
@@ -301,7 +310,7 @@ async function commit(el) {
   clear(el);
   let state;
   try {
-    state = await ctx.apply(() => patchOrbital(side, name, { settings: { [key]: value } }));
+    state = await sent(ctx.apply(() => patchOrbital(side, name, { settings: { [key]: value } })));
   } catch (error) {
     // 422: the value; 409: the chain refuses it. Both belong under the field. When the card
     // was closed in the meantime (Done right after typing), the refusal is said in the toast.
@@ -344,7 +353,7 @@ async function commitBlock(fs) {
   fs._unsent = false;
   let state;
   try {
-    state = await ctx.apply(() => patchOrbital(side, name, { settings: { [key]: readBlock(fs) } }));
+    state = await sent(ctx.apply(() => patchOrbital(side, name, { settings: { [key]: readBlock(fs) } })));
   } catch (error) {
     // As for a field: a refusal stays under the block, or goes to the toast when the card closed.
     if (error.status === 422 || error.status === 409) {
@@ -371,7 +380,9 @@ export function redrawOrbital(state) {
 export function showOrbital(side, name, context) {
   ctx = context;
   view = { side, name };
-  draw(ctx.state());
+  if (!sending.size) { draw(ctx.state()); return; }
+  // Another card may be asked for while this one waits: the last one asked for is drawn.
+  Promise.allSettled([...sending]).then(() => { if (view.side === side && view.name === name) draw(ctx.state()); });
 }
 
 export function showPicker(side, context) {
