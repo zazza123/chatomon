@@ -15,7 +15,7 @@
 | `before_agent` | Runs the input chain, redacts a blocked message by id, jumps to the end when an orbital replies |
 | `wrap_model_call` | Adds the guidance, runs the output chain and the regenerations; rebuilds a turn resumed by another process or agent instance |
 | `wrap_tool_call` | Closes the turn as `aborted` when a tool raises |
-| `after_agent` | Finishes the turn and clears chatomon's private state |
+| `after_agent` | Finishes the turn, or closes it as `aborted` when it has no final reply, and clears chatomon's private state |
 
 Every hook has a sync and an async variant, so both `invoke` and `ainvoke` are supported.
 
@@ -62,6 +62,8 @@ LangChain does not propagate the OpenTelemetry context through its hooks. `LangC
 ## Failures and Human in the Loop
 
 Failures of the model call and of tools close the turn as `aborted` (see [Failures](index.md#failures)). A turn interrupted by `interrupt()` stays open and is closed when the graph resumes; if it is resumed by another process or agent instance, chatomon rebuilds the turn and runs the input orbitals again before the model is called, so the reply is always checked. A turn left behind by a failure elsewhere is closed as `aborted` when the next message arrives on the same thread.
+
+A model reply with no text and no tool call is not checked and leaves the turn open. If the graph ends there, the turn is closed as `aborted` and the state keeps the empty message; if a middleware of yours sends the graph back to the model, the reply that follows is checked in the same turn.
 
 ## Related Documentation
 
