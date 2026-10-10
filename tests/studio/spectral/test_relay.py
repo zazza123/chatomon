@@ -1,5 +1,6 @@
 """The state of a connection, read from the real client of spectral-bridge against a fake relay."""
 
+import asyncio
 import logging
 
 import pytest
@@ -53,6 +54,31 @@ async def test_a_key_the_relay_refuses_ends_the_connection_with_its_reason(relay
     link, ends = connect()
     await eventually(lambda: link.state()[0] == "refused")
     assert link.state() == ("refused", "key")
+    assert ends.times == 1
+
+
+async def test_a_refused_connection_is_not_said_to_be_over_before_its_end_was_handled(
+    relay, connect
+):
+    relay.refuse = "http-401"
+    link, ends = connect()
+    # Looked at every time the loop comes round: there is no moment in which the
+    # state says that it is over and `on_end` was not called yet.
+    async with asyncio.timeout(5):
+        while link.state()[0] != "refused":
+            await asyncio.sleep(0)
+    assert ends.times == 1
+
+
+async def test_a_stopped_connection_is_not_said_to_be_off_before_its_end_was_handled(
+    relay, connect
+):
+    link, ends = connect()
+    await eventually(lambda: link.state() == ("connected", None))
+    link.stop()
+    async with asyncio.timeout(5):
+        while link.state()[0] != "off":
+            await asyncio.sleep(0)
     assert ends.times == 1
 
 
