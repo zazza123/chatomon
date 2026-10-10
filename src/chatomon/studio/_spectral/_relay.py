@@ -165,9 +165,12 @@ class Relay:
         Returns:
             `connecting` (with `unreachable` once the client is trying again),
             `connected`, `lost`, `closing`, `off` after a stop that was asked
-            for, or `refused` with `key`, `protocol` or `stopped`.
+            for, or `refused` with `key`, `protocol` or `stopped`. `off` and
+            `refused` are said only after `on_end` was called.
         """
-        if self._task.done():
+        # Over only once `_ended` ran, a moment after the client stopped: whoever reads
+        # `off` or `refused` finds what `on_end` does already done.
+        if self._client is None:
             return ("off", None) if self._asked else ("refused", self._reasons.reason or "stopped")
         if self._asked:
             return "closing", None
