@@ -10,8 +10,8 @@ from chatomon.studio._spectral import Bridge
 from tests.studio.shots import Camera, reword
 from tests.studio.spectral.fake_relay import RelayThread
 from tests.studio.spectral.test_e2e import card, chip, connect
-from tests.studio.test_e2e import open_studio, running
-from tests.studio.test_screenshots import HOURS, POEM, SOURCE, speedypack
+from tests.studio.test_e2e import running
+from tests.studio.test_screenshots import HOURS, POEM, SOURCE, opened, speedypack
 
 pytestmark = pytest.mark.e2e
 
@@ -32,9 +32,8 @@ def relay(monkeypatch: pytest.MonkeyPatch) -> Iterator[RelayThread]:
 
 
 def test_spectral(camera: Camera, relay: RelayThread):
-    page = camera.page
     with running(speedypack(), source=SOURCE) as studio:
-        open_studio(page, studio)
+        page = opened(camera, studio)
         connect(page)
         for message in (HOURS, HOURS, POEM, HOURS):
             assert relay.ask("/v1/responses", {"input": message})["status"] == 200

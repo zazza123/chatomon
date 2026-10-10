@@ -113,7 +113,7 @@ class Camera:
     theme: Theme
     folder: Path
     private: tuple[str, ...] = ()
-    """Texts no image may show: the paths that say whose machine took it."""
+    """Texts no image may show: the paths that say whose machine took it, the address of a run."""
 
     def shoot(self, scene: str, target: Locator | None = None) -> Path:
         """Write `<scene>-<theme>.webp`: the whole page, or `target` with a margin.
@@ -130,7 +130,7 @@ class Camera:
         shown = self.page.evaluate(_SHOWN)
         told = [text for text in self.private if text in shown]
         assert not told, (
-            f"{scene}: the page shows {told}, a path of this machine: reword it before the image"
+            f"{scene}: the page shows {told}, which no image may show: reword it before the image"
         )
         size = self.page.viewport_size
         assert size is not None

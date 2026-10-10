@@ -10,7 +10,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from playwright.sync_api import expect
+from playwright.sync_api import Page, expect
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -63,7 +63,7 @@ def test_an_image_that_shows_a_path_of_this_machine_is_refused(
 ):
     monkeypatch.setattr(camera, "folder", tmp_path)
     camera.page.set_content(f'<input value="{Path.home()}/speedypack">')
-    with pytest.raises(AssertionError, match="a path of this machine"):
+    with pytest.raises(AssertionError, match="no image may show"):
         camera.shoot("private")
     assert not (tmp_path / f"private-{camera.theme}.webp").exists()
     reword(camera.page, str(Path.home()), "/home/ada")
@@ -184,9 +184,33 @@ def studio() -> Iterator[Studio]:
         yield handle
 
 
+def opened(camera: Camera, studio: Studio) -> Page:
+    """Open the studio in the page of the camera, which from now on refuses to show its address.
+
+    The page shows the address of the run, on a port the system chose. The camera
+    replaces it where the page names it; were the page to name it elsewhere, every
+    image would show a different port and no scene would fail.
+    """
+    camera.private += (studio.url.removeprefix("http://"),)
+    open_studio(camera.page, studio)
+    return camera.page
+
+
+def test_an_image_that_shows_the_address_of_this_run_is_refused(
+    camera: Camera, studio: Studio, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(camera, "folder", tmp_path)
+    page = opened(camera, studio)
+    # As if the page no longer named its address the way the camera looks for it.
+    page.locator("#addr").evaluate("shown => shown.removeAttribute('id')")
+    with pytest.raises(AssertionError, match="no image may show"):
+        camera.shoot("address")
+    assert not (tmp_path / f"address-{camera.theme}.webp").exists()
+
+
 def talk(camera: Camera, studio: Studio) -> None:
     """Open the page and hold the conversation of the scenes: an answer, then a refusal."""
-    open_studio(camera.page, studio)
+    opened(camera, studio)
     send(camera.page, HOURS, CLOSED)
     send(camera.page, POEM, REFUSAL)
     expect(camera.page.get_by_role("button", name="Send")).to_be_enabled()
@@ -204,8 +228,7 @@ def test_report(camera: Camera, studio: Studio):
 
 
 def test_orbital_card(camera: Camera, studio: Studio):
-    page = camera.page
-    open_studio(page, studio)
+    page = opened(camera, studio)
     open_card(page, "message_length")
     words = card(page).get_by_label("max_words")
     words.fill("40")
@@ -215,8 +238,7 @@ def test_orbital_card(camera: Camera, studio: Studio):
 
 
 def test_copy_as_code(camera: Camera, studio: Studio):
-    page = camera.page
-    open_studio(page, studio)
+    page = opened(camera, studio)
     open_card(page, "message_length")
     words = card(page).get_by_label("max_words")
     words.fill("40")
@@ -241,11 +263,10 @@ def test_save_as_test(camera: Camera, tmp_path, monkeypatch):
 
 
 def test_add_orbital(camera: Camera, studio: Studio, service: FakeService, monkeypatch):
-    page = camera.page
     monkeypatch.setenv(SCOPE_GUARD_KEY, "a-key-that-never-reaches-the-page")
     service.key = "a-key-that-never-reaches-the-page"
     service.delay = 0.3
-    open_studio(page, studio)
+    page = opened(camera, studio)
     page.locator('#drawer [data-act="add"][data-side="input"]').click()
     card(page).get_by_role("button", name="ScopeGuardOrbital").click()
     address = block_of(page, "guard").get_by_label("api_url")
