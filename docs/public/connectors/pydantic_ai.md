@@ -12,11 +12,22 @@
 
 | Hook | What chatomon does there |
 |------|--------------------------|
-| `before_model_request` | Runs the input chain and redacts a blocked message |
-| `wrap_model_request` | Adds the guidance, sends a canned reply, runs the output chain and the regenerations |
+| `before_model_request`, `wrap_model_request` | The first of the two that PydanticAI runs opens the turn: it runs the input chain and redacts a blocked message |
+| `wrap_model_request` | Sends a canned reply without calling the model, puts chatomon's wrapper around the model of the request, and refuses a reply that did not pass the checks |
+| The model wrapper | Adds the guidance, runs the output chain and asks the model again when an orbital rejects a reply |
+| `after_model_request` | Refuses a reply that a capability changed after the checks |
 | `wrap_run` | Finishes the turn, or aborts it if the run fails |
 
 Both `run` and `run_sync` are supported.
+
+PydanticAI changed the order of these hooks in version 2.54: `wrap_model_request` now runs around `before_model_request`, and may call the model once. The connector does not depend on that order and behaves the same on every version the extra allows.
+
+## Capabilities of Your Own
+
+Your `capabilities` run inside chatomon's layer, so they see the user message after the input orbitals checked it. Two things follow from where the reply is checked:
+
+- **A reply written again is one model request.** The model is asked again inside the wrapper, so a capability of yours sees one model request for each reply that leaves it, and the run's usage counts only that reply.
+- **The reply must come from the atom's model.** chatomon checks what the model writes. A capability that answers in place of the model, skips it with `SkipModelRequest` or rewrites its reply makes the run fail with `ChatomonConfigError`, and the turn is closed as `aborted`: no text leaves the run unchecked. A capability that replaces the model of a request is refused in the same way from PydanticAI 2.54; on earlier versions the model it puts in place is checked like the atom's.
 
 ## Conversations
 
@@ -57,5 +68,5 @@ PydanticAI propagates the OpenTelemetry context through its hooks, so chatomon's
 - [API Reference: `chatomon.connectors.pydantic_ai`](../reference/connectors_pydantic_ai.md) — every parameter and a runnable example
 
 ---
-**Last Updated:** September 2026
+**Last Updated:** October 2026
 **Status:** Implemented

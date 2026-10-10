@@ -6,11 +6,13 @@ from typing import Any
 import pytest
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import SkipModelRequest
 from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from chatomon import Atom, ChatomonConfigError, MissingExtraError, TurnReport, Verdict
+from chatomon.connectors import render_guidance
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.orbitals import JudgeDecision
 from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER
@@ -100,6 +102,131 @@ async def test_streaming_with_only_input_orbitals_works():
         chunks = [chunk async for chunk in result.stream_text(delta=True)]
     assert "".join(chunks) == "Hi there"
     assert reports[0].final_action == "answered"
+
+
+async def test_a_streamed_run_gets_the_reply_of_an_input_orbital_without_the_model():
+    calls: list[str] = []
+    reports: list[TurnReport] = []
+    agent = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(_streaming_model(calls)),
+        input_orbitals=[ScriptedOrbital(Verdict.respond("Please call us."), name="in")],
+        on_turn=reports.append,
+    ).build()
+    async with agent.run_stream("hello") as result:
+        chunks = [chunk async for chunk in result.stream_text(delta=True)]
+    assert "".join(chunks) == "Please call us."
+    assert calls == []
+    assert reports[0].final_action == "orbital_response"
+
+
+async def test_guidance_reaches_a_streamed_model_request():
+    seen: list[str | None] = []
+
+    async def stream(messages: list[Any], info: AgentInfo):
+        seen.append(info.instructions)
+        yield "Hi there"
+
+    agent = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(FunctionModel(stream_function=stream)),
+        input_orbitals=[ScriptedOrbital(Verdict.allow("Mention the opening hours."), name="in")],
+    ).build()
+    async with agent.run_stream("hello") as result:
+        assert await result.get_output() == "Hi there"
+    assert render_guidance(["Mention the opening hours."]) in (seen[0] or "")
+
+
+async def test_a_capability_of_yours_sees_one_model_request_for_a_reply_written_again():
+    wrapped: list[str] = []
+
+    class Counter(AbstractCapability[Any]):
+        async def wrap_model_request(self, ctx: Any, *, request_context: Any, handler: Any) -> Any:
+            wrapped.append("request")
+            return await handler(request_context)
+
+    replies = iter(["Open 24/7", "Open 9-18"])
+    model = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart(next(replies))]))
+    judge = ScriptedOrbital(Verdict.block(guidance="Fix the hours."), Verdict.allow(), name="judge")
+    agent = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(model, capabilities=[Counter()]),
+        output_orbitals=[judge],
+    ).build()
+    assert (await agent.run("hours?")).output == "Open 9-18"
+    # The nucleus is asked again inside the model request: PydanticAI allows one call of it.
+    assert wrapped == ["request"]
+
+
+def other_text() -> ModelResponse:
+    return ModelResponse(parts=[TextPart(content="Text of another source")])
+
+
+class Answering(AbstractCapability[Any]):
+    """Answers in place of the model."""
+
+    async def wrap_model_request(self, ctx: Any, *, request_context: Any, handler: Any) -> Any:
+        return other_text()
+
+
+class Skipping(AbstractCapability[Any]):
+    """Skips the model with a reply of its own."""
+
+    async def before_model_request(self, ctx: Any, request_context: Any) -> Any:
+        raise SkipModelRequest(other_text())
+
+
+class Rewriting(AbstractCapability[Any]):
+    """Changes the reply after the model wrote it."""
+
+    async def after_model_request(self, ctx: Any, *, request_context: Any, response: Any) -> Any:
+        return other_text()
+
+
+class Rerouting(AbstractCapability[Any]):
+    """Sends the request to another model."""
+
+    async def before_model_request(self, ctx: Any, request_context: Any) -> Any:
+        request_context.model = TestModel(custom_output_text="Text of another source")
+        return request_context
+
+
+def unchecked(capability: AbstractCapability[Any]) -> tuple[Any, ScriptedOrbital, list[TurnReport]]:
+    reports: list[TurnReport] = []
+    out = ScriptedOrbital(name="out")
+    agent = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(
+            TestModel(custom_output_text="Hi!"), capabilities=[capability]
+        ),
+        output_orbitals=[out],
+        on_turn=reports.append,
+    ).build()
+    return agent, out, reports
+
+
+@pytest.mark.parametrize("capability", [Answering(), Skipping(), Rewriting()], ids=type)
+async def test_a_reply_that_did_not_pass_the_checks_never_leaves_the_run(capability):
+    agent, _, reports = unchecked(capability)
+    with pytest.raises(ChatomonConfigError, match="without passing chatomon's checks"):
+        await agent.run("hello")
+    assert [(r.final_action, r.error_type) for r in reports] == [("aborted", "ChatomonConfigError")]
+
+
+async def test_the_reply_of_a_model_a_capability_put_in_place_is_checked_or_refused():
+    agent, out, reports = unchecked(Rerouting())
+    try:
+        result = await agent.run("hello")
+    except ChatomonConfigError:
+        # PydanticAI let the capability replace the model after chatomon wrapped it.
+        assert [report.final_action for report in reports] == ["aborted"]
+    else:
+        assert [ctx.message for ctx in out.contexts] == [result.output]
+        assert [report.final_action for report in reports] == ["answered"]
 
 
 async def test_generate_structured_uses_resolve_model():
