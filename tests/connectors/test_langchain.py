@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.errors import GraphInterrupt
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command, interrupt
 
@@ -19,6 +20,7 @@ from chatomon import Atom, ChatomonConfigError, MissingExtraError, TurnReport, V
 from chatomon.connectors.langchain import LangChainConnector
 from chatomon.orbitals import JudgeDecision
 from chatomon.schemas import Message
+from tests.contract.harness import lookup
 from tests.contract.harness_langchain import ScriptedChatModel
 from tests.fakes import ScriptedOrbital
 
@@ -183,29 +185,125 @@ def approve_hours() -> str:
     return f"approved: {answer}"
 
 
-async def test_an_empty_reply_closes_a_turn_rebuilt_in_the_model_call():
-    """A thread paused by a graph without chatomon carries no turn for a later hook to close."""
-    checkpointer = InMemorySaver()
-    config: RunnableConfig = {"configurable": {"thread_id": "t-plain"}}
-    asking = AIMessage(content="", tool_calls=[{"name": "approve_hours", "args": {}, "id": "c1"}])
-    plain = create_agent(
-        ScriptedChatModel(script=[asking]), tools=[approve_hours], checkpointer=checkpointer
-    )
-    await plain.ainvoke({"messages": [HumanMessage(content="hours?")]}, config)
+@tool
+def broken_lookup() -> str:
+    """A tool that always fails."""
+    raise ValueError("tool down")
 
+
+def calling(name: str) -> AIMessage:
+    return AIMessage(content="", tool_calls=[{"name": name, "args": {}, "id": f"call-{name}"}])
+
+
+TOOLS = [approve_hours, tool(lookup), broken_lookup]
+PAUSED: RunnableConfig = {"configurable": {"thread_id": "t-plain"}}
+
+
+async def paused_without_chatomon() -> InMemorySaver:
+    """Pause a thread in a graph built without chatomon: its state carries no turn."""
+    checkpointer = InMemorySaver()
+    model = ScriptedChatModel(script=[calling("approve_hours")])
+    plain = create_agent(model, tools=TOOLS, checkpointer=checkpointer)
+    await plain.ainvoke({"messages": [HumanMessage(content="hours?")]}, PAUSED)
+    return checkpointer
+
+
+async def test_a_turn_rebuilt_in_the_model_call_lasts_until_the_graph_ends():
     reports: list[TurnReport] = []
+    seen = ScriptedOrbital(name="in")
     out = ScriptedOrbital(name="out")
-    connector = LangChainConnector(
-        ScriptedChatModel(script=[""]), tools=[approve_hours], checkpointer=checkpointer
-    )
+    model = ScriptedChatModel(script=[calling("lookup"), "Open 9-18"])
     agent = Atom(
         name="speedypack",
         instructions="Be brief.",
-        connector=connector,
+        connector=LangChainConnector(
+            model, tools=TOOLS, checkpointer=await paused_without_chatomon()
+        ),
+        input_orbitals=[seen],
         output_orbitals=[out],
         on_turn=reports.append,
     ).build()
-    state = await agent.ainvoke(Command(resume="yes"), config)
+    state = await agent.ainvoke(Command(resume="yes"), PAUSED)
+    assert state["messages"][-1].content == "Open 9-18"
+    # One turn for the two model calls: the input chain ran once and there is one report.
+    assert [ctx.message for ctx in seen.contexts] == ["hours?"]
+    assert [ctx.message for ctx in out.contexts] == ["Open 9-18"]
+    assert closed(reports) == [("answered", None)]
+    assert agent.get_state(PAUSED).values.get("chatomon_turn") is None
+
+
+async def test_a_turn_rebuilt_in_the_model_call_lasts_with_the_sync_api_too():
+    reports: list[TurnReport] = []
+    seen = ScriptedOrbital(name="in")
+    model = ScriptedChatModel(script=[calling("lookup"), "Open 9-18"])
+    agent = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=LangChainConnector(
+            model, tools=TOOLS, checkpointer=await paused_without_chatomon()
+        ),
+        input_orbitals=[seen],
+        on_turn=reports.append,
+    ).build()
+    state = agent.invoke(Command(resume="yes"), PAUSED)
+    assert state["messages"][-1].content == "Open 9-18"
+    assert len(seen.contexts) == 1
+    assert closed(reports) == [("answered", None)]
+
+
+async def test_a_tool_that_fails_aborts_a_turn_rebuilt_in_the_model_call():
+    reports: list[TurnReport] = []
+    model = ScriptedChatModel(script=[calling("broken_lookup")])
+    agent = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=LangChainConnector(
+            model, tools=TOOLS, checkpointer=await paused_without_chatomon()
+        ),
+        on_turn=reports.append,
+    ).build()
+    with pytest.raises(ValueError, match="tool down"):
+        await agent.ainvoke(Command(resume="yes"), PAUSED)
+    assert closed(reports) == [("aborted", "ValueError")]
+
+
+async def test_an_interrupt_in_the_model_call_closes_a_turn_rebuilt_there():
+    """The state cannot hold the turn of a model call that did not end: it is rebuilt again."""
+    reports: list[TurnReport] = []
+    seen = ScriptedOrbital(name="in")
+    model = ScriptedChatModel(script=[GraphInterrupt(()), "Open 9-18"])
+    agent = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=LangChainConnector(
+            model, tools=TOOLS, checkpointer=await paused_without_chatomon()
+        ),
+        input_orbitals=[seen],
+        on_turn=reports.append,
+    ).build()
+    await agent.ainvoke(Command(resume="yes"), PAUSED)
+    assert closed(reports) == [("aborted", "GraphInterrupt")]
+    state = await agent.ainvoke(Command(resume="go"), PAUSED)
+    assert state["messages"][-1].content == "Open 9-18"
+    assert closed(reports) == [("aborted", "GraphInterrupt"), ("answered", None)]
+    assert [ctx.message for ctx in seen.contexts] == ["hours?", "hours?"]
+
+
+async def test_an_empty_reply_closes_a_turn_rebuilt_in_the_model_call():
+    reports: list[TurnReport] = []
+    out = ScriptedOrbital(name="out")
+    agent = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=LangChainConnector(
+            ScriptedChatModel(script=[""]),
+            tools=TOOLS,
+            checkpointer=await paused_without_chatomon(),
+        ),
+        output_orbitals=[out],
+        on_turn=reports.append,
+    ).build()
+    state = await agent.ainvoke(Command(resume="yes"), PAUSED)
     assert state["messages"][-1].content == ""
     assert out.contexts == []
     assert closed(reports) == [("aborted", "RuntimeError")]
