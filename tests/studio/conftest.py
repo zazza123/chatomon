@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.studio import frameworks
+from tests.studio import frameworks, shots
 
 
 @pytest.fixture(params=frameworks.NAMES)
@@ -76,3 +76,25 @@ def sources(
 
     yield write
     _forget_modules_under(tmp_path)
+
+
+@pytest.fixture(params=shots.THEMES)
+def camera(request: pytest.FixtureRequest, new_context, tmp_path: Path) -> shots.Camera:
+    """A page of the size the documentation shows, once in each theme, and what shoots it.
+
+    The studio follows the theme of the browser until one is chosen, so the theme
+    is the browser's. Motion is reduced: a pose that moves gives a different image
+    at every run.
+    """
+    context = new_context(
+        viewport=shots.VIEWPORT,
+        device_scale_factor=shots.SCALE,
+        color_scheme=request.param,
+        reduced_motion="reduce",
+    )
+    return shots.Camera(
+        page=context.new_page(),
+        theme=request.param,
+        folder=shots.SHOTS if shots.writing() else tmp_path,
+        private=(str(Path.home()), str(tmp_path.resolve())),
+    )
