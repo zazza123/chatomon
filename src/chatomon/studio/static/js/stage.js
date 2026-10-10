@@ -69,6 +69,7 @@ export function createStage({ svgs, setCaption, onOrbital, onAtom, onFinished })
   const s = {
     pose: "rest", dash: {}, shield: null, blockSide: "input", busy: false, slow: true,
     inputs: [], outputs: [], kinds: {}, model: "", maxRetries: 2, lastInput: null, lastOutput: null,
+    rest: null,
   };
   const queue = [];
   let draining = false;
@@ -77,10 +78,15 @@ export function createStage({ svgs, setCaption, onOrbital, onAtom, onFinished })
   const step = () => wait(s.slow ? 420 : 0);
   const hold = (ms) => wait(s.slow ? ms : 0);
 
-  function render() {
+  /** The ring of orbitals as it is drawn: its radius, and the scale of the whole drawing. */
+  function ring() {
     const r = 66 + Math.max(0, Math.max(s.inputs.length, s.outputs.length) - 3) * 7;
+    return { r, scale: 0.84 + 0.04 * Math.min(s.inputs.length + s.outputs.length, 4) };
+  }
+
+  function render() {
+    const { r, scale } = ring();
     const d = (r - 66) * 0.75;
-    const scale = 0.84 + 0.04 * Math.min(s.inputs.length + s.outputs.length, 4);
     let svg = "";
     const draw = (list, side) => {
       if (s.shield === side) {
@@ -115,13 +121,16 @@ export function createStage({ svgs, setCaption, onOrbital, onAtom, onFinished })
     s.pose = "rest";
     s.shield = null;
     restDashes();
-    setCaption("Waiting for a message", `${plural(s.inputs.length, "input orbital")} → nucleus → ${plural(s.outputs.length, "output orbital")}`);
+    const [title, sub] = s.rest || ["Waiting for a message", `${plural(s.inputs.length, "input orbital")} → nucleus → ${plural(s.outputs.length, "output orbital")}`];
+    setCaption(title, sub);
     render();
     armIdle();
   }
 
   function armIdle() {
     clearTimeout(idleTimer);
+    // Something is keeping the atom at work: it does not doze.
+    if (s.rest) return;
     idleTimer = setTimeout(() => {
       if (!s.busy && s.pose === "rest") {
         s.pose = "idle";
@@ -279,6 +288,14 @@ export function createStage({ svgs, setCaption, onOrbital, onAtom, onFinished })
   return {
     push(ev) { queue.push(ev); if (!draining) drain(); },
     setSlow(value) { s.slow = value; },
+    ring,
+    busy: () => s.busy,
+    /** What the stage says while no turn runs, in place of its own words: `[title, sub]`, or
+        `null` for its own. With words of another the atom stays awake. */
+    setRest(caption) {
+      s.rest = caption;
+      if (!s.busy && (s.pose === "rest" || s.pose === "idle")) toRest();
+    },
     /** A turn started before this page was loaded: its events are gone, show that it runs. */
     showRunning() {
       clearTimeout(restTimer);

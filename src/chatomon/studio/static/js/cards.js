@@ -5,8 +5,20 @@ import { nucleusFailed, results } from "./turns.js";
 const dlg = $("#dlg");
 let onCloseHook = () => {};
 
-export function openDialog({ title, sub = "", extra = "", body, actions, size = "s", onClose = () => {} }) {
+export function openDialog({ title, sub = "", extra = "", lead = "", body, actions, size = "s", onClose = () => {} }) {
   onCloseHook = onClose;
+  // What a card shows beside its title, such as a drawing: its place is made when one asks for it.
+  let leadBox = $("#dlg-lead");
+  if (lead && !leadBox) {
+    leadBox = document.createElement("div");
+    leadBox.id = "dlg-lead";
+    leadBox.className = "dlg-lead";
+    $(".dlg-head", dlg).prepend(leadBox);
+  }
+  if (leadBox) {
+    leadBox.innerHTML = lead;
+    leadBox.hidden = !lead;
+  }
   $("#dlg-title").innerHTML = title;
   $("#dlg-sub").innerHTML = sub;
   $("#dlg-sub").hidden = !sub;

@@ -307,6 +307,7 @@ dialog::backdrop { background: rgba(18, 19, 25, .34); backdrop-filter: blur(7px)
 .dlg-head h2 .mono { font-family: var(--font-mono); font-weight: 500; font-size: 18px; letter-spacing: 0; }
 .dlg-sub { font-size: 12.5px; color: var(--fg-2); overflow-wrap: anywhere; }
 .dlg-extra { display: flex; align-items: center; gap: 6px; flex: none; }
+.dlg-lead { flex: none; }
 .dlg-body { display: grid; gap: 16px; padding: 16px 20px; overflow: auto; min-height: 0; align-content: start; }
 .dlg-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
 .dlg-actions .hint { flex: 1 1 0; min-width: 150px; }

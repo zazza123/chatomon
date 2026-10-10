@@ -13,6 +13,7 @@
   --cm-night: #121319;
   --cm-snow: #efeff3;
   --cm-amber: #f2a516;
+  --cm-mint: #7df7d6;
 }
 
 [data-md-color-scheme="default"] {
@@ -20,6 +21,7 @@
   --cm-allowed: #18794e;
   --cm-blocked: #c93434;
   --cm-warning: #c2410c;
+  --cm-mint-deep: #0a7560;
 
   --md-default-bg-color: var(--cm-paper);
   --md-default-fg-color: #1a1c26de;
@@ -33,6 +35,7 @@
   --cm-allowed: #4cc38a;
   --cm-blocked: #ff7070;
   --cm-warning: #ff8a5b;
+  --cm-mint-deep: #7df7d6;
 
   --md-hue: 231;
   --md-default-bg-color: var(--cm-night);

@@ -15,6 +15,7 @@ The studio is a local web page for trying an atom before it goes anywhere. You c
 - **Reload** — after a change to your code the atom is loaded again without a restart, and the session keeps your orbital changes and the conversation.
 - **Tests** — a turn, or the conversation up to it, saved as a pytest file that runs against the atom from your code. A reply that an output orbital stopped is repeated in the test, which checks what the orbital decides on it.
 - **Every framework** — an atom built with any of chatomon's connectors opens the same way.
+- **Evaluation at scale** — with the `spectral` add-on, the atom you are tuning answers an evaluation run on Spectral, and the studio counts what each orbital decided.
 
 ## Table of Contents
 
@@ -26,6 +27,7 @@ The studio is a local web page for trying an atom before it goes anywhere. You c
 | [Reloading the Code](reload.md) | What a reload keeps, what it drops, and what needs a restart |
 | [Saving a Turn as a Test](testing.md) | What a saved test checks, repeating the replies of the nucleus, offline and integration tests, where the file goes |
 | [Frameworks in the Studio](frameworks.md) | What changes with each connector: the conversation, the atom card, the notes at start |
+| [Evaluating with Spectral](spectral.md) | The Spectral add-on: connecting the atom to a target, what happens to a request, the counts, what leaves the machine |
 
 ## Installing and Starting
 
@@ -43,6 +45,8 @@ The command imports the module from the current directory, prints a link and ope
 | `--port` | `8016` | The port to listen on |
 | `--no-browser` | off | Print the link without opening it |
 | `--preset` | none | A preset file to apply to the atom before the page opens: see [Starting with a Preset](export.md#starting-with-a-preset) |
+
+The `spectral` extra adds the [Spectral add-on](spectral.md) and brings the studio with it: `pip install 'chatomon[spectral,pydantic-ai]'`.
 
 The default port is 8016 for oxygen-16, the most common oxygen atom: the "o" of chatomon is the letter the atom replaces in the wordmark.
 
@@ -72,13 +76,14 @@ Model calls are real. With a real model, a turn in the studio costs what a turn 
 
 ## Security
 
-The studio shows conversation text and calls models with your credentials, so it protects itself in six ways:
+The studio shows conversation text and calls models with your credentials, so it protects itself in seven ways:
 
 - It listens on `127.0.0.1`, which only your machine can reach.
 - The link it prints carries a key for this run. The page keeps it in a cookie; opened without it, the page asks for the link from the terminal. Treat the link like a password.
 - It answers only on its own address and accepts changes only from its own page, so other sites open in your browser cannot start turns or change orbitals.
 - Its pages run only the studio's own files and cannot be shown inside another page.
 - With `--host` and a network address it prints a warning: anyone who reaches that address with the link can read the conversation and use your models. There the page cannot say where an orbital connects: a connection is set in your code, or in a preset given when the studio starts, so the link gives no way to send a variable of that machine elsewhere. Addresses that listen everywhere, such as `0.0.0.0`, are refused.
+- With the Spectral add-on, it connects outwards to Spectral only when you ask, only when it listens on this machine, and with the key of a variable you name. The page says so for as long as the connection is open, and the terminal prints a line when it opens and when it closes: see [What Leaves Your Machine](spectral.md#what-leaves-your-machine).
 - A key never reaches the page, a preset or generated code. A connection names the environment variable that holds its key, and the orbital reads the value on the server. Since a preset can name a variable and an address, [apply only presets you trust](export.md#problems-and-notes).
 
 ## Limits of This Version
@@ -87,6 +92,7 @@ The studio shows conversation text and calls models with your credentials, so it
 - **Your own orbitals are read-only.** The studio edits the settings of chatomon's own orbitals. `@orbital` functions and orbital classes you wrote can be turned off and moved; their settings are changed in your code.
 - **Changes live in the session.** Stopping the studio discards them: copy the code first, or export a preset and [start the studio with it](export.md#starting-with-a-preset) the next time.
 - **Some changes need a restart.** [Reload from code](reload.md) loads your project again; installed packages, code outside the directory the command was started from, and a studio started with `serve()` need the command to be started again.
+- **An evaluation leaves counts, not conversations.** With the Spectral add-on the studio counts what the orbitals decided; the conversations and their verdicts are read on Spectral: see [Evaluating with Spectral](spectral.md#limits).
 - **What a turn can rely on depends on the framework.** Dependencies, runtime contexts, checkpointers, history providers and turns that wait for an answer are covered in [Frameworks in the Studio](frameworks.md); the command says what applies to your atom when it starts.
 
 ## Key Components
@@ -95,6 +101,7 @@ The studio shows conversation text and calls models with your credentials, so it
 |-----------|----------|---------|
 | `serve`, `DEFAULT_PORT` | `src/chatomon/studio/server.py` | Starts the studio for an atom |
 | `chatomon studio` | `src/chatomon/_cli.py` | The command: loads `module:attribute` and starts the studio |
+| The Spectral add-on | `src/chatomon/studio/_spectral/` | Connects the atom to Spectral and counts what the orbitals decide; loaded only with the `spectral` extra |
 
 ## Related Documentation
 

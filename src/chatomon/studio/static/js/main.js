@@ -163,6 +163,14 @@ function setBusy(value) {
 
 const LOCAL_NOTE = 'The studio runs your atom with capture_content="full": it shows message text, guidance and judge explanations.';
 
+// An add-on of the studio: its files are asked for only when the state has its entry.
+let spectral = null;
+async function syncAddOns(state) {
+  if (!state.studio.spectral) return;
+  if (!spectral) spectral = import("./spectral/index.js").then((addOn) => addOn.mount({ stage, toast }));
+  (await spectral).sync(state.studio.spectral);
+}
+
 function refresh(state) {
   ui.state = state;
   const local = state.studio.local !== false;
@@ -173,6 +181,7 @@ function refresh(state) {
   drawer.render(state);
   stage.setOrbitals(state.orbitals, state.atom);
   drawTurns();
+  syncAddOns(state).catch((error) => console.error("chatomon studio: an add-on did not load", error));
 }
 
 /** The studio stopped answering: free the page and say what to do. */

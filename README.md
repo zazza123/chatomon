@@ -18,6 +18,7 @@ pip install 'chatomon[maf-foundry]'   # FoundryChatClient and FoundryAgent
 pip install 'chatomon[adk]'           # Google ADK 2.10 or later
 pip install 'chatomon[principled]'    # Principled Intelligence ScopeGuard / ClaimExtractor orbitals
 pip install 'chatomon[studio,pydantic-ai]'  # the local studio: chatomon studio module:atom
+pip install 'chatomon[spectral,pydantic-ai]'  # the studio with its Spectral add-on: evaluation at scale
 ```
 
 Both MAF connectors support input and output orbitals on non-streaming runs. The [MAF guide](docs/public/connectors/maf.md) covers local Foundry sessions and connector configuration.
