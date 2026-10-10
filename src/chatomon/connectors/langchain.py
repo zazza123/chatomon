@@ -24,13 +24,19 @@ try:
 
     from langchain.agents import create_agent
     from langchain.agents.middleware import AgentMiddleware, AgentState, hook_config
-    from langchain.agents.middleware.types import ModelRequest, ModelResponse, PrivateStateAttr
+    from langchain.agents.middleware.types import (
+        ExtendedModelResponse,
+        ModelRequest,
+        ModelResponse,
+        PrivateStateAttr,
+    )
     from langchain.chat_models import init_chat_model
     from langchain_core.language_models import BaseChatModel
     from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
     from langgraph.config import get_config
     from langgraph.errors import GraphBubbleUp
     from langgraph.graph.state import CompiledStateGraph
+    from langgraph.types import Command
 except ImportError as exc:
     if importlib.util.find_spec("langchain") is None:
         raise MissingExtraError("langchain", "langchain") from exc
@@ -62,8 +68,6 @@ class _Turn:
     output_guidance: tuple[str, ...] = ()
     reply: str | None = None
     """Canned reply decided when a turn is rebuilt inside the model call."""
-    finish_in_wrap: bool = False
-    """Close the turn in the model call: no private state points at it."""
 
 
 def _text(content: object) -> str:
@@ -212,7 +216,9 @@ class _ChatomonMiddleware(AgentMiddleware[_ChatomonState]):
         )
         return current, request
 
-    async def _wrap(self, request: ModelRequest, call: ModelCall) -> ModelResponse:
+    async def _wrap(
+        self, request: ModelRequest, call: ModelCall
+    ) -> ModelResponse | ExtendedModelResponse:
         turn_id = request.state.get("chatomon_turn")
         current = self._turns.get(turn_id) if isinstance(turn_id, str) else None
         if current is None:
@@ -222,51 +228,18 @@ class _ChatomonMiddleware(AgentMiddleware[_ChatomonState]):
                 with self._parent():
                     await self._engine.finish_turn(current.turn)
                 return ModelResponse(result=[AIMessage(content=current.reply)])
-            current.finish_in_wrap = not isinstance(turn_id, str)
-            self._turns[turn_id if isinstance(turn_id, str) else current.turn.turn_id] = current
+        in_state = isinstance(turn_id, str)
         key = turn_id if isinstance(turn_id, str) else current.turn.turn_id
+        self._turns[key] = current
         try:
-            if current.turn.final_action is not None:
-                # The graph asks the model again after chatomon accepted a reply.
-                self._engine.reopen_output(current.turn)
-            response = await call(
-                _with_guidance(request, (*current.input_guidance, *current.output_guidance))
-            )
-            while True:
-                reply = _last_ai(response)
-                if reply is None:
-                    raise RuntimeError(_NO_AI_MESSAGE)
-                if reply.tool_calls:
-                    return response
-                text = _text(reply.content)
-                if not text:
-                    # Nothing to check: a turn that gets no other reply is closed as aborted.
-                    if current.finish_in_wrap:
-                        self._turns.pop(key, None)
-                        with self._parent():
-                            await self._engine.abort_turn(
-                                current.turn, RuntimeError(_NO_FINAL_REPLY)
-                            )
-                    return response
+            response = await self._checked(current, request, call)
+        except GraphBubbleUp as exc:
+            # An interrupt: the turn stays open and resumes with the graph, which finds
+            # it through the state. A turn the state does not point at would be lost.
+            if not in_state:
+                self._turns.pop(key, None)
                 with self._parent():
-                    outcome = await self._engine.run_output(
-                        current.turn, reply=text, history=current.history_out
-                    )
-                if outcome.kind == "regenerate":
-                    current.output_guidance = outcome.guidance
-                    response = await call(
-                        _with_guidance(request, (*current.input_guidance, *current.output_guidance))
-                    )
-                    continue
-                if current.finish_in_wrap:
-                    self._turns.pop(key, None)
-                    with self._parent():
-                        await self._engine.finish_turn(current.turn)
-                if outcome.kind == "accept":
-                    return response
-                return ModelResponse(result=[AIMessage(content=outcome.text or "", id=reply.id)])
-        except GraphBubbleUp:
-            # An interrupt: the turn stays open and resumes with the graph.
+                    await self._engine.abort_turn(current.turn, exc)
             raise
         except BaseException as exc:
             self._turns.pop(key, None)
@@ -274,6 +247,51 @@ class _ChatomonMiddleware(AgentMiddleware[_ChatomonState]):
                 with self._parent():
                     await self._engine.abort_turn(current.turn, exc)
             raise
+        if in_state:
+            return response
+        # Rebuilt with no turn in the state: the hooks that follow find it through this.
+        return ExtendedModelResponse(
+            model_response=response, command=Command(update={"chatomon_turn": key})
+        )
+
+    async def _checked(
+        self, current: _Turn, request: ModelRequest, call: ModelCall
+    ) -> ModelResponse:
+        """Call the model until the output chain decides on a reply.
+
+        Returns:
+            The response of the model, or the reply that takes its place. A response
+            that calls tools or has no text is returned as it is, unchecked.
+
+        Raises:
+            RuntimeError: If a model call returned no AI message.
+        """
+        if current.turn.final_action is not None:
+            # The graph asks the model again after chatomon accepted a reply.
+            self._engine.reopen_output(current.turn)
+        response = await call(
+            _with_guidance(request, (*current.input_guidance, *current.output_guidance))
+        )
+        while True:
+            reply = _last_ai(response)
+            if reply is None:
+                raise RuntimeError(_NO_AI_MESSAGE)
+            text = _text(reply.content)
+            if reply.tool_calls or not text:
+                # Not a reply to check. A turn that gets no other is closed as aborted.
+                return response
+            with self._parent():
+                outcome = await self._engine.run_output(
+                    current.turn, reply=text, history=current.history_out
+                )
+            if outcome.kind == "accept":
+                return response
+            if outcome.kind == "replace":
+                return ModelResponse(result=[AIMessage(content=outcome.text or "", id=reply.id)])
+            current.output_guidance = outcome.guidance
+            response = await call(
+                _with_guidance(request, (*current.input_guidance, *current.output_guidance))
+            )
 
     async def _abort_after_tool_error(self, state: Any, error: BaseException) -> None:
         turn_id = state.get("chatomon_turn") if isinstance(state, dict) else None
@@ -303,10 +321,14 @@ class _ChatomonMiddleware(AgentMiddleware[_ChatomonState]):
     def before_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         return run_sync(lambda: self._start(state))
 
-    async def awrap_model_call(self, request: ModelRequest, handler: Any) -> ModelResponse:
+    async def awrap_model_call(
+        self, request: ModelRequest, handler: Any
+    ) -> ModelResponse | ExtendedModelResponse:
         return await self._wrap(request, handler)
 
-    def wrap_model_call(self, request: ModelRequest, handler: Any) -> ModelResponse:
+    def wrap_model_call(
+        self, request: ModelRequest, handler: Any
+    ) -> ModelResponse | ExtendedModelResponse:
         async def call(model_request: ModelRequest) -> ModelResponse:
             # Blocking model calls run off the shared event loop.
             return await asyncio.to_thread(handler, model_request)
