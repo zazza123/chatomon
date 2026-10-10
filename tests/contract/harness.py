@@ -39,6 +39,8 @@ class Harness(ABC):
 
     name: str
     supports_sync: bool = True
+    empty_reply_error: type[Exception] | None = None
+    """What the framework raises when the nucleus keeps replying with no text."""
 
     @property
     @abstractmethod

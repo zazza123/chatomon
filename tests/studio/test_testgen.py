@@ -1675,15 +1675,18 @@ def test_a_turn_stopped_by_an_orbital_of_the_studio_alone_is_warned_about(projec
     ]
 
 
-def test_a_langchain_reply_with_no_text_is_repeated_as_an_empty_one(project, monkeypatch):
-    text = quiet("langchain").replace('else "Hi."', 'else ""')
+@pytest.mark.parametrize("name", list(PARTS))
+def test_a_turn_whose_nucleus_ends_with_no_text_cannot_be_saved(name, project):
+    text = quiet(name).replace('else "Hi."', 'else ""')
     session = project(module=text)
     say(session, "I am angry")
-    wrote = [(a.nucleus_reply, a.decision) for a in session.turns[0].report.output]
-    assert wrote == [("Damn right.", "regenerate"), ("", "accept")]
-    test = save(session)
-    assert replies_of(test.code) == ["Damn right.", ""]
-    run_saved(test, monkeypatch)
+    report = session.turns[0].report
+    assert report.final_action == "aborted"
+    # A reply with no text is not an attempt: the turn has only the one that was rejected.
+    wrote = [(a.nucleus_reply, a.decision) for a in report.output]
+    assert wrote == [("Damn right.", "regenerate")]
+    with pytest.raises(RefusedError, match="A turn that failed cannot be saved as a test"):
+        save(session)
 
 
 def test_long_names_of_output_orbitals_stay_within_88_columns(project, monkeypatch):

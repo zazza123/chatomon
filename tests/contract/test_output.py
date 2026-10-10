@@ -1,3 +1,5 @@
+import pytest
+
 from chatomon import TurnReport, Verdict
 from chatomon.connectors import render_guidance
 from chatomon.orbitals import JudgeOrbital
@@ -108,6 +110,38 @@ async def test_tool_call_steps_are_not_checked(harness):
     assert reports[0].final_action == "answered"
     # A step that calls a tool is not a reply: the turn has one attempt.
     assert [attempt.decision for attempt in reports[0].output] == ["accept"]
+
+
+async def ask_for_no_reply(harness, agent, message):
+    """Run a turn whose nucleus writes no text: an empty reply, or the framework's error."""
+    if harness.empty_reply_error is None:
+        assert await harness.ask(agent, message) == ""
+    else:
+        with pytest.raises(harness.empty_reply_error):
+            await harness.ask(agent, message)
+
+
+async def test_an_empty_reply_is_not_checked_and_the_turn_is_aborted(harness):
+    out = ScriptedOrbital(name="out")
+    # A framework that asks again before it gives up finds an empty reply once more.
+    agent, reports = build_agent(harness, ["", ""], output_orbitals=[out])
+    await ask_for_no_reply(harness, agent, "hello")
+    assert out.contexts == []
+    assert [report.final_action for report in reports] == ["aborted"]
+    assert reports[0].output == ()
+
+
+async def test_an_empty_reply_after_a_rejected_one_is_not_checked_either(harness):
+    judge = ScriptedOrbital(Verdict.block(guidance="Fix the hours."), name="judge")
+    agent, reports = build_agent(
+        harness, ["Open 24/7", "", ""], output_orbitals=[judge], capture_content="full"
+    )
+    await ask_for_no_reply(harness, agent, "hours?")
+    assert [ctx.message for ctx in judge.contexts] == ["Open 24/7"]
+    assert [report.final_action for report in reports] == ["aborted"]
+    # The reply that was rejected never reached the user, and nothing took its place.
+    assert attempts(reports[0]) == [("Open 24/7", "regenerate")]
+    assert ("assistant", "Open 24/7") not in harness.history(agent)
 
 
 async def test_guided_refusal_reply_goes_through_output_orbitals(harness):
