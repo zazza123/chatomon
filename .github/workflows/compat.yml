@@ -2,8 +2,13 @@ name: Compatibility
 
 # Once a week, the suite against the newest versions the declared ranges allow.
 # The frameworks chatomon plugs into release often; this finds a minor release
-# that breaks a connector before a user does. A failure is reported through
-# GitHub's usual workflow notification; no issue is opened automatically.
+# that breaks a connector before a user does.
+#
+# A failed scheduled run opens an issue, or adds a comment to the one it opened
+# before and is still open: a workflow notification alone was missed once, for
+# five days. The issue says which packages are newer than the lockfile and
+# which tests failed (scripts/compat_report.py, tested in tests/tooling/). A run
+# started by hand reports nothing: who started it is watching it.
 on:
   schedule:
     - cron: "23 5 * * 1"
@@ -17,6 +22,8 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+    env:
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -25,7 +32,60 @@ jobs:
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           python-version: "3.14"
-      # --upgrade ignores the pinned versions in uv.lock; --no-sync keeps
-      # `uv run` on the upgraded environment.
-      - run: uv sync --upgrade
-      - run: uv run --no-sync pytest
+      # The lockfile is upgraded in the runner only. What uv prints says which
+      # packages are newer than the committed ones; --no-sync keeps `uv run` on
+      # the upgraded environment.
+      - name: Upgrade every dependency
+        run: |
+          set -euo pipefail
+          uv lock --upgrade 2>&1 | tee upgraded.txt
+          uv sync
+      - name: Run the suite
+        run: |
+          set -euo pipefail
+          uv run --no-sync pytest 2>&1 | tee pytest.txt
+      - name: Write the report
+        if: ${{ failure() }}
+        run: python3 scripts/compat_report.py upgraded.txt pytest.txt > report.md
+      - uses: actions/upload-artifact@v7
+        if: ${{ failure() }}
+        with:
+          name: compat-report
+          path: report.md
+
+  report:
+    # This job holds the permission to write issues and runs no code of the
+    # repository or of its dependencies: it only posts what `newest` wrote.
+    needs: newest
+    if: ${{ always() && needs.newest.result != 'success' && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      TITLE: The weekly compatibility run failed
+    steps:
+      - uses: actions/download-artifact@v8
+        # A run that was stopped by its time limit wrote no report.
+        continue-on-error: true
+        with:
+          name: compat-report
+      - name: Open an issue, or add to the one that is open
+        run: |
+          set -euo pipefail
+          if [ ! -s report.md ]; then
+            echo "The weekly compatibility run ended without a report: $RUN_URL" > report.md
+          fi
+          open="$(
+            gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$TITLE\" in:title" \
+              --json number,title --jq '.[] | "\(.number)\t\(.title)"' |
+              awk -F'\t' -v title="$TITLE" '$2 == title { print $1; exit }'
+          )"
+          if [ -n "$open" ]; then
+            gh issue comment "$open" --repo "$GITHUB_REPOSITORY" --body-file report.md
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file report.md \
+              --label "type:fix" --label "status:needs-triage"
+          fi

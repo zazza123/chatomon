@@ -249,6 +249,28 @@ Linting, type checking, the test suite on every supported Python, a run
 against the oldest dependency versions `pyproject.toml` allows, and the
 documentation build run in CI too. All of them must be green before merging.
 
+### The weekly compatibility run
+
+Pull requests are tested on the versions in `uv.lock` and on the oldest ones
+`pyproject.toml` allows. Once a week a third run
+(`.github/workflows/compat.yml`) upgrades every dependency to the newest
+version the ranges allow and runs the suite. That is what a new installation
+gets, and the frameworks chatomon builds on release often.
+
+When the scheduled run fails it opens an issue titled **The weekly
+compatibility run failed**, or adds a comment to that issue while it is open.
+The issue lists the packages named in `pyproject.toml` that are newer than the
+lockfile, and the tests that failed. To deal with it:
+
+1. Reproduce the failure: `uv lock --upgrade-package <package>` for the
+   package the failed tests point to, then `uv run pytest`.
+2. Fix it in a pull request that also commits that change of `uv.lock`, as a
+   `DEP:` commit, so that CI runs on the version that broke.
+3. When the fault is the framework's and not chatomon's, say so in the issue
+   and narrow the range in `pyproject.toml` until it is fixed upstream.
+4. Close the issue, and start the run by hand to see it pass (**Actions →
+   Compatibility → Run workflow**). A run started by hand reports nothing.
+
 ### The template
 
 Fill in the pull request template. It is not paperwork: it is the record of
