@@ -401,8 +401,9 @@ CHATOMON_E2E=1 CHATOMON_SCREENSHOTS=1 uv run pytest \
   tests/studio/test_screenshots.py tests/studio/spectral/test_screenshots.py
 ```
 
-Add `-k <scene>` to run one scene. Without `CHATOMON_SCREENSHOTS=1` the images
-go to a temporary directory and `docs/public/assets/studio/` is left alone.
+Add `-k` and the name of a scene's test to run that scene alone: `-k orbital_card`
+for `orbital-card`. Without `CHATOMON_SCREENSHOTS=1` the images go to a temporary
+directory and `docs/public/assets/studio/` is left alone.
 
 - **What `git status` shows.** What changes at every run, such as a port or a
   duration, is made constant, so a scene whose screen did not change usually
