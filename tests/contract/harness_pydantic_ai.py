@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -33,6 +34,7 @@ def visible(messages: Sequence[ModelMessage]) -> list[tuple[str, str]]:
 
 class PydanticAIHarness(Harness):
     name = "pydantic_ai"
+    empty_reply_error = UnexpectedModelBehavior
 
     def __init__(self) -> None:
         self._calls: list[Call] = []

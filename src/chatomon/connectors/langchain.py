@@ -238,9 +238,19 @@ class _ChatomonMiddleware(AgentMiddleware[_ChatomonState]):
                     raise RuntimeError(_NO_AI_MESSAGE)
                 if reply.tool_calls:
                     return response
+                text = _text(reply.content)
+                if not text:
+                    # Nothing to check: a turn that gets no other reply is closed as aborted.
+                    if current.finish_in_wrap:
+                        self._turns.pop(key, None)
+                        with self._parent():
+                            await self._engine.abort_turn(
+                                current.turn, RuntimeError(_NO_FINAL_REPLY)
+                            )
+                    return response
                 with self._parent():
                     outcome = await self._engine.run_output(
-                        current.turn, reply=_text(reply.content), history=current.history_out
+                        current.turn, reply=text, history=current.history_out
                     )
                 if outcome.kind == "regenerate":
                     current.output_guidance = outcome.guidance

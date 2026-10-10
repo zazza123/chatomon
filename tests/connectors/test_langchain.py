@@ -4,14 +4,21 @@ import sys
 from typing import Any
 
 import pytest
+from langchain.agents import create_agent
+from langchain.agents.middleware import AgentMiddleware, hook_config
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import tool
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Command, interrupt
 
 import chatomon.connectors.langchain as langchain_connector
 from chatomon import Atom, ChatomonConfigError, MissingExtraError, TurnReport, Verdict
 from chatomon.connectors.langchain import LangChainConnector
 from chatomon.orbitals import JudgeDecision
+from chatomon.schemas import Message
 from tests.contract.harness_langchain import ScriptedChatModel
 from tests.fakes import ScriptedOrbital
 
@@ -80,6 +87,128 @@ async def test_sync_invoke_inside_a_running_loop():
     state = agent.invoke({"messages": [HumanMessage(content="hello")]})
     assert state["messages"][-1].content == "Hi!"
     assert reports[0].final_action == "answered"
+
+
+def closed(reports: list[TurnReport]) -> list[tuple[str, str | None]]:
+    return [(report.final_action, report.error_type) for report in reports]
+
+
+def test_an_empty_reply_closes_the_turn_as_aborted_with_the_sync_api():
+    reports: list[TurnReport] = []
+    out = ScriptedOrbital(name="out")
+    model = GenericFakeChatModel(messages=iter([AIMessage(content="")]))
+    agent = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=LangChainConnector(model),
+        output_orbitals=[out],
+        on_turn=reports.append,
+    ).build()
+    state = agent.invoke({"messages": [HumanMessage(content="hello")]})
+    assert state["messages"][-1].content == ""
+    assert out.contexts == []
+    assert closed(reports) == [("aborted", "RuntimeError")]
+
+
+async def test_a_reply_of_content_blocks_with_no_text_is_an_empty_reply():
+    reports: list[TurnReport] = []
+    out = ScriptedOrbital(name="out")
+    thought = AIMessage(content=[{"type": "reasoning", "reasoning": "Nothing to say."}])
+    agent = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=LangChainConnector(ScriptedChatModel(script=[thought])),
+        output_orbitals=[out],
+        on_turn=reports.append,
+    ).build()
+    await agent.ainvoke({"messages": [HumanMessage(content="hello")]})
+    assert out.contexts == []
+    assert closed(reports) == [("aborted", "RuntimeError")]
+
+
+async def test_the_turn_after_an_empty_reply_is_answered():
+    reports: list[TurnReport] = []
+    out = ScriptedOrbital(name="out")
+    model = ScriptedChatModel(script=["", "Back."])
+    agent = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=LangChainConnector(model, checkpointer=InMemorySaver()),
+        output_orbitals=[out],
+        on_turn=reports.append,
+    ).build()
+    config: RunnableConfig = {"configurable": {"thread_id": "t-empty"}}
+    await agent.ainvoke({"messages": [HumanMessage(content="hello")]}, config)
+    state = await agent.ainvoke({"messages": [HumanMessage(content="again")]}, config)
+    assert state["messages"][-1].content == "Back."
+    assert [report.final_action for report in reports] == ["aborted", "answered"]
+    # The empty reply is not a message of the conversation the orbitals are shown.
+    assert out.contexts[0].history == (
+        Message(role="user", content="hello"),
+        Message(role="user", content="again"),
+    )
+
+
+class _AskAgainWhenEmpty(AgentMiddleware):
+    """A middleware of the developer's that sends an empty reply back to the model."""
+
+    @hook_config(can_jump_to=["model"])
+    def after_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+        return None if state["messages"][-1].content else {"jump_to": "model"}
+
+
+async def test_a_reply_written_after_an_empty_one_in_the_same_turn_is_checked():
+    reports: list[TurnReport] = []
+    out = ScriptedOrbital(name="out")
+    model = ScriptedChatModel(script=["", "Hi!"])
+    agent = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=LangChainConnector(model, middleware=[_AskAgainWhenEmpty()]),
+        output_orbitals=[out],
+        on_turn=reports.append,
+        capture_content="full",
+    ).build()
+    state = await agent.ainvoke({"messages": [HumanMessage(content="hello")]})
+    assert state["messages"][-1].content == "Hi!"
+    # The empty reply left the turn open: it is one turn, with one attempt.
+    assert [report.final_action for report in reports] == ["answered"]
+    assert [(a.nucleus_reply, a.decision) for a in reports[0].output] == [("Hi!", "accept")]
+
+
+@tool
+def approve_hours() -> str:
+    """Ask a human to approve before looking up the opening hours."""
+    answer = interrupt("approve?")
+    return f"approved: {answer}"
+
+
+async def test_an_empty_reply_closes_a_turn_rebuilt_in_the_model_call():
+    """A thread paused by a graph without chatomon carries no turn for a later hook to close."""
+    checkpointer = InMemorySaver()
+    config: RunnableConfig = {"configurable": {"thread_id": "t-plain"}}
+    asking = AIMessage(content="", tool_calls=[{"name": "approve_hours", "args": {}, "id": "c1"}])
+    plain = create_agent(
+        ScriptedChatModel(script=[asking]), tools=[approve_hours], checkpointer=checkpointer
+    )
+    await plain.ainvoke({"messages": [HumanMessage(content="hours?")]}, config)
+
+    reports: list[TurnReport] = []
+    out = ScriptedOrbital(name="out")
+    connector = LangChainConnector(
+        ScriptedChatModel(script=[""]), tools=[approve_hours], checkpointer=checkpointer
+    )
+    agent = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=connector,
+        output_orbitals=[out],
+        on_turn=reports.append,
+    ).build()
+    state = await agent.ainvoke(Command(resume="yes"), config)
+    assert state["messages"][-1].content == ""
+    assert out.contexts == []
+    assert closed(reports) == [("aborted", "RuntimeError")]
 
 
 async def test_parent_span_resolver_nests_chatomon_spans(spans):

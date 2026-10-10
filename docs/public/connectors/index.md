@@ -75,6 +75,8 @@ A `JudgeOrbital` without its own connector calls its model through the atom's co
 
 If the model or the framework raises during a turn, the connector closes the turn with `Engine.abort_turn` — the report says `aborted` and records the exception type — and the exception propagates to your code. LangChain's tools and `interrupt()` are covered on [its page](langchain.md#failures-and-human-in-the-loop); cancelled and paused ADK runs on [the ADK page](adk.md#failures-cancellation-and-paused-runs).
 
+A turn whose nucleus ends with a reply that has no text is closed as `aborted` too. There is nothing to check, so the output orbitals do not run on it and the report has no attempt for it. LangChain, MAF and ADK raise nothing: your code receives the empty reply as the framework returned it, and the report records `RuntimeError` as the exception type. PydanticAI asks the model again and raises `UnexpectedModelBehavior` when its retries are over.
+
 ## Key Components
 
 | Component | Location | Purpose |
