@@ -1,6 +1,7 @@
 """The screenshots of the studio in the docs: named in both themes, all used, and light."""
 
 import re
+from pathlib import Path
 
 from tests.studio import shots
 
@@ -20,6 +21,11 @@ def named() -> dict[str, set[tuple[str, str]]]:
         if found:
             pages[path.relative_to(DOCS).as_posix()] = found
     return pages
+
+
+def kept() -> list[Path]:
+    """The files of the folder, but for the hidden ones a system leaves, such as `.DS_Store`."""
+    return sorted(path for path in shots.SHOTS.iterdir() if not path.name.startswith("."))
 
 
 def test_the_documentation_shows_screenshots():
@@ -56,13 +62,19 @@ def test_a_screenshot_is_shown_once_in_each_theme():
 
 def test_every_screenshot_is_named_by_a_page():
     used = {file for found in named().values() for file, _ in found}
-    kept = {path.name for path in shots.SHOTS.iterdir()}
-    assert kept - used == set()
+    assert {path.name for path in kept()} - used == set()
 
 
 def test_the_screenshots_are_light():
-    files = sorted(shots.SHOTS.iterdir())
+    files = kept()
     assert [path.name for path in files if path.suffix != ".webp"] == []
     heavy = {path.name: path.stat().st_size for path in files}
     assert {name: size for name, size in heavy.items() if size > shots.MAX_FILE_BYTES} == {}
     assert sum(heavy.values()) <= shots.MAX_FOLDER_BYTES
+
+
+def test_a_hidden_file_the_system_leaves_is_not_a_screenshot(tmp_path, monkeypatch):
+    (tmp_path / ".DS_Store").write_bytes(b"")
+    (tmp_path / "overview-light.webp").write_bytes(b"")
+    monkeypatch.setattr(shots, "SHOTS", tmp_path)
+    assert [path.name for path in kept()] == ["overview-light.webp"]
