@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from playwright.sync_api import Locator, Page
+from playwright.sync_api import FloatRect, Locator, Page
 
 Theme = Literal["light", "dark"]
 
@@ -31,10 +31,11 @@ ADDRESS = "127.0.0.1:8016"
 MAX_FILE_BYTES = 150_000
 MAX_FOLDER_BYTES = 1_000_000
 
-# What changes at every run is made constant, so that a scene whose screen did not
-# change writes the same file again. The address shows a port the system chose. A
-# duration is rounded to a tenth of a second, and one under 50 ms, which is how
-# long a check that calls nothing takes, is shown as 0.2 ms.
+# What changes at every run is made constant, so that an image changes only with its
+# screen, or by the few pixels Chromium draws differently from one run to the next.
+# The address shows a port the system chose. A duration is rounded to a tenth of a
+# second, and one under 50 ms, which is how long a check that calls nothing takes,
+# is shown as 0.2 ms.
 _STEADY = """
 ([address]) => {
   const shown = document.querySelector("#addr");
@@ -70,7 +71,19 @@ _SHOWN = """
   return [document.body.innerText, ...fields].join("\\n");
 }
 """
-_NO_CARET = "*, *::before, *::after { caret-color: transparent !important; }"
+# Chromium writes the WebP: a canvas is the one encoder that needs no dependency.
+_ENCODE = """
+async ([png, quality]) => {
+  const image = new Image();
+  image.src = `data:image/png;base64,${png}`;
+  await image.decode();
+  const canvas = document.createElement("canvas");
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  canvas.getContext("2d").drawImage(image, 0, 0);
+  return canvas.toDataURL("image/webp", quality / 100).split(",")[1];
+}
+"""
 
 
 def writing() -> bool:
@@ -112,7 +125,6 @@ class Camera:
         Returns:
             The file written.
         """
-        self.page.add_style_tag(content=_NO_CARET)
         self.page.evaluate("document.fonts.ready")
         self.page.evaluate(_STEADY, [ADDRESS])
         shown = self.page.evaluate(_SHOWN)
@@ -122,7 +134,7 @@ class Camera:
         )
         size = self.page.viewport_size
         assert size is not None
-        clip = {"x": 0, "y": 0, **size}
+        clip: FloatRect = {"x": 0, "y": 0, "width": size["width"], "height": size["height"]}
         if target is not None:
             box = target.bounding_box()
             assert box is not None, f"{scene}: the element to frame is not on the page"
@@ -130,13 +142,13 @@ class Camera:
             right = min(box["x"] + box["width"] + MARGIN, size["width"])
             bottom = min(box["y"] + box["height"] + MARGIN, size["height"])
             clip = {"x": left, "y": top, "width": right - left, "height": bottom - top}
-        session = self.page.context.new_cdp_session(self.page)
-        shot = session.send(
-            "Page.captureScreenshot",
-            {"format": "webp", "quality": QUALITY, "clip": {**clip, "scale": SCALE}},
-        )
-        session.detach()
-        image = base64.b64decode(shot["data"])
+        # Playwright's own screenshot is in the pixels of the device, which the page of
+        # the camera has `SCALE` of for each of its own, and it hides the text cursor.
+        png = self.page.screenshot(clip=clip, scale="device")
+        encoder = self.page.context.new_page()
+        webp = encoder.evaluate(_ENCODE, [base64.b64encode(png).decode(), QUALITY])
+        encoder.close()
+        image = base64.b64decode(webp)
         assert len(image) <= MAX_FILE_BYTES, (
             f"{scene}-{self.theme}.webp weighs {len(image)} bytes, over the {MAX_FILE_BYTES} "
             "an image of the documentation may weigh: frame less, or show less"

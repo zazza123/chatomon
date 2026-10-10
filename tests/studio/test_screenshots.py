@@ -79,6 +79,20 @@ def test_an_image_over_the_ceiling_is_refused(camera: Camera, tmp_path, monkeypa
     assert not (tmp_path / f"heavy-{camera.theme}.webp").exists()
 
 
+def test_an_image_has_the_scale_of_the_camera_and_the_page_keeps_it(
+    camera: Camera, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(camera, "folder", tmp_path)
+    camera.page.set_content("<h1>Opening hours</h1><p>Monday to Friday, 9 to 18.</p>")
+    image = camera.shoot("scale").read_bytes()
+    # Chromium writes the extended form of WebP, which holds each side, less one, in three bytes.
+    assert image[12:16] == b"VP8X"
+    width, height = (int.from_bytes(image[at : at + 3], "little") + 1 for at in (24, 27))
+    assert (width, height) == tuple(int(side * shots.SCALE) for side in shots.VIEWPORT.values())
+    # Taking the image must not undo the scale of the page: the next image has it too.
+    assert camera.page.evaluate("devicePixelRatio") == shots.SCALE
+
+
 @pytest.mark.parametrize(("value", "written"), [("1", True), ("0", False), (None, False)])
 def test_images_reach_the_documentation_only_when_asked(monkeypatch, value, written):
     monkeypatch.delenv("CHATOMON_SCREENSHOTS", raising=False)
