@@ -2,16 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from agent_framework import (
-    ChatMiddlewareLayer,
-    FunctionInvocationLayer,
-    Message,
-)
-from agent_framework.foundry import RawFoundryAgentChatClient
-from agent_framework.observability import ChatTelemetryLayer
+from agent_framework import ChatMiddlewareLayer
 
 from chatomon.connectors.base import Connector, ModelT
 from chatomon.connectors.maf._middleware import (
@@ -26,17 +20,6 @@ if TYPE_CHECKING:
 
     from chatomon.atom import Atom
     from chatomon.engine import Engine
-
-
-class _ChatomonFoundryChatClient(
-    FunctionInvocationLayer, ChatMiddlewareLayer, ChatTelemetryLayer, RawFoundryAgentChatClient
-):
-    """Keep developer messages in the request; MAF strips them by default."""
-
-    def _prepare_messages_for_azure_ai(
-        self, messages: Sequence[Message]
-    ) -> tuple[list[Message], str | None]:
-        return list(messages), None
 
 
 class MAFFoundryConnector(Connector["FoundryAgent"]):
@@ -124,6 +107,8 @@ class MAFFoundryConnector(Connector["FoundryAgent"]):
         _require_resolver(atom, self, self.resolve_client)
         try:
             from agent_framework.foundry import FoundryAgent as NativeFoundryAgent
+
+            from chatomon.connectors.maf._foundry_client import _ChatomonFoundryChatClient
         except ImportError as exc:
             raise MissingExtraError("maf-foundry", "agent-framework-foundry") from exc
         kwargs = dict(self.foundry_kwargs)

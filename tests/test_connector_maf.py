@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import importlib.util
+import subprocess
 import sys
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
@@ -490,6 +491,41 @@ def test_missing_core_is_reported_as_maf_extra(monkeypatch):
     )
     with pytest.raises(MissingExtraError, match="chatomon\\[maf\\]"):
         importlib.import_module("chatomon.connectors.maf")
+
+
+WITHOUT_FOUNDRY = """
+import importlib.abc
+import sys
+
+
+class NoFoundry(importlib.abc.MetaPathFinder):
+    def find_spec(self, name, path, target=None):
+        if name == "agent_framework_foundry" or name.startswith("agent_framework_foundry."):
+            raise ModuleNotFoundError(f"No module named {name!r}", name=name)
+        return None
+
+
+sys.meta_path.insert(0, NoFoundry())
+
+from chatomon import Atom, MissingExtraError
+from chatomon.connectors.maf import MAFConnector, MAFFoundryConnector
+
+connector = MAFFoundryConnector(project_endpoint="https://example.invalid", agent_name="agent")
+try:
+    Atom(name="test", instructions="Be useful.", connector=connector).build()
+except MissingExtraError as error:
+    print(MAFConnector.__name__, "imported;", error)
+"""
+
+
+def test_the_package_is_imported_with_the_core_extra_alone():
+    """What `chatomon[maf]` installs: a new interpreter, where the Foundry package is not found."""
+    result = subprocess.run(
+        [sys.executable, "-c", WITHOUT_FOUNDRY], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("MAFConnector imported;")
+    assert "chatomon[maf-foundry]" in result.stdout
 
 
 def test_missing_foundry_is_reported_as_foundry_extra(monkeypatch):
