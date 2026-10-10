@@ -40,6 +40,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
     env:
@@ -71,6 +72,7 @@ jobs:
   build:
     needs: ci
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     env:
@@ -100,6 +102,7 @@ jobs:
   pypi:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: pypi
       url: https://pypi.org/project/chatomon/
@@ -116,6 +119,7 @@ jobs:
     needs: pypi
     if: ${{ !github.event.release.prerelease }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}

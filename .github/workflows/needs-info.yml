@@ -17,6 +17,7 @@ permissions: {}
 jobs:
   close-silent:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       # actions/stale keeps its state in the Actions cache and deletes it.
       actions: write
