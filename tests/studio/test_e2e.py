@@ -1834,6 +1834,69 @@ def test_a_block_left_for_nowhere_is_applied_before_a_test_and_when_the_card_clo
     expect(shown(page).locator(".pill")).to_have_text("allow")
 
 
+def held_changes(page: Page) -> list:
+    """Hold every change of an orbital the page sends, until the test lets it go on."""
+    held: list = []
+    page.route("**/api/orbitals", lambda route: held.append(route))
+    return held
+
+
+def let_go(page: Page, held: list) -> None:
+    """Let the one change the page sent reach the server."""
+    for _ in range(500):
+        if held:
+            break
+        page.wait_for_timeout(10)
+    [route] = held
+    route.continue_()
+
+
+def test_a_card_opened_again_waits_for_the_block_its_closing_applied(page: Page, connected):
+    studio, service = connected
+    add_scope_guard(page, studio, service)
+    guard = block_of(page, "guard")
+    url = closed_url()
+    guard.get_by_label("api_url").fill(url)
+    leave_to_nowhere(page, guard)
+    held = held_changes(page)
+    card(page).get_by_role("button", name="Done").click()
+    expect(page.locator("dialog[open]")).to_have_count(0)
+    # The answer is late, as on a slow machine: the card is asked for before it arrives.
+    open_card(page, "scope_guard")
+    let_go(page, held)
+    # Drawn from what the server holds now, not from what the page held when it was asked.
+    expect(block_of(page, "guard").get_by_label("api_url")).to_have_value(url)
+
+
+def test_a_card_opened_again_waits_for_the_field_sent_as_it_closed(page: Page, tunable: Studio):
+    open_studio(page, tunable)
+    open_card(page, "message_length")
+    held = held_changes(page)
+    card(page).get_by_label("max_words").fill("7")
+    # Done right after typing: the change is sent as the card closes.
+    card(page).get_by_role("button", name="Done").click()
+    expect(page.locator("dialog[open]")).to_have_count(0)
+    open_card(page, "message_length")
+    let_go(page, held)
+    expect(card(page).get_by_label("max_words")).to_have_value("7")
+
+
+def test_of_two_cards_asked_for_while_a_change_is_on_its_way_the_last_is_drawn(
+    page: Page, tunable: Studio
+):
+    open_studio(page, tunable)
+    open_card(page, "message_length")
+    held = held_changes(page)
+    card(page).get_by_label("max_words").fill("7")
+    card(page).get_by_role("button", name="Done").click()
+    expect(page.locator("dialog[open]")).to_have_count(0)
+    open_card(page, "message_length")
+    open_card(page, "scope")
+    let_go(page, held)
+    expect(card(page).locator("#card-title")).to_have_text("scope")
+    expect(page.locator("dialog[open]")).to_have_count(1)
+
+
 def test_a_refused_block_keeps_its_refusal_when_the_card_is_drawn_again(page: Page, connected):
     studio, service = connected
     add_scope_guard(page, studio, service)
