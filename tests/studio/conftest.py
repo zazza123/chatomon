@@ -95,6 +95,6 @@ def camera(request: pytest.FixtureRequest, new_context, tmp_path: Path) -> shots
     return shots.Camera(
         page=context.new_page(),
         theme=request.param,
-        folder=shots.SHOTS if shots.writing() else tmp_path,
+        folder=shots.folder(tmp_path),
         private=(str(Path.home()), str(tmp_path.resolve())),
     )

@@ -93,12 +93,14 @@ def test_an_image_has_the_scale_of_the_camera_and_the_page_keeps_it(
     assert camera.page.evaluate("devicePixelRatio") == shots.SCALE
 
 
-@pytest.mark.parametrize(("value", "written"), [("1", True), ("0", False), (None, False)])
-def test_images_reach_the_documentation_only_when_asked(monkeypatch, value, written):
+@pytest.mark.parametrize(("value", "documentation"), [("1", True), ("0", False), (None, False)])
+def test_images_reach_the_documentation_only_when_asked(
+    tmp_path, monkeypatch, value, documentation
+):
     monkeypatch.delenv("CHATOMON_SCREENSHOTS", raising=False)
     if value is not None:
         monkeypatch.setenv("CHATOMON_SCREENSHOTS", value)
-    assert shots.writing() is written
+    assert shots.folder(tmp_path) == (shots.SHOTS if documentation else tmp_path)
 
 
 MODEL = "openai:gpt-5-mini"

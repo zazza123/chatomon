@@ -86,9 +86,16 @@ async ([png, quality]) => {
 """
 
 
-def writing() -> bool:
-    """Whether this run writes the images of the documentation."""
-    return os.environ.get("CHATOMON_SCREENSHOTS") == "1"
+def folder(temporary: Path) -> Path:
+    """Where this run writes its images: the documentation only when it was asked to.
+
+    Args:
+        temporary: The directory of a run that was not asked, which leaves `SHOTS` alone.
+
+    Returns:
+        `SHOTS` when `CHATOMON_SCREENSHOTS=1`, otherwise `temporary`.
+    """
+    return SHOTS if os.environ.get("CHATOMON_SCREENSHOTS") == "1" else temporary
 
 
 def reword(page: Page, text: str, shown: str) -> None:
