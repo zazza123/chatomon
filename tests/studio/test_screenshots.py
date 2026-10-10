@@ -112,6 +112,12 @@ REFUSAL = "I can only help with SpeedyPack parcels and deliveries."
 PROJECT = "/home/ada/speedypack"
 SCOPE_GUARD_URL = "https://scope-guard.speedypack.example"
 SCOPE_GUARD_KEY = "SCOPE_GUARD_API_KEY"
+# What a check and the nucleus take. A measured time is never shorter than its wait and
+# the camera rounds it to a tenth of a second: a wait just above the lower edge of a
+# tenth leaves the most room for a slow machine. A check is shown as 300 ms until it
+# takes 90 ms more than its wait, and a turn, two checks and the nucleus, as 1.3 s.
+CHECK_WAIT = 0.26
+NUCLEUS_WAIT = 0.74
 
 
 def _text(messages: list[ModelMessage]) -> str:
@@ -131,13 +137,13 @@ async def nucleus(messages: list[ModelMessage], info: AgentInfo) -> ModelRespons
     A blocked message does not reach the nucleus: what is not the question about
     Saturday is the request it is guided to refuse.
     """
-    await asyncio.sleep(0.66)
+    await asyncio.sleep(NUCLEUS_WAIT)
     return ModelResponse(parts=[TextPart(CLOSED if "Saturday" in _text(messages) else REFUSAL)])
 
 
 async def judge(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """Decide as the judges of the atom would: a request for a poem is out of scope."""
-    await asyncio.sleep(0.3)
+    await asyncio.sleep(CHECK_WAIT)
     reviewed = _text(messages).split("<text_under_review>")[-1]
     decision: dict[str, str] = {"action": "allow", "reason": "in scope"}
     if "poem" in reviewed:
@@ -234,7 +240,8 @@ def test_orbital_card(camera: Camera, studio: Studio):
     open_card(page, "message_length")
     words = card(page).get_by_label("max_words")
     words.fill("40")
-    words.press("Tab")
+    # Enter applies the value and leaves the focus on the field that changed.
+    words.press("Enter")
     expect(page.locator("#changes-text")).to_have_text("1 change vs code")
     camera.shoot("orbital-card", card(page))
 
@@ -244,7 +251,8 @@ def test_copy_as_code(camera: Camera, studio: Studio):
     open_card(page, "message_length")
     words = card(page).get_by_label("max_words")
     words.fill("40")
-    words.press("Tab")
+    # Enter applies the value and leaves the focus on the field that changed.
+    words.press("Enter")
     expect(page.locator("#changes-text")).to_have_text("1 change vs code")
     card(page).get_by_role("button", name="Done").click()
     page.get_by_role("button", name="Copy as code").click()
@@ -267,7 +275,7 @@ def test_save_as_test(camera: Camera, tmp_path, monkeypatch):
 def test_add_orbital(camera: Camera, studio: Studio, service: FakeService, monkeypatch):
     monkeypatch.setenv(SCOPE_GUARD_KEY, "a-key-that-never-reaches-the-page")
     service.key = "a-key-that-never-reaches-the-page"
-    service.delay = 0.3
+    service.delay = CHECK_WAIT
     page = opened(camera, studio)
     page.locator('#drawer [data-act="add"][data-side="input"]').click()
     card(page).get_by_role("button", name="ScopeGuardOrbital").click()
@@ -282,4 +290,15 @@ def test_add_orbital(camera: Camera, studio: Studio, service: FakeService, monke
     # The fake service listens on a port the system chose: the image shows an address
     # a reader could have.
     reword(page, service.url, SCOPE_GUARD_URL)
+    # The form is longer than a card can be. It is scrolled to where its first block
+    # begins: no line is cut in half, and the result of the test stays in view.
+    block_of(page, "guard").locator("legend").evaluate(
+        """legend => {
+          const body = legend.closest(".dlg-body");
+          const above = legend.getBoundingClientRect().top - body.getBoundingClientRect().top;
+          body.scrollTop += above - 6;
+        }"""
+    )
+    expect(block_of(page, "guard").locator("legend")).to_be_in_viewport(ratio=1)
+    expect(card(page).locator("p.hint")).to_be_in_viewport(ratio=1)
     camera.shoot("add-orbital", card(page))
