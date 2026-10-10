@@ -15,7 +15,7 @@ from chatomon.connectors import Connector
 from chatomon.connectors.adk import ADKConnector
 from chatomon.connectors.langchain import LangChainConnector
 from chatomon.connectors.maf import MAFConnector, MAFFoundryConnector
-from chatomon.connectors.maf._foundry import _ChatomonFoundryChatClient
+from chatomon.connectors.maf._foundry_client import _ChatomonFoundryChatClient
 from chatomon.connectors.pydantic_ai import PydanticAIConnector
 from chatomon.studio._runners import Runner
 from chatomon.studio._runners import adk as adk_runner

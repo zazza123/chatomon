@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from chatomon.connectors.maf import MAFConnector
-from chatomon.connectors.maf._foundry import _ChatomonFoundryChatClient
+from chatomon.connectors.maf._foundry_client import _ChatomonFoundryChatClient
 from chatomon.studio import _testgen as testgen
 from chatomon.studio._chains import RefusedError
 from chatomon.studio._loading import load, namespace
@@ -182,7 +182,7 @@ class FakeProject:
 
 
 # There is no Foundry here: the nucleus above is the transport of chatomon's Foundry client.
-from chatomon.connectors.maf._foundry import _ChatomonFoundryChatClient  # noqa: E402
+from chatomon.connectors.maf._foundry_client import _ChatomonFoundryChatClient  # noqa: E402
 
 _ChatomonFoundryChatClient._inner_get_response = Nucleus()._inner_get_response
 """,
