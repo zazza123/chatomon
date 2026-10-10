@@ -9,6 +9,10 @@ name: CI
 # `ci-success` is the only check to mark as required: it fails when any job
 # failed or was cancelled.
 #
+# Every job has a time limit a few times its usual duration, here and in the
+# other workflows: a step that hangs fails its job within minutes, where it
+# would hold the pull request until GitHub's own limit of six hours.
+#
 # Tool versions (ruff, pyright, …) come from uv.lock, so a new ruff release
 # cannot turn this red without a deliberate lockfile change.
 on:
@@ -27,6 +31,7 @@ concurrency:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
@@ -41,6 +46,7 @@ jobs:
 
   types:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
@@ -55,6 +61,7 @@ jobs:
   test:
     name: test (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     strategy:
@@ -75,6 +82,7 @@ jobs:
   lowest:
     name: test (oldest dependencies)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -94,6 +102,7 @@ jobs:
 
   docs:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
@@ -107,6 +116,7 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -129,6 +139,7 @@ jobs:
     if: always()
     needs: [lint, types, test, lowest, docs, e2e]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions: {}
     env:
       RESULTS: ${{ join(needs.*.result, ' ') }}

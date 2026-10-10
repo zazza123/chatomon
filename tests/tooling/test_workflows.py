@@ -60,6 +60,18 @@ def test_run_steps_never_interpolate_expressions(path):
         assert "${{" not in step.get("run", ""), f"{path.name}: pass values to run: through env:"
 
 
+@pytest.mark.parametrize("path", WORKFLOWS, ids=lambda path: path.name)
+def test_every_job_on_a_runner_has_a_time_limit(path):
+    # Without one a step that hangs holds its job until GitHub's limit of six hours.
+    for name, job in load(path)["jobs"].items():
+        if "uses" in job:
+            # A job that calls a workflow takes the limits of that workflow's jobs.
+            continue
+        limit = job.get("timeout-minutes")
+        assert isinstance(limit, int), f"{path.name}: give the job {name} timeout-minutes"
+        assert limit <= 30, f"{path.name}: {name} may hang for {limit} minutes"
+
+
 def test_dependabot_never_raises_the_declared_lower_bounds():
     # The floors in pyproject.toml were found by bisection and are checked by the
     # `lowest` CI job, which would keep passing on silently raised values.
