@@ -37,6 +37,11 @@ from chatomon.schemas import Message as OrbitalMessage
 if TYPE_CHECKING:
     from chatomon.engine import Engine, TurnState
 
+_REMOTE_CONVERSATION = (
+    "MAF returned a remote conversation_id despite store=False; "
+    "local session history cannot be guaranteed"
+)
+
 
 def _history(messages: Sequence[Message]) -> list[OrbitalMessage]:
     history: list[OrbitalMessage] = []
@@ -89,6 +94,12 @@ def _synthetic_stream(text: str) -> ResponseStream[ChatResponseUpdate, ChatRespo
         yield ChatResponseUpdate(role="assistant", contents=[Content.from_text(text)])
 
     return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
+
+
+def _refuse_remote(update: ChatResponseUpdate) -> ChatResponseUpdate:
+    if update.conversation_id is not None:
+        raise ChatomonConfigError(_REMOTE_CONVERSATION)
+    return update
 
 
 @dataclass
@@ -275,15 +286,16 @@ class _ChatomonChatMiddleware(ChatMiddleware):
                 context.messages = [Message("developer", [instruction_text]), *base_messages]
             await call_next()
             if context.stream:
+                # Refused here, before the agent reads the update: it writes the id it
+                # finds on the session, and writes it again when it closes a failed stream.
+                if isinstance(context.result, ResponseStream):
+                    context.result = context.result.with_transform_hook(_refuse_remote)
                 return
             response = context.result
             if not isinstance(response, ChatResponse):
                 raise RuntimeError("MAF did not return a chat response")
             if response.conversation_id is not None:
-                raise ChatomonConfigError(
-                    "MAF returned a remote conversation_id despite store=False; "
-                    "local session history cannot be guaranteed"
-                )
+                raise ChatomonConfigError(_REMOTE_CONVERSATION)
             if any(
                 content.type == "function_call"
                 for message in response.messages
