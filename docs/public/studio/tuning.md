@@ -20,6 +20,9 @@ chatomon's own orbitals are those of `chatomon.orbitals` and `chatomon.orbitals.
 
 Clicking an orbital opens its card, with one field per setting. A field is applied when you leave it or press ++enter++; a choice or a switch is applied at once. In a text field ++shift+enter++ starts a new line. The fingerprint at the bottom of the card changes with every accepted setting, and a field that differs from your code is marked as changed.
 
+![The card of a MessageLengthOrbital: one field per setting, with max_words marked as changed](../assets/studio/orbital-card-light.webp#only-light){ .cm-shot width="604" loading=lazy }
+![The card of a MessageLengthOrbital: one field per setting, with max_words marked as changed](../assets/studio/orbital-card-dark.webp#only-dark){ .cm-shot width="604" loading=lazy }
+
 A value the orbital does not accept is refused: the message appears under the field, which keeps what you typed, and the session stays as it was. If you close the card before the answer arrives, the message appears at the bottom of the page instead. The message is the orbital's own, the one its constructor raises in your code, for example `set max_words, max_chars or both`. When two settings depend on each other, change them in the order the message suggests: to lower `max_turns` below `warn_before`, lower `warn_before` first.
 
 Arguments that are objects are listed as **from code**, with the name of the variable that holds them when the studio finds it in the atom's module. Change them in your code.
@@ -66,6 +69,9 @@ An added orbital goes at the end of its chain, can be renamed from its card, and
 ## Testing a Connection
 
 The add form and the card of every orbital that calls a model have **Test connection**. It runs one check of that orbital on a sample message the studio writes, within the orbital's own `timeout`, and shows how it went. In the add form it tests the orbital as the form has it, before anything is added. In a card it tests the orbital as it is, also when it comes from your code or is off; a block that is edited and not applied is applied first.
+
+![The form that adds a ScopeGuardOrbital, after Test connection: the service answered allow in 300 ms](../assets/studio/add-orbital-light.webp#only-light){ .cm-shot width="604" loading=lazy }
+![The form that adds a ScopeGuardOrbital, after Test connection: the service answered allow in 300 ms](../assets/studio/add-orbital-dark.webp#only-dark){ .cm-shot width="604" loading=lazy }
 
 | Outcome | What it means |
 |---------|---------------|

@@ -107,6 +107,9 @@ A target on the **Chat Completions** protocol sends the whole conversation with 
 
 The card counts the requests of the connection. The counts start again when you connect and with **Reset the counts**, and they stay on the card after you disconnect.
 
+![The Spectral card of a connected atom: four requests, how the turns ended and what each orbital decided](../assets/studio/spectral-light.webp#only-light){ .cm-shot width="824" loading=lazy }
+![The Spectral card of a connected atom: four requests, how the turns ended and what each orbital decided](../assets/studio/spectral-dark.webp#only-dark){ .cm-shot width="824" loading=lazy }
+
 | Count | What it counts |
 |-------|----------------|
 | **requests** | The requests that reached a turn |

@@ -4,6 +4,9 @@
 
 A turn you tried in the studio can become a regression test. **Save as test**, in the report of a turn, writes a pytest file that sends the same messages to the atom from your code and checks that each turn ends the way it did in the studio. The test runs the real atom: the nucleus and the orbitals call their own models, so most saved tests need the credentials your application needs. A turn in which an output orbital stopped a reply is the exception: in its test the nucleus repeats what it wrote in the studio, so the test can check what the orbital decides on it.
 
+![The card that saves a turn as a test: what the test calls, the path of the file and the generated pytest code](../assets/studio/save-as-test-light.webp#only-light){ .cm-shot width="824" loading=lazy }
+![The card that saves a turn as a test: what the test calls, the path of the file and the generated pytest code](../assets/studio/save-as-test-dark.webp#only-dark){ .cm-shot width="824" loading=lazy }
+
 ## What a Test Checks
 
 A saved test builds the atom from your code, collects its turn reports and sends one message per turn, carrying the conversation from one turn to the next. This one holds two turns: the first was answered, the second was stopped by an orbital called `no_refunds`.

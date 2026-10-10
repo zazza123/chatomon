@@ -6,6 +6,9 @@
 ![](../assets/brand/mascot/animated/turn-dark.svg#only-dark){ .cm-page-mascot }
 The studio is a local web page for trying an atom before it goes anywhere. You chat with it, watch each orbital decide while the turn runs, tune the orbitals until they behave, and take the result back to your code. It is a development tool: the atom stays in your code, the studio never changes your code, and it is not meant to be deployed or to serve users.
 
+![The studio page: the atom drawer on the left, the atom on stage after a blocked message, and a conversation of two turns](../assets/studio/overview-light.webp#only-light){ .cm-shot width="1120" loading=lazy }
+![The studio page: the atom drawer on the left, the atom on stage after a blocked message, and a conversation of two turns](../assets/studio/overview-dark.webp#only-dark){ .cm-shot width="1120" loading=lazy }
+
 ## Key Features
 
 - **Live turns** — the atom on stage shows every orbital deciding, and each turn keeps its report.
