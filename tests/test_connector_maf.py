@@ -201,9 +201,11 @@ async def test_stream_rejects_a_provider_remote_session_id():
 
     client._inner_get_response = remote_stream
     session = agent.create_session()
-    with pytest.raises(ChatomonConfigError, match="service_session_id"):
+    with pytest.raises(ChatomonConfigError, match="remote conversation_id"):
         await agent.run("hello", session=session, stream=True).get_final_response()
+    # Refused before the agent read the update: MAF wrote neither the id nor the draft.
     assert session.service_session_id is None
+    assert session.state.get("in_memory", {}).get("messages", []) == []
     assert reports[0].final_action == "aborted"
 
 
