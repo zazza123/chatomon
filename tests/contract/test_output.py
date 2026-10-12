@@ -17,6 +17,36 @@ async def test_output_respond_replaces_the_reply(harness):
     assert reports[0].final_action == "orbital_response"
 
 
+@pytest.mark.parametrize("fallback", [False, True])
+async def test_repeated_output_replacements_keep_every_message(harness, fallback):
+    observer = ScriptedOrbital(name="observer")
+    out = ScriptedOrbital(
+        Verdict.block(guidance="Rewrite.") if fallback else Verdict.respond("Fixed reply."),
+        name="out",
+    )
+    agent, reports = build_agent(
+        harness,
+        ["Rejected draft."] * 3,
+        input_orbitals=[observer],
+        output_orbitals=[out],
+        max_retries=0,
+        refusal="Fixed reply.",
+    )
+    pair = [("user", "yes"), ("assistant", "Fixed reply.")]
+    for turn in range(3):
+        assert await harness.ask(agent, "yes") == "Fixed reply."
+        assert [(m.role, m.content) for m in observer.contexts[turn].history] == pair * turn
+        assert [(m.role, m.content) for m in out.contexts[turn].history] == [
+            *pair * turn,
+            ("user", "yes"),
+        ]
+        assert harness.history(agent) == pair * (turn + 1)
+    assert len(harness.calls) == 3
+    assert [report.final_action for report in reports] == [
+        "fallback_refusal" if fallback else "orbital_response"
+    ] * 3
+
+
 async def test_regeneration_accumulates_guidance_and_keeps_only_the_final_reply(harness):
     judge = ScriptedOrbital(
         Verdict.block(guidance="Fix the hours."),

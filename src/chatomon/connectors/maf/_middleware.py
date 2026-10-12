@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from copy import copy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
+from uuid import uuid4
 
 from agent_framework import (
     Agent,
@@ -82,7 +84,7 @@ def _with_guidance(options: Mapping[str, Any], guidance: Sequence[str]) -> dict[
 
 def _synthetic_response(text: str, source: ChatResponse | None = None) -> ChatResponse:
     return ChatResponse(
-        messages=[Message("assistant", [text])],
+        messages=[Message("assistant", [text], message_id=uuid4().hex)],
         model=source.model if source is not None else None,
         usage_details=source.usage_details if source is not None else None,
         finish_reason="stop",
@@ -91,7 +93,9 @@ def _synthetic_response(text: str, source: ChatResponse | None = None) -> ChatRe
 
 def _synthetic_stream(text: str) -> ResponseStream[ChatResponseUpdate, ChatResponse]:
     async def updates():
-        yield ChatResponseUpdate(role="assistant", contents=[Content.from_text(text)])
+        yield ChatResponseUpdate(
+            role="assistant", contents=[Content.from_text(text)], message_id=uuid4().hex
+        )
 
     return ResponseStream(updates(), finalizer=ChatResponse.from_updates)
 
@@ -100,6 +104,52 @@ def _refuse_remote(update: ChatResponseUpdate) -> ChatResponseUpdate:
     if update.conversation_id is not None:
         raise ChatomonConfigError(_REMOTE_CONVERSATION)
     return update
+
+
+def _with_message_id(message: Message) -> Message:
+    if message.message_id is not None:
+        return message
+    identified = copy(message)
+    identified.message_id = uuid4().hex
+    return identified
+
+
+def _identify_stream(
+    stream: ResponseStream[AgentResponseUpdate, AgentResponse],
+) -> ResponseStream[AgentResponseUpdate, AgentResponse]:
+    role = "assistant"
+    message_id: str | None = None
+    provider_id: str | None = None
+    chunks: list[AgentResponseUpdate] = []
+
+    def identify(update: AgentResponseUpdate) -> AgentResponseUpdate:
+        nonlocal role, message_id, provider_id
+        new_message = (update.role and update.role != role) or (
+            update.message_id and provider_id is not None and update.message_id != provider_id
+        )
+        if new_message:
+            chunks.clear()
+            message_id = None
+            provider_id = None
+        role = update.role or role
+        if update.message_id:
+            provider_id = update.message_id
+            message_id = provider_id
+            # A provider can name a message after its first chunk. Update the
+            # recorded agent chunks too, so finalization keeps that message whole.
+            for chunk in chunks:
+                chunk.message_id = message_id
+            chunks.clear()
+        elif message_id is None:
+            message_id = uuid4().hex
+        update.message_id = message_id
+        if provider_id is None:
+            chunks.append(update)
+        return update
+
+    # Agent updates are what MAF finalizes and persists. Naming them here keeps
+    # the provider's own stream assembly unchanged, including late message IDs.
+    return stream.with_transform_hook(identify)
 
 
 @dataclass
@@ -200,6 +250,8 @@ class _ChatomonAgentMiddleware(AgentMiddleware):
             ),
             None,
         )
+        if index is not None:
+            context.messages[index] = _with_message_id(context.messages[index])
         message = context.messages[index].text if index is not None else ""
         history = [*await _stored_history(context), *_history(context.messages[:index])]
         turn = self._engine.start_turn(
@@ -226,7 +278,7 @@ class _ChatomonAgentMiddleware(AgentMiddleware):
                 if not isinstance(context.result, ResponseStream):
                     raise RuntimeError("MAF did not return a response stream")
                 context.result = _AuditedStream(
-                    context.result, self._engine, current, context.session
+                    _identify_stream(context.result), self._engine, current, context.session
                 )
                 return
             if context.session is not None and context.session.service_session_id is not None:
@@ -296,6 +348,7 @@ class _ChatomonChatMiddleware(ChatMiddleware):
                 raise RuntimeError("MAF did not return a chat response")
             if response.conversation_id is not None:
                 raise ChatomonConfigError(_REMOTE_CONVERSATION)
+            response.messages = [_with_message_id(message) for message in response.messages]
             if any(
                 content.type == "function_call"
                 for message in response.messages

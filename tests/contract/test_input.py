@@ -1,5 +1,10 @@
+import json
+
+import pytest
+
 from chatomon import Verdict
 from chatomon.connectors import render_guidance
+from chatomon.orbitals import TurnLimitOrbital
 from chatomon.schemas import DEFAULT_BLOCKED_GUIDANCE, Message
 from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER as PLACEHOLDER
 from tests.contract.harness import INSTRUCTIONS, build_agent
@@ -69,3 +74,63 @@ async def test_blocked_message_stays_redacted_in_the_next_turn(harness):
     assert Message(role="user", content=PLACEHOLDER) in guard.contexts[1].history
     assert all("secret injection" not in content for _, content in harness.calls[0].messages)
     assert reports[0].conversation_id == reports[1].conversation_id
+
+
+@pytest.mark.parametrize(
+    ("verdict", "user_text", "reply", "action", "model_calls"),
+    [
+        (Verdict.allow(), "yes", "Same reply.", "answered", 3),
+        (Verdict.block("No."), PLACEHOLDER, "No.", "blocked", 0),
+        (Verdict.respond("Fixed reply."), "yes", "Fixed reply.", "orbital_response", 0),
+        (
+            Verdict.block(guidance="Decline."),
+            PLACEHOLDER,
+            "Same reply.",
+            "guided_refusal",
+            3,
+        ),
+    ],
+)
+async def test_repeated_turns_keep_every_message(
+    harness, verdict, user_text, reply, action, model_calls
+):
+    guard = ScriptedOrbital(verdict, name="guard")
+    agent, reports = build_agent(harness, [reply] * model_calls, input_orbitals=[guard])
+    pair = [("user", user_text), ("assistant", reply)]
+    for turn in range(3):
+        assert await harness.ask(agent, "yes") == reply
+        assert [(m.role, m.content) for m in guard.contexts[turn].history] == pair * turn
+        assert harness.history(agent) == pair * (turn + 1)
+    assert len(harness.calls) == model_calls
+    assert [report.final_action for report in reports] == [action] * 3
+
+
+@pytest.mark.parametrize("blocked", [False, True])
+async def test_turn_limit_counts_repeated_and_blocked_messages(harness, blocked):
+    limit = TurnLimitOrbital(max_turns=3, reply="Start a new chat.")
+    guard = ScriptedOrbital(Verdict.block("No.") if blocked else Verdict.allow(), name="guard")
+    agent, reports = build_agent(
+        harness,
+        [] if blocked else ["Same reply."] * 5,
+        input_orbitals=[limit, guard],
+        capture_content="full",
+    )
+    replies = [await harness.ask(agent, "yes") for _ in range(5)]
+    turns = []
+    for report in reports:
+        assert report.input[0].annotations is not None
+        turns.append(json.loads(report.input[0].annotations)["turn"])
+    assert turns == [1, 2, 3, 4, 5]
+    assert replies == (["No."] if blocked else ["Same reply."]) * 3 + ["Start a new chat."] * 2
+    assert len(harness.calls) == (0 if blocked else 3)
+    assert [report.final_action for report in reports] == (
+        ["blocked"] if blocked else ["answered"]
+    ) * 3 + ["orbital_response"] * 2
+    assert harness.history(agent) == [
+        item
+        for turn, reply in enumerate(replies)
+        for item in [
+            ("user", PLACEHOLDER if blocked and turn < 3 else "yes"),
+            ("assistant", reply),
+        ]
+    ]
