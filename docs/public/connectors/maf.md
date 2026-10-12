@@ -115,6 +115,8 @@ asyncio.run(main())
 
 The outer `AgentMiddleware` reads the local session history, runs input orbitals, and replaces a blocked user message with the atom's placeholder before other agent hooks or model calls. `ChatMiddleware` adds guidance to the current request, checks final text replies, and substitutes or regenerates rejected drafts before MAF writes the reply to local history. Intermediate tool calls are passed through until a final text reply exists. The connector adds `InMemoryHistoryProvider` when no loading history provider is supplied.
 
+Both connectors retain repeated user messages, placeholders and replies, including streamed replies, so orbitals count each turn even when its text repeats an earlier one. Messages without a `message_id` receive one; IDs supplied by the application or provider are preserved. When creating MAF `Message` objects yourself, use distinct IDs for distinct messages, or leave the ID unset.
+
 ```mermaid
 flowchart LR
     A[Agent.run with local AgentSession] --> B[AgentMiddleware: input checks and redaction]
