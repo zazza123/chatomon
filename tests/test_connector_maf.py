@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import importlib.util
+import json
 import subprocess
 import sys
 from collections.abc import Awaitable, Callable
@@ -26,8 +27,9 @@ from agent_framework import (
 from agent_framework.foundry import FoundryAgent, FoundryChatClient, RawFoundryAgentChatClient
 
 from chatomon import Atom, ChatomonConfigError, MissingExtraError, TurnReport, Verdict
+from chatomon.connectors import Connector
 from chatomon.connectors.maf import MAFConnector, MAFFoundryConnector
-from chatomon.orbitals import JudgeOrbital
+from chatomon.orbitals import JudgeOrbital, TurnLimitOrbital
 from chatomon.schemas import DEFAULT_BLOCKED_PLACEHOLDER, CaptureContent
 from tests.contract.harness import Call
 from tests.contract.harness_maf import FakeProjectClient, ScriptedMAFClient, visible
@@ -363,6 +365,255 @@ class _CaptureChatRequest(ChatMiddleware):
 
 def replace_transport(client: Any, scripted: ScriptedMAFClient) -> None:
     client._inner_get_response = scripted._inner_get_response
+
+
+@pytest.fixture(params=["core", "foundry"])
+def history_agent(request):
+    def build(script, **kwargs):
+        client = ScriptedMAFClient(script, [])
+        connector: Connector[Any]
+        if request.param == "core":
+            connector = MAFConnector(client)
+        else:
+            connector = MAFFoundryConnector(
+                project_client=FakeProjectClient(), agent_name="remote-agent", agent_version="1"
+            )
+        reports = []
+        agent = Atom[Any](
+            name="test",
+            instructions="Be useful.",
+            connector=connector,
+            on_turn=reports.append,
+            **kwargs,
+        ).build()
+        if request.param == "foundry":
+            replace_transport(agent.client, client)
+        return agent, client, reports
+
+    return build
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("blocked", [False, True])
+async def test_repeated_messages_reach_the_turn_limit(history_agent, stream, blocked):
+    limit = TurnLimitOrbital(max_turns=3, reply="Start a new chat.")
+    guard = ScriptedOrbital(Verdict.block("No.") if blocked else Verdict.allow())
+    agent, client, reports = history_agent(
+        ["Same reply."] * 5,
+        input_orbitals=[limit, guard],
+        capture_content="full",
+    )
+    session = agent.create_session()
+    replies = []
+    for _ in range(5):
+        if stream:
+            response = await agent.run("yes", session=session, stream=True).get_final_response()
+        else:
+            response = await agent.run("yes", session=session)
+        replies.append(response.text)
+    turns = []
+    for report in reports:
+        assert report.input[0].annotations is not None
+        turns.append(json.loads(report.input[0].annotations)["turn"])
+    assert turns == [1, 2, 3, 4, 5]
+    assert replies == (["No."] if blocked else ["Same reply."]) * 3 + ["Start a new chat."] * 2
+    assert len(client.recorder) == (0 if blocked else 3)
+    stored = session.state["in_memory"]["messages"]
+    assert visible(stored) == [
+        item
+        for turn, reply in enumerate(replies)
+        for item in [
+            ("user", DEFAULT_BLOCKED_PLACEHOLDER if blocked and turn < 3 else "yes"),
+            ("assistant", reply),
+        ]
+    ]
+    assert all(message.message_id is not None for message in stored)
+    assert len({message.message_id for message in stored}) == 10
+
+
+@pytest.mark.parametrize("blocked", [False, True])
+async def test_reused_input_without_id_is_a_new_message(history_agent, blocked):
+    guard = ScriptedOrbital(Verdict.block("No.") if blocked else Verdict.allow())
+    agent, _, _ = history_agent(["Same reply."] * 3, input_orbitals=[guard])
+    session = agent.create_session()
+    original = Message(
+        "user",
+        [Content.from_text("yes")],
+        author_name="developer",
+        additional_properties={"source": "application"},
+        raw_representation=object(),
+    )
+    for _ in range(3):
+        await agent.run(original, session=session)
+    assert original.message_id is None
+    assert original.text == "yes"
+    stored = session.state["in_memory"]["messages"]
+    assert len(stored) == 6
+    assert len({message.message_id for message in stored}) == 6
+    if not blocked:
+        assert stored[0].author_name == original.author_name
+        assert stored[0].additional_properties == original.additional_properties
+        assert stored[0].raw_representation is original.raw_representation
+
+
+@pytest.mark.parametrize("blocked", [False, True])
+async def test_input_ids_are_preserved_including_placeholders(history_agent, blocked):
+    guard = ScriptedOrbital(Verdict.block("No.") if blocked else Verdict.allow())
+    agent, _, _ = history_agent(["Same reply."] * 3, input_orbitals=[guard])
+    session = agent.create_session()
+    for message_id in ["user-1", "user-2"]:
+        await agent.run(Message("user", ["yes"], message_id=message_id), session=session)
+    stored = session.state["in_memory"]["messages"]
+    assert [message.message_id for message in stored if message.role == "user"] == [
+        "user-1",
+        "user-2",
+    ]
+    assert [message.text for message in stored if message.role == "user"] == [
+        DEFAULT_BLOCKED_PLACEHOLDER if blocked else "yes"
+    ] * 2
+
+
+async def test_identifying_current_input_preserves_replayed_history(history_agent):
+    agent, _, _ = history_agent(["Same reply."] * 2)
+    session = agent.create_session()
+    await agent.run(Message("user", ["yes"], message_id="user-1"), session=session)
+    previous = list(session.state["in_memory"]["messages"])
+    previous_ids = [message.message_id for message in previous]
+    current = Message("user", ["yes"])
+    await agent.run([*previous, current], session=session)
+    stored = session.state["in_memory"]["messages"]
+    assert visible(stored) == [("user", "yes"), ("assistant", "Same reply.")] * 2
+    assert [message.message_id for message in previous] == previous_ids
+    assert [message.message_id for message in stored[:2]] == previous_ids
+    assert current.message_id is None
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+async def test_repeated_output_replacements_are_stored(history_agent, fallback):
+    observer = ScriptedOrbital(name="observer")
+    out = ScriptedOrbital(
+        Verdict.block(guidance="Rewrite.") if fallback else Verdict.respond("Fixed reply."),
+        name="out",
+    )
+    agent, _, reports = history_agent(
+        ["Rejected draft."] * 3,
+        input_orbitals=[observer],
+        output_orbitals=[out],
+        max_retries=0,
+        refusal="Fixed reply.",
+    )
+    session = agent.create_session()
+    pair = [("user", "yes"), ("assistant", "Fixed reply.")]
+    for turn in range(3):
+        assert (await agent.run("yes", session=session)).text == "Fixed reply."
+        assert [(m.role, m.content) for m in observer.contexts[turn].history] == pair * turn
+    stored = session.state["in_memory"]["messages"]
+    assert visible(stored) == pair * 3
+    assert len({message.message_id for message in stored}) == 6
+    assert [report.final_action for report in reports] == [
+        "fallback_refusal" if fallback else "orbital_response"
+    ] * 3
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_provider_message_ids_are_preserved(history_agent, stream):
+    agent, client, _ = history_agent([])
+    message_ids = iter(["provider-1", "provider-2"])
+
+    def response(**kwargs):
+        message_id = next(message_ids)
+        if kwargs["stream"]:
+
+            async def updates():
+                yield ChatResponseUpdate(
+                    role="assistant",
+                    contents=[Content.from_text("Same reply.")],
+                    message_id=message_id,
+                )
+
+            return client._build_response_stream(updates())
+
+        async def reply():
+            return ChatResponse(
+                messages=[Message("assistant", ["Same reply."], message_id=message_id)]
+            )
+
+        return reply()
+
+    client._inner_get_response = response
+    replace_transport(agent.client, client)
+    session = agent.create_session()
+    for _ in range(2):
+        if stream:
+            await agent.run("yes", session=session, stream=True).get_final_response()
+        else:
+            await agent.run("yes", session=session)
+    stored = session.state["in_memory"]["messages"]
+    assert [message.message_id for message in stored if message.role == "assistant"] == [
+        "provider-1",
+        "provider-2",
+    ]
+
+
+async def test_stream_chunks_share_ids_and_preserve_message_boundaries(history_agent):
+    guard = ScriptedOrbital()
+    agent, client, _ = history_agent([], input_orbitals=[guard])
+
+    def stream_response(**kwargs):
+        async def updates():
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("Hello ")])
+            yield ChatResponseUpdate(contents=[Content.from_text("world")])
+            yield ChatResponseUpdate(role="tool", contents=[Content.from_text("result")])
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("Hello ")])
+            yield ChatResponseUpdate(contents=[Content.from_text("world")])
+
+        return client._build_response_stream(updates())
+
+    client._inner_get_response = stream_response
+    replace_transport(agent.client, client)
+    session = agent.create_session()
+    for turn in range(2):
+        stream = agent.run("yes", session=session, stream=True)
+        updates = [update async for update in stream]
+        response = await stream.get_final_response()
+        ids = [update.message_id for update in updates]
+        assert all(ids)
+        assert ids[0] == ids[1]
+        assert ids[3] == ids[4]
+        assert len(set(ids)) == 3
+        assert [message.message_id for message in response.messages] == [ids[0], ids[2], ids[3]]
+        stored = session.state["in_memory"]["messages"]
+        assert visible(stored) == [
+            ("user", "yes"),
+            ("assistant", "Hello world"),
+            ("assistant", "Hello world"),
+        ] * (turn + 1)
+        assert len({message.message_id for message in stored}) == 4 * (turn + 1)
+
+
+async def test_stream_preserves_explicit_ids_and_late_ids(history_agent):
+    agent, client, _ = history_agent([])
+
+    def stream_response(**kwargs):
+        async def updates():
+            yield ChatResponseUpdate(role="assistant", contents=[Content.from_text("Hello ")])
+            yield ChatResponseUpdate(contents=[Content.from_text("world")], message_id="provider-1")
+            yield ChatResponseUpdate(
+                role="assistant", contents=[Content.from_text("Hello ")], message_id="provider-2"
+            )
+            yield ChatResponseUpdate(contents=[Content.from_text("world")])
+
+        return client._build_response_stream(updates())
+
+    client._inner_get_response = stream_response
+    replace_transport(agent.client, client)
+    session = agent.create_session()
+    stream = agent.run("yes", session=session, stream=True)
+    updates = [update async for update in stream]
+    response = await stream.get_final_response()
+    assert [message.message_id for message in response.messages] == ["provider-1", "provider-2"]
+    assert [message.text for message in response.messages] == ["Hello world", "Hello world"]
+    assert updates[2].message_id == updates[3].message_id == "provider-2"
 
 
 async def test_foundry_chat_client_uses_the_core_agent_path_without_network():
