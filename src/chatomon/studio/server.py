@@ -5,7 +5,6 @@ from __future__ import annotations
 import errno
 import os
 import socket
-import sys
 import threading
 import webbrowser
 from collections.abc import Callable, Mapping
@@ -17,6 +16,7 @@ import uvicorn
 from chatomon.atom import Atom
 from chatomon.errors import ChatomonConfigError
 from chatomon.studio._app import create_app
+from chatomon.studio._console import Console, Start, plain
 from chatomon.studio._loading import resolve
 from chatomon.studio._presets import InvalidPresetError
 from chatomon.studio._security import LOOPBACK, is_bind_all, new_token
@@ -44,8 +44,10 @@ def serve(
     """Open the studio for an atom and block until interrupted.
 
     The studio runs a copy of the atom with `capture_content="full"` and its
-    own turn callback and tracer; the atom you pass is not changed. It prints
-    the link of this run, which carries its access token, to stderr.
+    own turn callback and tracer; the atom you pass is not changed. It writes
+    to stderr the chatomon wordmark, the atom and its chains, and the link of
+    this run, which carries its access token; then a line of labels, never
+    content, for each action of the page.
 
     Args:
         atom: The atom, or a function with no arguments that builds it.
@@ -106,24 +108,16 @@ def _start(
         )
     session = _session(atom, source, namespace, preset)
     _check_port(host, port)
-    for note in session.notes:
-        # A note can quote a preset file, which may come from someone else.
-        print(f"note: {_plain(note)}", file=sys.stderr)
+    console = Console()
     token = new_token()
     shown = f"[{host}]" if ":" in host else host
     url = f"http://{shown}:{port}/?token={token}"
-    print(f"chatomon studio is running at {url}", file=sys.stderr)
-    if host not in LOOPBACK:
-        print(
-            "warning: the studio listens on a network address. Anyone who reaches it with "
-            "this link can read the conversation and call the atom's models.",
-            file=sys.stderr,
-        )
+    console.banner(_start_of(session, url=url, local=host in LOOPBACK, browser=open_browser))
     if open_browser:
         timer = threading.Timer(0.8, webbrowser.open, args=(url,))
         timer.daemon = True
         timer.start()
-    app = create_app(session, token=token, host=host, port=port)
+    app = create_app(session, token=token, host=host, port=port, console=console)
     # Three seconds for open requests on Ctrl+C: a turn waiting on its model must not hold the exit.
     uvicorn.run(
         app,
@@ -133,7 +127,35 @@ def _start(
         access_log=False,
         timeout_graceful_shutdown=3,
     )
-    print("chatomon studio stopped.", file=sys.stderr)
+    console.stopped()
+
+
+def _start_of(session: Session, *, url: str, local: bool, browser: bool) -> Start:
+    """Gather what the banner says, from what the page shows of the session.
+
+    Returns:
+        What the banner writes about this run.
+    """
+    state = session.state()
+    atom = state["atom"]
+    chains = {
+        side: tuple(o["name"] for o in state["orbitals"][side] if o["enabled"])
+        for side in ("input", "output")
+    }
+    return Start(
+        version=state["studio"]["version"],
+        atom=atom["name"],
+        source=atom["source"],
+        connector=atom.get("connector", "?"),
+        model=atom.get("model", "?"),
+        input=chains["input"],
+        output=chains["output"],
+        reload=state["studio"]["reload"],
+        notes=tuple(session.notes),
+        url=url,
+        local=local,
+        browser=browser,
+    )
 
 
 def _session(
@@ -167,24 +189,8 @@ def _session(
     try:
         return Session(atom, source=source, namespace=namespace, preset=text)
     except InvalidPresetError as exc:
-        problems = "".join(f"\n  - {_plain(problem)}" for problem in exc.problems)
+        problems = "".join(f"\n  - {plain(problem)}" for problem in exc.problems)
         raise ChatomonConfigError(f"the preset {shown} was not applied:{problems}") from exc
-
-
-def _plain(text: str) -> str:
-    """Write as escapes the characters a terminal would act on.
-
-    A problem can quote the preset file, which may come from someone else: an
-    escape sequence or a line break in it must not rewrite what the terminal shows.
-
-    Returns:
-        The text with every character that is not printable as its escape;
-        letters of any alphabet stay as they are.
-    """
-    return "".join(
-        char if char.isprintable() else char.encode("unicode_escape").decode("ascii")
-        for char in text
-    )
 
 
 def _check_port(host: str, port: int) -> None:

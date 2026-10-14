@@ -424,6 +424,12 @@ directory and `docs/public/assets/studio/` is left alone.
   and the same line with `dark`. `tests/tooling/test_docs_screenshots.py`
   checks that every image is named in both themes and that none is left
   unused.
+- **The terminal.** The studio page also shows the start of the studio in a
+  terminal, as an animated SVG in `docs/public/assets/terminal/`. It is drawn
+  from what the studio's console writes, by
+  `tests/studio/test_terminal_recording.py`, which needs no browser: a change
+  to what the terminal shows regenerates it with
+  `CHATOMON_SCREENSHOTS=1 uv run pytest tests/studio/test_terminal_recording.py`.
 
 ## Versioning and releases
 

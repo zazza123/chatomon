@@ -18,7 +18,6 @@ import os
 import re
 import secrets
 import socket
-import sys
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -31,6 +30,7 @@ from opentelemetry.trace import NoOpTracerProvider
 
 from chatomon.schemas import TurnReport
 from chatomon.studio._chains import SIDES, RefusedError
+from chatomon.studio._console import Console, summary
 from chatomon.studio._runners import InterruptedTurnError, Runner, runner_for
 from chatomon.studio._session import SAMPLE, Session, StudioBusyError
 from chatomon.studio._spectral import _relay
@@ -144,13 +144,15 @@ class Bridge:
     Args:
         session: The studio's session. It is read through `revision`,
             `build_copy()` and `settled()`: it knows nothing of the bridge.
+        console: Where its lines go; a console on stderr when `None`.
     """
 
     insecure = False
     """Whether `ws://` is taken for a relay. Only tests set it, in code."""
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, console: Console | None = None) -> None:
         self._session = session
+        self._console = console if console is not None else Console()
         self._env = KEY_ENV
         self._relay: Relay | None = None
         self._server: uvicorn.Server | None = None
@@ -259,6 +261,12 @@ class Bridge:
                     report=report,
                     failed=cancelled or failure is not None,
                     duration_ms=duration_ms,
+                )
+                # The name of the studio's error, never the text of an exception.
+                error = failure.kind if failure is not None else None
+                text, tone = summary(report, "Cancelled" if cancelled else error)
+                self._console.line(
+                    "◆", "spectral", f"request · {text}", tone=tone, duration_ms=duration_ms
                 )
         if failure is None and left is not None and keep_as is not None:
             self._keep(keep_as, left, asked.previous)
@@ -401,7 +409,7 @@ class Bridge:
             await self._open(url, key)
         finally:
             self._opening = False
-        print(f"chatomon studio: connecting this atom to Spectral through {host}", file=sys.stderr)
+        self._console.line("◆", "spectral", f"connecting through {host}")
 
     async def _open(self, url: str, key: str) -> None:
         """Start the adapter on a port of its own, then the client that calls it.
@@ -462,7 +470,7 @@ class Bridge:
         self._continued.clear()
         self._weight = 0
         if said:
-            print("chatomon studio: Spectral can no longer reach this atom.", file=sys.stderr)
+            self._console.line("◇", "spectral", "can no longer reach this atom", tone="warning")
 
     def disconnect(self) -> None:
         """Ask the connection to close: requests that run finish first, for a few seconds."""

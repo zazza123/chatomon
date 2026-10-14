@@ -50,6 +50,8 @@ Before you connect, the card lists what there is to know about your atom, such a
 
 **Connect** opens the connection. Then, on Spectral, open your target, press **Test connection** and launch an evaluation. **Disconnect** closes the connection and lets the requests that are running finish. Stopping the studio closes it too.
 
+The terminal writes a line when the connection opens and when it ends, and one for each request: how its turn ended, which orbital stopped it, and how long it took. Like the counts, the line never holds the text of the request or of the reply.
+
 The ghost and the chip say where the connection is.
 
 | Ghost | | Chip | When |

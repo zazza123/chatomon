@@ -478,7 +478,11 @@ def test_stopping_during_a_turn_does_not_wait_for_the_model(tmp_path):
     )
     try:
         assert process.stderr is not None
-        link = next(word for word in process.stderr.readline().split() if word.startswith("http"))
+        # The banner comes first: the link is on the line scripts read.
+        running = next(
+            line for line in process.stderr if line.startswith("chatomon studio is running at")
+        )
+        link = running.split()[-1]
         base = link.split("/?")[0]
         browser = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
         deadline = time.monotonic() + 10
