@@ -43,7 +43,7 @@ chatomon studio speedypack.app:atom
 ![The terminal after chatomon studio starts: the chatomon wordmark, the atom with its agent and chains, the link, then a line for each turn](../assets/terminal/studio-light.svg#only-light){ .cm-shot loading=lazy }
 ![The terminal after chatomon studio starts: the chatomon wordmark, the atom with its agent and chains, the link, then a line for each turn](../assets/terminal/studio-dark.svg#only-dark){ .cm-shot loading=lazy }
 
-The command imports the module from the current directory, prints a link and opens it in the browser. Stop it with ++ctrl+c++; a turn that is still waiting for its model does not hold the exit. `python -m chatomon.studio` takes the same arguments.
+The command imports the module from the current directory, writes what it found in the terminal and opens the link in the browser. Stop it with ++ctrl+c++; a turn that is still waiting for its model does not hold the exit. `python -m chatomon.studio` takes the same arguments.
 
 | Option | Default | Purpose |
 |--------|---------|---------|
@@ -69,6 +69,16 @@ serve(atom)
 ```
 
 `serve` takes the options of the command as arguments: `host`, `port`, `open_browser` and `preset`, the path of a preset file. Started this way the studio does not know which module the atom comes from, which limits what [Copy as code](export.md#copy-as-code) can name.
+
+## What the Terminal Shows
+
+At start the terminal shows the chatomon wordmark and what the studio found: the atom and where it comes from, its connector and model, the orbitals of each chain, whether reload from code is on, the notes about the atom, and the link of this run.
+
+While the studio runs, every action that succeeds writes one line: a turn, with how it ended, the orbital that stopped it and its reason, and how long it took; an orbital turned on or off, edited, moved, added, removed or reset; an undo; a preset imported; the conversation cleared; a reload, or why it failed; a test of a connection; a saved test, with its path; and, with the [Spectral add-on](spectral.md), the connection and each request. A request the studio refuses writes nothing: the page says why.
+
+The lines carry labels only. A message, a reply, a guidance, a judge's explanation, the text of an error and the value of a setting never reach the terminal, even though the page shows them.
+
+When the output is not a terminal, or `NO_COLOR` is set, the wordmark and the colours are left out and the same lines are written as plain text. The link is then on the line that starts with `chatomon studio is running at`.
 
 ## Content in the Studio
 

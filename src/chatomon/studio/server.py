@@ -44,8 +44,10 @@ def serve(
     """Open the studio for an atom and block until interrupted.
 
     The studio runs a copy of the atom with `capture_content="full"` and its
-    own turn callback and tracer; the atom you pass is not changed. It prints
-    the link of this run, which carries its access token, to stderr.
+    own turn callback and tracer; the atom you pass is not changed. It writes
+    to stderr the chatomon wordmark, the atom and its chains, and the link of
+    this run, which carries its access token; then a line of labels, never
+    content, for each action of the page.
 
     Args:
         atom: The atom, or a function with no arguments that builds it.
