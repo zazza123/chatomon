@@ -1,7 +1,10 @@
 """What the studio writes to the terminal."""
 
 import io
+import os
+import pty
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -16,7 +19,7 @@ from chatomon.schemas import (
     TurnReport,
     VerdictAction,
 )
-from chatomon.studio._console import Console, Palette, plain, summary
+from chatomon.studio._console import WORDMARK, Console, Palette, Start, plain, summary
 
 NOON = datetime(2026, 10, 14, 12, 4, 31)
 
@@ -272,3 +275,75 @@ def test_each_action_has_its_line(call, expected):
     con, out = console()
     call(con)
     assert out.getvalue().startswith(f"  12:04:31  {expected}")
+
+
+START = Start(
+    version="0.9.0",
+    atom="speedypack",
+    source="speedypack.app:atom",
+    connector="pydantic_ai",
+    model="openai:gpt-5",
+    input=("scope_guard", "pii_redact"),
+    output=("tone_judge",),
+    reload=True,
+    notes=("the nucleus calls a real model",),
+    url="http://127.0.0.1:8016/?token=abc",
+    local=True,
+    browser=True,
+)
+
+
+def test_the_banner_in_colour_has_the_wordmark_and_the_run():
+    con, out = console("truecolor", width=80)
+    con.banner(START)
+    text = out.getvalue()
+    assert all(row.rstrip() in text for row in WORDMARK)
+    assert "speedypack.app:atom" in text and "openai:gpt-5" in text
+    assert "scope_guard → pii_redact" in text
+    assert "captured in the page, never printed here" in text
+    assert "http://127.0.0.1:8016/?token=abc" in text
+    assert "opening the browser · Ctrl+C to stop" in text
+
+
+def test_a_narrow_terminal_gets_the_one_line_wordmark():
+    con, out = console("truecolor", width=40)
+    con.banner(START)
+    assert WORDMARK[1].rstrip() not in out.getvalue()
+    assert "chat⚛mon" in out.getvalue() and "studio 0.9.0" in out.getvalue()
+
+
+def test_the_plain_banner_keeps_the_lines_scripts_read():
+    con, out = console("none")
+    con.banner(replace(START, local=False, browser=False, input=(), reload=False))
+    lines = out.getvalue().splitlines()
+    assert "\x1b" not in out.getvalue()
+    assert lines[0] == "chatomon studio 0.9.0"
+    assert "  input     (none)" in lines
+    assert "  reload    off (started from serve())" in lines
+    assert "note: the nucleus calls a real model" in lines
+    url = lines.index("chatomon studio is running at http://127.0.0.1:8016/?token=abc")
+    assert lines.index("note: the nucleus calls a real model") < url
+    assert lines[url + 1].startswith("warning: the studio listens on a network address.")
+    assert "--no-browser" in out.getvalue()
+
+
+def test_the_banner_quotes_names_from_outside_as_escapes():
+    con, out = console("truecolor")
+    con.banner(replace(START, input=("x\x1b[2Ky",), notes=("m\x9b2J",)))
+    assert "\x1b[2K" not in out.getvalue() and "\x9b" not in out.getvalue()
+
+
+def test_a_terminal_that_reports_no_width_counts_as_80_columns():
+    master, slave = pty.openpty()
+    try:
+        with os.fdopen(slave, "w", closefd=False) as stream:
+            assert Console(stream).width == 80
+    finally:
+        os.close(master)
+        os.close(slave)
+
+
+def test_without_notes_a_single_blank_line_comes_before_the_link():
+    con, out = console("truecolor")
+    con.banner(replace(START, notes=()))
+    assert "\n\n\n" not in out.getvalue()

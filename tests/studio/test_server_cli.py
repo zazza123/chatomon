@@ -523,3 +523,12 @@ def test_a_note_that_quotes_the_preset_cannot_rewrite_the_terminal(
         'guard=ApiBackend(api_url="https://scope.example", api_key_env="SCOPE_KEY", '
         'model="m\\u009b2J"). Check where it points before you send a message.'
     )
+
+
+def test_the_start_names_the_atom_its_agent_and_its_chains(runs, capsys):
+    serve(tunable_atom(), port=free_port(), open_browser=False)
+    err = capsys.readouterr().err
+    assert "  atom      t · serve()" in err
+    assert "  input     message_length" in err
+    assert "  output    (none)" in err
+    assert "  reload    off (started from serve())" in err

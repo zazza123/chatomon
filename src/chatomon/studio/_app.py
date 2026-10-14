@@ -24,6 +24,7 @@ from starlette.staticfiles import StaticFiles
 from chatomon.errors import ChatomonConfigError, ChatomonError
 from chatomon.studio import _spectral as spectral
 from chatomon.studio._chains import InvalidRequestError, UnknownOrbitalError
+from chatomon.studio._console import Console
 from chatomon.studio._events import Event
 from chatomon.studio._files import InvalidPathError, OwnFileExistsError
 from chatomon.studio._presets import InvalidPresetError
@@ -148,7 +149,9 @@ def _spectral_routes(bridge: spectral.Bridge) -> list[Route]:
     ]
 
 
-def create_app(session: Session, *, token: str, host: str, port: int) -> Starlette:
+def create_app(
+    session: Session, *, token: str, host: str, port: int, console: Console | None = None
+) -> Starlette:
     """Build the studio's ASGI app for one session.
 
     Args:
@@ -156,6 +159,7 @@ def create_app(session: Session, *, token: str, host: str, port: int) -> Starlet
         token: The token of this run.
         host: The address the server listens on.
         port: The port the server listens on.
+        console: Where the lines of the feed go; a console on stderr when `None`.
 
     Returns:
         The Starlette app, guarded by Host, Origin and token checks.

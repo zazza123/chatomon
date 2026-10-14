@@ -11,6 +11,7 @@ import os
 import sys
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal, TextIO
 
@@ -35,6 +36,38 @@ _DIM = "\x1b[2m"
 _RESET = "\x1b[0m"
 _CUBE = (0, 95, 135, 175, 215, 255)
 _TEXT_WIDTH = 40
+WORDMARK = (
+    r"        _           _",
+    r"    ___| |__   __ _| |_ ___  _ __ ___   ___  _ __",
+    r"   / __| '_ \ / _` | __/ _ \| '_ ` _ \ / _ \| '_ \ ",
+    r"  | (__| | | | (_| | || (_) | | | | | | (_) | | | |",
+    r"   \___|_| |_|\__,_|\__\___/|_| |_| |_|\___/|_| |_|",
+)
+"""The chatomon wordmark, as the terminal draws it."""
+
+_WIDE = 55
+NETWORK_WARNING = (
+    "warning: the studio listens on a network address. Anyone who reaches it with "
+    "this link can read the conversation and call the atom's models."
+)
+
+
+@dataclass(frozen=True)
+class Start:
+    """What the banner says about this run, computed by the server."""
+
+    version: str
+    atom: str
+    source: str
+    connector: str
+    model: str
+    input: tuple[str, ...]
+    output: tuple[str, ...]
+    reload: bool
+    notes: tuple[str, ...]
+    url: str
+    local: bool
+    browser: bool
 
 
 def plain(text: str) -> str:
@@ -68,9 +101,11 @@ def _palette(stream: TextIO) -> Palette:
 
 def _width(stream: TextIO) -> int:
     try:
-        return os.get_terminal_size(stream.fileno()).columns
+        columns = os.get_terminal_size(stream.fileno()).columns
     except (AttributeError, OSError, ValueError):
         return 80
+    # A terminal that was given no size says 0.
+    return columns if columns > 0 else 80
 
 
 def _nearest(level: int) -> int:
@@ -303,3 +338,41 @@ class Console:
     def test_written(self, path: str) -> None:
         """Write the path of a saved test."""
         self.line("✎", "test", f"saved {path}")
+
+    def banner(self, start: Start) -> None:
+        """Write the wordmark and what to know about this run, then its link."""
+        rows: list[str] = []
+        if self.palette == "none":
+            rows.append(f"chatomon studio {start.version}")
+        elif self.width >= _WIDE:
+            rows += [self.paint(row, "brand") for row in WORDMARK]
+            tagline = f"studio {start.version}"
+            rows.append(" " * (len(WORDMARK[-1]) - len(tagline)) + self.paint(tagline, "dim"))
+        else:
+            rows.append(f"  {self.paint('chat⚛mon', 'brand')} studio {start.version}")
+        rows.append("")
+        reload = "on (from the modules under ./)" if start.reload else "off (started from serve())"
+        facts = [
+            ("atom", f"{start.atom} · {start.source}"),
+            ("agent", f"{start.connector} · {start.model}"),
+            ("input", " → ".join(start.input) or "(none)"),
+            ("output", " → ".join(start.output) or "(none)"),
+            ("content", "captured in the page, never printed here"),
+            ("reload", reload),
+        ]
+        rows += [f"  {self.paint(f'{key:<9}', 'dim')} {plain(value)}" for key, value in facts]
+        self._write("\n".join(rows) + "\n\n")
+        for text in start.notes:
+            self.note(text)
+        if self.palette == "none":
+            link = f"chatomon studio is running at {start.url}"
+        else:
+            link = f"  {self.paint('➜', 'brand')} {start.url}"
+            if start.notes:
+                link = f"\n{link}"
+        lines = [link]
+        if not start.local:
+            lines.append(self.paint(NETWORK_WARNING, "blocked"))
+        opening = "opening the browser" if start.browser else "--no-browser: open the link above"
+        lines.append(self.paint(f"    {opening} · Ctrl+C to stop", "dim"))
+        self._write("\n".join(lines) + "\n\n")
