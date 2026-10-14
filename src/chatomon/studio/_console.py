@@ -151,8 +151,12 @@ def summary(report: TurnReport | None, error_type: str | None) -> tuple[str, Ton
             return "input allowed · output allowed", "allowed"
         names = dict.fromkeys(r.name for a in retried for r in a.results if r.action != "allow")
         return f"{prefix}{', '.join(names)} · allowed", "warning"
+    # The last reply's chain ended the turn when it stopped something: an input orbital
+    # that asked for a guided refusal stays in the report, but did not have the last word.
     last = report.output[-1].results if report.output else ()
-    stopper = next((r for r in (*report.input, *last) if r.action != "allow"), None)
+    stopper = next((r for r in last if r.action != "allow"), None) or next(
+        (r for r in report.input if r.action != "allow"), None
+    )
     verb, tone = _ENDED.get(report.final_action, (report.final_action, "blocked"))
     if stopper is None:
         return f"{prefix}{verb}", tone

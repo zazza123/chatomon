@@ -186,14 +186,41 @@ def attempt(*results: OrbitalResult, decision: OutputDecisionKind = "accept") ->
         (
             report(
                 "guided_refusal",
+                [result("scope", "input", "block", "off_topic", has_guidance=True)],
+                [attempt(result("tone", "output"))],
+            ),
+            None,
+            ("input refused · scope (off_topic)", "blocked"),
+        ),
+        (
+            report(
+                "blocked",
+                [result("scope", "input", "block", "off_topic", has_guidance=True)],
+                [attempt(result("tone", "output", "block", "rude"), decision="replace")],
+            ),
+            None,
+            ("output blocked · tone (rude)", "blocked"),
+        ),
+        (
+            report(
+                "orbital_response",
+                [result("scope", "input", "block", "off_topic", has_guidance=True)],
+                [attempt(result("faq", "output", "respond"), decision="replace")],
+            ),
+            None,
+            ("output answered by faq", "warning"),
+        ),
+        (
+            report(
+                "fallback_refusal",
                 [],
                 [
-                    attempt(result("tone", "output", "block"), decision="regenerate"),
-                    attempt(result("tone", "output", "block"), decision="regenerate"),
+                    attempt(result("tone", "output", "block", "rude"), decision="regenerate"),
+                    attempt(result("tone", "output", "block", "rude"), decision="regenerate"),
                 ],
             ),
             None,
-            ("output retried 2 times · output refused · tone", "blocked"),
+            ("output retried 2 times · output refused · tone (rude)", "blocked"),
         ),
         (
             report("orbital_response", [result("faq", "input", "respond")]),

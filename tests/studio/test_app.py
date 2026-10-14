@@ -1157,3 +1157,39 @@ def test_testing_an_orbital_writes_the_outcome_not_the_sentence(tunable, capsys,
     err = capsys.readouterr().err
     assert feed(err) == ["▸ probe ScopeGuardOrbital · unreachable"]
     assert response.json()["message"] not in err
+
+
+def test_a_turn_that_raises_writes_the_type_of_the_error_never_its_text(capsys):
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError("the user wrote: my card is 4111 1111")
+
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(FunctionModel(respond)),
+    )
+    with serving(atom) as client:
+        client.get(f"/?token={TOKEN}")
+        turn(client, "my card is 4111 1111")
+    err = capsys.readouterr().err
+    assert "4111" not in err
+    [line] = feed(err)
+    assert line.startswith("● turn 1 ") and "RuntimeError" in line
+
+
+def test_an_output_orbital_that_stops_a_guided_refusal_is_the_one_named(capsys):
+    scope = ScriptedOrbital(
+        Verdict.block(guidance="Say it is off topic.", reason="off_topic"), name="scope"
+    )
+    tone = ScriptedOrbital(Verdict.block(reason="rude"), name="tone")
+    atom = Atom(
+        name="speedypack",
+        instructions="Be brief.",
+        connector=PydanticAIConnector(TestModel(custom_output_text="No.")),
+        input_orbitals=[scope],
+        output_orbitals=[tone],
+    )
+    with serving(atom) as client:
+        client.get(f"/?token={TOKEN}")
+        turn(client, "hi")
+    assert feed(capsys.readouterr().err) == ["● turn 1 output blocked · tone (rude)"]
