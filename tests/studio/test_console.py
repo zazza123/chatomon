@@ -374,3 +374,20 @@ def test_without_notes_a_single_blank_line_comes_before_the_link():
     con, out = console("truecolor")
     con.banner(replace(START, notes=()))
     assert "\n\n\n" not in out.getvalue()
+
+
+def test_a_stream_that_cannot_encode_a_symbol_still_gets_the_link():
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding="ascii", errors="strict")
+    Console(stream, palette="none", width=80, clock=lambda: NOON).banner(START)
+    stream.flush()
+    written = raw.getvalue().decode("ascii")
+    assert "chatomon studio is running at http://127.0.0.1:8016/?token=abc" in written
+    assert "speedypack \\xb7 speedypack.app:atom" in written
+
+
+def test_no_stderr_at_all_writes_nothing_and_raises_nothing(monkeypatch):
+    monkeypatch.setattr("sys.stderr", None)
+    con = Console(palette="none", width=80, clock=lambda: NOON)
+    con.banner(START)
+    con.line("●", "turn 1", "input allowed")

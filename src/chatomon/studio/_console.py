@@ -13,6 +13,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from traceback import format_exception
 from typing import TYPE_CHECKING, Literal, TextIO
 
 if TYPE_CHECKING:
@@ -204,10 +205,15 @@ class Console:
                 return
             try:
                 out = self._out()
-                out.write(text)
+                try:
+                    out.write(text)
+                except UnicodeEncodeError:
+                    # A terminal that cannot show a symbol gets its escape, and the link still.
+                    encoding = getattr(out, "encoding", None) or "ascii"
+                    out.write(text.encode(encoding, "backslashreplace").decode(encoding))
                 out.flush()
-            except (OSError, ValueError):
-                # A closed stderr or a broken pipe: the page and the turns go on.
+            except (AttributeError, OSError, ValueError):
+                # No stderr, a closed one or a broken pipe: the page and the turns go on.
                 self._off = True
 
     def paint(self, text: str, tone: Tone) -> str:
@@ -317,6 +323,10 @@ class Console:
         if dropped:
             parts.append(f"{_count(dropped, 'change')} dropped")
         self.line("↻", "reload", " · ".join(parts), tone="allowed")
+
+    def traceback(self, exc: BaseException) -> None:
+        """Write the traceback of the developer's code, as Python prints it."""
+        self._write("".join(format_exception(exc)))
 
     def reload_failed(self, message: str) -> None:
         """Write why a reload failed: the studio's sentence, after the traceback."""

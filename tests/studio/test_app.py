@@ -1,3 +1,5 @@
+import asyncio
+import io
 import json
 import logging
 import re
@@ -17,6 +19,8 @@ from chatomon.studio._loading import load, namespace
 from chatomon.studio._session import Session, StudioBusyError
 from tests.fake_service import closed_url
 from tests.fakes import ScriptedOrbital
+from tests.studio.spectral import helpers
+from tests.studio.spectral.helpers import eventually, gated, page, started
 
 TOKEN = "t0ken"
 BASE = "http://127.0.0.1:8016"
@@ -1193,3 +1197,49 @@ def test_an_output_orbital_that_stops_a_guided_refusal_is_the_one_named(capsys):
         client.get(f"/?token={TOKEN}")
         turn(client, "hi")
     assert feed(capsys.readouterr().err) == ["● turn 1 output blocked · tone (rude)"]
+
+
+class BrokenStream(io.StringIO):
+    def write(self, text):
+        raise BrokenPipeError
+
+
+def test_a_reload_that_fails_is_explained_when_the_terminal_is_gone(sources, monkeypatch):
+    """The output was piped to a program that exited: the page still gets the sentence."""
+    sources("shop.py", SHOP)
+    session = Session(load("shop:atom"), source="shop:atom", namespace=namespace("shop:atom"))
+    monkeypatch.setattr(sys, "stderr", BrokenStream())
+    app = create_app(session, token=TOKEN, host="127.0.0.1", port=8016)
+    with TestClient(app, base_url=BASE) as client:
+        client.get(f"/?token={TOKEN}")
+        sources("shop.py", SHOP.replace('INSTRUCTIONS = "Be brief."', "SECRET = 'sk-123' +"))
+        response = reload(client)
+    assert response.status_code == 409
+    assert response.json()["error"]["message"].startswith("could not import 'shop'")
+
+
+async def test_the_line_of_a_turn_never_cancels_the_turn():
+    """What writes the line only watches the turn: stopping it leaves the turn running."""
+    atom, gate = gated()
+    session = Session(atom, source="app:atom")
+    app = create_app(session, token=helpers.TOKEN, host="127.0.0.1", port=8016)
+
+    def announcers() -> list[asyncio.Task]:
+        return [
+            task
+            for task in asyncio.all_tasks()
+            if getattr(task.get_coro(), "__qualname__", "").endswith("announce")
+        ]
+
+    async with started(app), page(app) as client:
+        posted = asyncio.create_task(
+            client.post("/api/turns", json={"message": "hi"}, headers=ORIGIN)
+        )
+        await eventually(lambda: bool(announcers()))
+        for task in announcers():
+            task.cancel()
+        await asyncio.sleep(0)
+        gate.set()
+        await posted
+        await session.wait()
+    assert [turn.reply for turn in session.turns] == ["Hi"]

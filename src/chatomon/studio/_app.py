@@ -7,9 +7,7 @@ import contextlib
 import json
 import re
 import shlex
-import sys
 import time
-import traceback
 from collections.abc import AsyncIterator
 from importlib.resources import files
 from typing import Any, cast
@@ -205,7 +203,8 @@ def create_app(
             return _error(409, "Busy", str(exc))
 
         async def announce() -> None:
-            await session.wait()
+            # It only watches the turn: stopping it must not stop the turn.
+            await asyncio.shield(session.wait())
             if not session.turns or session.turns[-1].n != n:
                 return
             record = session.turns[-1]
@@ -300,7 +299,10 @@ def create_app(
             session.reset_orbitals(side, name) if one else session.reset_orbitals()
         except ChatomonError as exc:
             return _refusal(exc)
-        console.reset(side, name) if one else console.reset(None, None)
+        if one:
+            console.reset(side, name)
+        else:
+            console.reset(None, None)
         return JSONResponse(state())
 
     async def undo(request: Request) -> Response:
@@ -376,7 +378,7 @@ def create_app(
             # terminal, never to the page, which gets the sentence. A refusal of the studio's
             # own has no cause.
             if exc.__cause__ is not None:
-                traceback.print_exception(exc.__cause__, file=sys.stderr)
+                console.traceback(exc.__cause__)
             console.reload_failed(str(exc))
             return _refusal(exc)
         except ChatomonError as exc:
