@@ -172,7 +172,7 @@ def create_app(
     # On a network address the session refuses a connection that comes from the page.
     session.local = host in LOOPBACK
     # An add-on: without its extra the page, the state and the routes are as they were.
-    bridge = spectral.Bridge(session) if spectral.available() else None
+    bridge = spectral.Bridge(session, console) if spectral.available() else None
 
     def state() -> dict[str, Any]:
         current = session.state()

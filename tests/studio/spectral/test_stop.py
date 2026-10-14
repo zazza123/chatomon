@@ -73,7 +73,7 @@ def test_ctrl_c_stops_a_studio_that_is_connected(tmp_path, monkeypatch):
             assert process.wait(timeout=10) == 0
             assert time.monotonic() - started < 5
             printed = process.stderr.read()
-            assert "Spectral can no longer reach this atom." in printed
+            assert "◇ spectral  can no longer reach this atom" in printed
             assert printed.rstrip().endswith("chatomon studio stopped.")
             assert relay.key not in printed
         finally:

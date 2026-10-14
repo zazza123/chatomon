@@ -97,7 +97,7 @@ async def test_connecting_opens_the_adapter_and_reaches_the_relay(spectral, brid
     assert 0 < state["adapter"]["port"] < 65536
     assert state["since"].endswith("Z")
     assert state["counts"]["requests"] == 0
-    assert "connecting this atom to Spectral through 127.0.0.1" in capsys.readouterr().err
+    assert "◆ spectral  connecting through 127.0.0.1" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
@@ -589,6 +589,22 @@ async def test_disconnecting_lets_a_request_that_runs_finish(spectral, bridges):
     assert (counts["requests"], counts["failed"]) == (1, 0)
 
 
+async def test_a_request_writes_a_line_of_labels_in_the_terminal(spectral, bridges, capsys):
+    bridge = bridges(atom_with("a-reply-for-no-one"))
+    await connected(bridge)
+    await spectral.request("/v1/responses", {"input": "a-question-for-no-one"})
+    await eventually(lambda: bridge.state()["counts"]["requests"] == 1)
+    err = capsys.readouterr().err
+    assert "◆ spectral  request · input allowed · output allowed" in err
+    assert "a-question-for-no-one" not in err and "a-reply-for-no-one" not in err
+
+
+async def test_a_test_from_the_page_is_not_a_request_of_spectral(spectral, bridges, capsys):
+    bridge = bridges(atom_with("Hi"))
+    await bridge._run(Asked([], "hello", None), counts=None)
+    assert "request" not in capsys.readouterr().err
+
+
 async def test_disconnecting_closes_the_connection_and_the_adapter(spectral, bridges, capsys):
     bridge = bridges(atom_with("Hi"))
     await connected(bridge)
@@ -601,7 +617,7 @@ async def test_disconnecting_closes_the_connection_and_the_adapter(spectral, bri
     assert state["message"] == "Spectral is not connected"
     # The counts stay to be read.
     assert state["counts"]["requests"] == 1
-    assert "Spectral can no longer reach this atom." in capsys.readouterr().err
+    assert "◇ spectral  can no longer reach this atom" in capsys.readouterr().err
 
 
 async def test_a_key_the_relay_refuses_closes_the_adapter(spectral, bridges):
