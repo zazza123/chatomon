@@ -8,10 +8,11 @@ import json
 import re
 import shlex
 import sys
+import time
 import traceback
 from collections.abc import AsyncIterator
 from importlib.resources import files
-from typing import Any
+from typing import Any, cast
 
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
@@ -22,6 +23,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from chatomon.errors import ChatomonConfigError, ChatomonError
+from chatomon.schemas import Side
 from chatomon.studio import _spectral as spectral
 from chatomon.studio._chains import InvalidRequestError, UnknownOrbitalError
 from chatomon.studio._console import Console
@@ -164,6 +166,9 @@ def create_app(
     Returns:
         The Starlette app, guarded by Host, Origin and token checks.
     """
+    console = console if console is not None else Console()
+    # The tasks that write the line of a turn, kept so that they are not collected.
+    announcers: set[asyncio.Task[None]] = set()
     # On a network address the session refuses a connection that comes from the page.
     session.local = host in LOOPBACK
     # An add-on: without its extra the page, the state and the routes are as they were.
@@ -192,10 +197,26 @@ def create_app(
             message.encode("utf-8")
         except UnicodeEncodeError:
             return _error(422, "InvalidMessage", "the message has characters that are not text")
+        n = len(session.turns) + 1
+        started = time.perf_counter()
         try:
             queue = session.start_turn(message)
         except StudioBusyError as exc:
             return _error(409, "Busy", str(exc))
+
+        async def announce() -> None:
+            await session.wait()
+            if not session.turns or session.turns[-1].n != n:
+                return
+            record = session.turns[-1]
+            error = record.error["type"] if record.error is not None else None
+            elapsed = (time.perf_counter() - started) * 1000
+            console.turn(n, record.report, error_type=error, duration_ms=elapsed)
+
+        # Owned by the app, not by the stream: the line is written when the page stops reading.
+        task = asyncio.get_running_loop().create_task(announce())
+        announcers.add(task)
+        task.add_done_callback(announcers.discard)
         return StreamingResponse(_stream(queue), media_type="text/event-stream", headers=_NO_STORE)
 
     async def patch_orbital(request: Request) -> Response:
@@ -208,10 +229,13 @@ def create_app(
         try:
             if given[0] == "enabled" and isinstance(value, bool):
                 session.switch(side, name, value)
+                console.switched(side, name, value)
             elif given[0] == "settings" and isinstance(value, dict) and value:
                 session.edit(side, name, value)
+                console.edited(side, name)
             elif given[0] == "position" and isinstance(value, int) and not isinstance(value, bool):
                 session.move(side, name, value)
+                console.moved(side, name, value)
             else:
                 return _error(422, "InvalidBody", _PATCH_HELP)
         except ChatomonError as exc:
@@ -229,6 +253,8 @@ def create_app(
             session.add(side, kind, settings)
         except ChatomonError as exc:
             return _refusal(exc)
+        # The session took the side: it is one of the two.
+        console.added(side, session.chains.work[cast(Side, side)][-1].orbital.name)
         return JSONResponse(state())
 
     async def post_probe(request: Request) -> Response:
@@ -248,6 +274,8 @@ def create_app(
                 result = await session.probe(side, kind=kind, settings=settings)
         except ChatomonError as exc:
             return _refusal(exc)
+        shown = name if named else kind
+        console.probed(str(shown), result.outcome, result.action, result.reason, result.duration_ms)
         return JSONResponse(result.to_json(), headers=_NO_STORE)
 
     async def delete_orbital(request: Request) -> Response:
@@ -259,6 +287,7 @@ def create_app(
             session.delete(side, name)
         except ChatomonError as exc:
             return _refusal(exc)
+        console.deleted(side, name)
         return JSONResponse(state())
 
     async def reset_orbitals(request: Request) -> Response:
@@ -271,6 +300,7 @@ def create_app(
             session.reset_orbitals(side, name) if one else session.reset_orbitals()
         except ChatomonError as exc:
             return _refusal(exc)
+        console.reset(side, name) if one else console.reset(None, None)
         return JSONResponse(state())
 
     async def undo(request: Request) -> Response:
@@ -278,6 +308,7 @@ def create_app(
             session.undo()
         except ChatomonError as exc:
             return _refusal(exc)
+        console.undone()
         return JSONResponse(state())
 
     async def get_code(request: Request) -> Response:
@@ -309,6 +340,7 @@ def create_app(
             )
         except ChatomonError as exc:
             return _refusal(exc)
+        console.test_written(written)
         # Quoted for a shell: a path may hold spaces.
         command = f"python -m pytest {shlex.quote(written)}"
         return JSONResponse({"path": written, "command": command})
@@ -330,6 +362,7 @@ def create_app(
             noted = session.import_preset(text)
         except ChatomonError as exc:
             return _refusal(exc)
+        console.preset_imported(len(session.chains.changes()))
         return JSONResponse(
             {"state": state(), "connections": noted.connections, "warnings": noted.warnings}
         )
@@ -344,12 +377,13 @@ def create_app(
             # own has no cause.
             if exc.__cause__ is not None:
                 traceback.print_exception(exc.__cause__, file=sys.stderr)
-            print(f"chatomon studio: reload failed: {exc}", file=sys.stderr)
+            console.reload_failed(str(exc))
             return _refusal(exc)
         except ChatomonError as exc:
             return _refusal(exc)
         for note in result.notes:
-            print(f"note: {note}", file=sys.stderr)
+            console.note(note)
+        console.reloaded(len(session.chains.changes()), len(result.dropped))
         body = {"state": state(), "dropped": result.dropped, "restarted": result.restarted}
         return JSONResponse(body)
 
@@ -358,6 +392,7 @@ def create_app(
             session.reset_conversation()
         except StudioBusyError as exc:
             return _error(409, "Busy", str(exc))
+        console.cleared()
         return JSONResponse(state())
 
     routes = [

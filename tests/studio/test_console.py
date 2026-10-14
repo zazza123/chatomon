@@ -262,11 +262,11 @@ def test_a_turn_line_never_carries_content():
             "✎ test      saved tests/test_turn_3.py",
         ),
         (
-            lambda c: c.probed("output", "tone", "answered", "block", "rude", 900),
+            lambda c: c.probed("tone", "answered", "block", "rude", 900),
             "▸ probe     tone · block (rude)",
         ),
         (
-            lambda c: c.probed("output", "tone", "timeout", None, None, 30000),
+            lambda c: c.probed("tone", "timeout", None, None, 30000),
             "▸ probe     tone · timeout",
         ),
     ],

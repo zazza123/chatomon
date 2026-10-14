@@ -320,7 +320,6 @@ class Console:
 
     def probed(
         self,
-        side: str,
         name: str,
         outcome: str,
         action: str | None,

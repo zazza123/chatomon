@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import sys
 
 import pytest
@@ -783,7 +784,9 @@ def test_a_reload_answers_with_the_new_state_and_what_was_dropped(reloadable, ca
     assert [change["text"] for change in body["state"]["changes"]] == [
         "message_length.max_words changed"
     ]
-    assert capsys.readouterr().err == ""
+    assert feed(capsys.readouterr().err)[-1] == (
+        "↻ reload from code · 1 change kept · 1 change dropped"
+    )
 
 
 def test_a_reload_that_fails_says_why_and_keeps_the_traceback_in_the_terminal(reloadable, capsys):
@@ -798,7 +801,7 @@ def test_a_reload_that_fails_says_why_and_keeps_the_traceback_in_the_terminal(re
     assert "sk-123" not in response.text and "Traceback" not in response.text
     err = capsys.readouterr().err
     assert "Traceback" in err and "SyntaxError" in err and "sk-123" in err
-    assert err.rstrip().splitlines()[-1] == f"chatomon studio: reload failed: {error['message']}"
+    assert err.rstrip().splitlines()[-1].endswith(f"✗ reload    failed: {error['message']}")
     assert client.get("/api/state").json() == before
 
 
@@ -809,7 +812,8 @@ def test_a_refusal_of_chatomons_own_has_no_traceback(reloadable, capsys):
     assert response.status_code == 409
     message = response.json()["error"]["message"]
     assert "appears twice" in message
-    assert capsys.readouterr().err == f"chatomon studio: reload failed: {message}\n"
+    err = capsys.readouterr().err
+    assert "Traceback" not in err and feed(err) == [f"✗ reload failed: {message}"]
 
 
 def test_the_notes_of_the_reloaded_atom_go_to_the_terminal(reloadable, capsys):
@@ -821,12 +825,13 @@ def test_the_notes_of_the_reloaded_atom_go_to_the_terminal(reloadable, capsys):
     response = reload(client)
     assert response.status_code == 200
     err = capsys.readouterr().err
-    assert err.startswith("note: this atom declares deps_type") and err.count("\n") == 1
+    assert err.startswith("note: this atom declares deps_type")
+    assert feed(err) == ["↻ reload from code"] and err.count("\n") == 2
     assert "deps_type" not in json.dumps(
         {key: response.json()[key] for key in ("dropped", "restarted")}
     )
     assert reload(client).status_code == 200
-    assert capsys.readouterr().err == ""  # a note is told once
+    assert feed(capsys.readouterr().err) == ["↻ reload from code"]  # a note is told once
 
 
 def test_a_reload_while_something_runs_is_busy(reloadable, monkeypatch):
@@ -882,7 +887,8 @@ def test_changes_of_the_studio_that_no_longer_build_have_no_traceback(reloadable
     assert response.status_code == 409
     message = response.json()["error"]["message"]
     assert message.startswith("the reloaded atom does not build with the studio's changes: ")
-    assert capsys.readouterr().err == f"chatomon studio: reload failed: {message}\n"
+    err = capsys.readouterr().err
+    assert "Traceback" not in err and feed(err)[-1] == f"✗ reload failed: {message}"
 
 
 # --- Test connection ----------------------------------------------------------
@@ -1029,3 +1035,125 @@ def test_the_key_appears_in_nothing_the_studio_sends_or_prints(
     everything = "\n".join([*seen, printed.out, printed.err, caplog.text])
     assert "SCOPE_KEY" in everything  # the name is what travels
     assert KEY not in everything
+
+
+# --- The terminal -------------------------------------------------------------
+
+FEED = re.compile(r"^  \d\d:\d\d:\d\d  (?P<symbol>\S) (?P<label>.{9}) (?P<text>.*)$")
+
+
+def feed(err: str) -> list[str]:
+    """The lines of the feed the studio wrote, without their time and duration."""
+    lines = []
+    for line in err.splitlines():
+        if match := FEED.match(line):
+            text = re.sub(r"\s{2,}\d+(?:\.\d)?m?s$", "", match["text"])
+            lines.append(f"{match['symbol']} {match['label'].rstrip()} {text}")
+    return lines
+
+
+def test_a_turn_writes_its_line_of_labels(client, capsys):
+    client.post("/api/turns", json={"message": "Perché?"}, headers=ORIGIN)
+    err = capsys.readouterr().err
+    assert feed(err) == ["● turn 1 input allowed · output allowed"]
+    assert "Perché" not in err
+
+
+def test_a_turn_writes_its_line_when_the_page_stops_reading(session, capsys):
+    app = create_app(session, token=TOKEN, host="127.0.0.1", port=8016)
+    with TestClient(app, base_url=BASE) as client:
+        client.get(f"/?token={TOKEN}")
+        with client.stream("POST", "/api/turns", json={"message": "hi"}, headers=ORIGIN) as r:
+            next(r.iter_lines())  # the first event only, then the page goes away
+        assert client.portal is not None
+        client.portal.call(session.wait)
+        client.get("/api/state")
+    assert feed(capsys.readouterr().err) == ["● turn 1 input allowed · output allowed"]
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body", "expected"),
+    [
+        (
+            "PATCH",
+            "/api/orbitals",
+            {"side": "input", "name": "reader", "enabled": False},
+            "~ input reader off",
+        ),
+        ("POST", "/api/conversation/reset", {}, "○ chat conversation cleared"),
+        ("POST", "/api/orbitals/reset", {}, "↺ orbitals reset to the code"),
+    ],
+)
+def test_an_action_that_succeeds_writes_one_line(client, capsys, method, path, body, expected):
+    assert client.request(method, path, json=body, headers=ORIGIN).status_code == 200
+    assert feed(capsys.readouterr().err) == [expected]
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("PATCH", "/api/orbitals", {"side": "input", "name": "ghost", "enabled": False}),
+        ("PATCH", "/api/orbitals", {"side": "input", "name": "first", "enabled": False}),
+        ("PATCH", "/api/orbitals", {"side": "input", "name": "first", "enabled": "no"}),
+        ("POST", "/api/orbitals", {"side": "input", "kind": "Nope"}),
+        ("DELETE", "/api/orbitals", {"side": "input", "name": "first"}),
+        ("POST", "/api/orbitals/undo", {}),
+        ("POST", "/api/preset", {"text": "{oops"}),
+        ("POST", "/api/orbitals/probe", {"side": "input", "name": "ghost"}),
+        ("POST", "/api/turns/9/test", {"path": SAVED, "turn": "none"}),
+    ],
+)
+def test_a_refused_request_writes_nothing(client, capsys, method, path, body):
+    assert client.request(method, path, json=body, headers=ORIGIN).status_code >= 400
+    assert feed(capsys.readouterr().err) == []
+
+
+def test_editing_moving_adding_deleting_and_undoing_write_their_lines(tunable, capsys):
+    patch(tunable, "message_length", settings={"max_words": 80})
+    patch(tunable, "scope", position=0)
+    add(tunable, "MessageLengthOrbital", {"max_words": 5})
+    delete(tunable, "message_length_2")
+    tunable.post("/api/orbitals/undo", json={}, headers=ORIGIN)
+    tunable.post("/api/orbitals/reset", json={"side": "input", "name": "scope"}, headers=ORIGIN)
+    assert feed(capsys.readouterr().err) == [
+        "~ input message_length settings changed",
+        "↕ input scope moved to 1",
+        "+ input message_length_2 added",
+        "- input message_length_2 removed",
+        "↺ orbitals undo",
+        "↺ input scope reset to the code",
+    ]
+
+
+def test_a_setting_value_never_reaches_the_terminal(tunable, capsys):
+    patch(tunable, "message_length", settings={"max_words": 4321})
+    assert "4321" not in capsys.readouterr().err
+
+
+def test_importing_a_preset_writes_its_line(tunable, capsys):
+    patch(tunable, "scope", enabled=False)
+    text = tunable.get("/api/preset").text
+    tunable.post("/api/orbitals/reset", json={}, headers=ORIGIN)
+    capsys.readouterr()
+    tunable.post("/api/preset", json={"text": text}, headers=ORIGIN)
+    assert feed(capsys.readouterr().err) == ["⇣ preset imported · 1 change"]
+
+
+def test_saving_a_test_writes_its_path(saving, capsys):
+    turn(saving, LONG)
+    capsys.readouterr()
+    assert write(saving, path=SAVED).status_code == 200
+    assert feed(capsys.readouterr().err) == [f"✎ test saved {SAVED}"]
+
+
+def test_testing_an_orbital_writes_the_outcome_not_the_sentence(tunable, capsys, monkeypatch):
+    monkeypatch.setenv("SCOPE_KEY", KEY)
+    response = tunable.post(
+        "/api/orbitals/probe",
+        json={"side": "input", "kind": "ScopeGuardOrbital", "settings": scope_guard(closed_url())},
+        headers=ORIGIN,
+    )
+    assert response.json()["outcome"] == "unreachable"
+    err = capsys.readouterr().err
+    assert feed(err) == ["▸ probe ScopeGuardOrbital · unreachable"]
+    assert response.json()["message"] not in err

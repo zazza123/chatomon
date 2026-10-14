@@ -44,8 +44,11 @@ def test_ctrl_c_stops_a_studio_that_is_connected(tmp_path, monkeypatch):
         process = subprocess.Popen(command, cwd=tmp_path, stderr=subprocess.PIPE, text=True)
         try:
             assert process.stderr is not None
-            first = process.stderr.readline()
-            link = next(word for word in first.split() if word.startswith("http"))
+            # The banner comes first: the link is on the line scripts read.
+            running = next(
+                line for line in process.stderr if line.startswith("chatomon studio is running at")
+            )
+            link = running.split()[-1]
             base = link.split("/?")[0]
             browser = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
             deadline = time.monotonic() + 10
