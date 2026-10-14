@@ -40,6 +40,9 @@ Install the `studio` extra together with the extra of the atom's framework: `pip
 chatomon studio speedypack.app:atom
 ```
 
+![The terminal after chatomon studio starts: the chatomon wordmark, the atom with its agent and chains, the link, then a line for each turn](../assets/terminal/studio-light.svg#only-light){ .cm-shot loading=lazy }
+![The terminal after chatomon studio starts: the chatomon wordmark, the atom with its agent and chains, the link, then a line for each turn](../assets/terminal/studio-dark.svg#only-dark){ .cm-shot loading=lazy }
+
 The command imports the module from the current directory, prints a link and opens it in the browser. Stop it with ++ctrl+c++; a turn that is still waiting for its model does not hold the exit. `python -m chatomon.studio` takes the same arguments.
 
 | Option | Default | Purpose |
