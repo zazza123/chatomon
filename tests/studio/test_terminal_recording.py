@@ -86,3 +86,12 @@ def test_the_kept_recordings_are_light_and_used():
     page = (shots.SHOTS.parents[1] / "studio" / "index.md").read_text(encoding="utf-8")
     for theme in shots.THEMES:
         assert f"assets/terminal/studio-{theme}.svg#only-{theme}" in page
+
+
+@pytest.mark.parametrize("theme", shots.THEMES)
+def test_the_kept_recording_is_what_the_console_writes_now(theme):
+    kept = (terminal.FOLDER / f"studio-{theme}.svg").read_text(encoding="utf-8")
+    assert terminal.render(COMMAND, recorded(), theme) == kept, (
+        "what the terminal shows changed: regenerate the recording with "
+        "CHATOMON_SCREENSHOTS=1 uv run pytest tests/studio/test_terminal_recording.py"
+    )

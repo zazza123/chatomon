@@ -76,9 +76,9 @@ At start the terminal shows the chatomon wordmark and what the studio found: the
 
 While the studio runs, every action that succeeds writes one line: a turn, with how it ended, the orbital that stopped it and its reason, and how long it took; an orbital turned on or off, edited, moved, added, removed or reset; an undo; a preset imported; the conversation cleared; a reload, or why it failed; a test of a connection; a saved test, with its path; and, with the [Spectral add-on](spectral.md), the connection and each request. A request the studio refuses writes nothing: the page says why.
 
-The lines carry labels only. A message, a reply, a guidance, a judge's explanation, the text of an error and the value of a setting never reach the terminal, even though the page shows them.
+The lines carry labels only. A message, a reply, a guidance, a judge's explanation, the text of an error in a turn and the value of a setting never reach the terminal, even though the page shows them. The one exception is a reload that fails: the terminal shows the traceback of your code, which the page never does, and the sentence the page shows.
 
-When the output is not a terminal, or `NO_COLOR` is set, the wordmark and the colours are left out and the same lines are written as plain text. The link is then on the line that starts with `chatomon studio is running at`.
+When the output is not a terminal, or `NO_COLOR` is set to any value but an empty one, the wordmark and the colours are left out and the same lines are written as plain text. The link is then on the line that starts with `chatomon studio is running at`.
 
 ## Content in the Studio
 
