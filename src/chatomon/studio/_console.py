@@ -12,7 +12,10 @@ import sys
 import threading
 from collections.abc import Callable
 from datetime import datetime
-from typing import Literal, TextIO
+from typing import TYPE_CHECKING, Literal, TextIO
+
+if TYPE_CHECKING:
+    from chatomon.schemas import OrbitalResult, TurnReport
 
 Palette = Literal["none", "256", "truecolor"]
 """How many colours the terminal shows; `none` writes no escape sequence."""
@@ -76,6 +79,55 @@ def _nearest(level: int) -> int:
 
 def _duration(ms: float) -> str:
     return f"{ms:.0f}ms" if ms < 1000 else f"{ms / 1000:.1f}s"
+
+
+_ENDED: dict[str, tuple[str, Tone]] = {
+    "blocked": ("blocked", "blocked"),
+    "guided_refusal": ("refused", "blocked"),
+    "fallback_refusal": ("refused", "blocked"),
+    "orbital_response": ("answered by", "warning"),
+}
+
+
+def _who(result: OrbitalResult) -> str:
+    return f"{result.name} ({result.reason})" if result.reason else result.name
+
+
+def summary(report: TurnReport | None, error_type: str | None) -> tuple[str, Tone]:
+    """Sum up how a turn went in labels, with the tone of its line.
+
+    Args:
+        report: The turn's report; `None` when the turn raised before it.
+        error_type: The class name of what the turn raised, if it did.
+
+    Returns:
+        The text of the line and its tone; never a text of the conversation.
+    """
+    if error_type is not None:
+        return f"failed · {error_type}", "blocked"
+    if report is None:
+        return "finished", "plain"
+    if report.final_action == "aborted":
+        return f"aborted · {report.error_type or 'error'}", "blocked"
+    retried = [a for a in report.output if a.decision == "regenerate"]
+    prefix = f"output retried {_count(len(retried), 'time')} · " if retried else ""
+    if report.final_action == "answered":
+        if not retried:
+            return "input allowed · output allowed", "allowed"
+        names = dict.fromkeys(r.name for a in retried for r in a.results if r.action != "allow")
+        return f"{prefix}{', '.join(names)} · allowed", "warning"
+    last = report.output[-1].results if report.output else ()
+    stopper = next((r for r in (*report.input, *last) if r.action != "allow"), None)
+    verb, tone = _ENDED.get(report.final_action, (report.final_action, "blocked"))
+    if stopper is None:
+        return f"{prefix}{verb}", tone
+    if report.final_action == "orbital_response":
+        return f"{prefix}{stopper.side} {verb} {_who(stopper)}", tone
+    return f"{prefix}{stopper.side} {verb} · {_who(stopper)}", tone
+
+
+def _count(n: int, word: str) -> str:
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
 
 
 class Console:
@@ -171,3 +223,83 @@ class Console:
     def stopped(self) -> None:
         """Write the line of a studio that stopped."""
         self._write("chatomon studio stopped.\n")
+
+    def turn(
+        self, n: int, report: TurnReport | None, *, error_type: str | None, duration_ms: float
+    ) -> None:
+        """Write how a turn of the page went."""
+        text, tone = summary(report, error_type)
+        self.line("●", f"turn {n}", text, tone=tone, duration_ms=duration_ms)
+
+    def switched(self, side: str, name: str, enabled: bool) -> None:
+        """Write that an orbital was turned on or off."""
+        self.line("~", side, f"{name} {'on' if enabled else 'off'}")
+
+    def edited(self, side: str, name: str) -> None:
+        """Write that settings of an orbital changed; never their values."""
+        self.line("~", side, f"{name} settings changed")
+
+    def moved(self, side: str, name: str, position: int) -> None:
+        """Write that an orbital moved; `position` is 0-based, the line counts from 1."""
+        self.line("↕", side, f"{name} moved to {position + 1}")
+
+    def added(self, side: str, name: str) -> None:
+        """Write that an orbital was added."""
+        self.line("+", side, f"{name} added", tone="allowed")
+
+    def deleted(self, side: str, name: str) -> None:
+        """Write that an orbital was deleted."""
+        self.line("-", side, f"{name} removed", tone="warning")
+
+    def reset(self, side: str | None, name: str | None) -> None:
+        """Write that one orbital, or all, went back to the code."""
+        if side is None or name is None:
+            self.line("↺", "orbitals", "reset to the code")
+        else:
+            self.line("↺", side, f"{name} reset to the code")
+
+    def undone(self) -> None:
+        """Write that the last deletion, reset or import was undone."""
+        self.line("↺", "orbitals", "undo")
+
+    def preset_imported(self, changes: int) -> None:
+        """Write that a preset was imported, with how many changes it left."""
+        self.line("⇣", "preset", f"imported · {_count(changes, 'change')}")
+
+    def cleared(self) -> None:
+        """Write that the conversation was cleared."""
+        self.line("○", "chat", "conversation cleared")
+
+    def reloaded(self, changes: int, dropped: int) -> None:
+        """Write that the code was loaded again, with the studio's changes kept and dropped."""
+        parts = ["from code"]
+        if changes:
+            parts.append(f"{_count(changes, 'change')} kept")
+        if dropped:
+            parts.append(f"{_count(dropped, 'change')} dropped")
+        self.line("↻", "reload", " · ".join(parts), tone="allowed")
+
+    def reload_failed(self, message: str) -> None:
+        """Write why a reload failed: the studio's sentence, after the traceback."""
+        self.line("✗", "reload", f"failed: {message}", tone="blocked")
+
+    def probed(
+        self,
+        side: str,
+        name: str,
+        outcome: str,
+        action: str | None,
+        reason: str | None,
+        duration_ms: float,
+    ) -> None:
+        """Write how a test of an orbital went; never the sentence the page shows."""
+        if outcome == "answered":
+            text = f"{name} · {action}" + (f" ({reason})" if reason else "")
+            tone: Tone = "allowed" if action == "allow" else "blocked"
+        else:
+            text, tone = f"{name} · {outcome}", "warning"
+        self.line("▸", "probe", text, tone=tone, duration_ms=duration_ms)
+
+    def test_written(self, path: str) -> None:
+        """Write the path of a saved test."""
+        self.line("✎", "test", f"saved {path}")
