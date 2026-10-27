@@ -94,8 +94,8 @@ _LIVE_REFUSED = (
 _NO_FINAL_REPLY = "the run ended without a final text reply"
 _NO_ANSWER = "the model returned no answer"
 
-_current: ContextVar[_Turn | None] = ContextVar("chatomon_adk_turn", default=None)
-"""The turn of the model call that is about to start, set by the plugin for the nucleus."""
+_current: ContextVar[_HandOff | None] = ContextVar("chatomon_adk_turn", default=None)
+"""The hand-off of the model call that is about to start, set by the plugin for the nucleus."""
 
 
 @dataclass
@@ -108,6 +108,18 @@ class _Turn:
     output_guidance: tuple[str, ...] = ()
     orphaned: weakref.finalize[Any, Any] | None = None
     """Closes the turn when ADK drops the run without telling its plugins."""
+
+
+@dataclass
+class _HandOff:
+    """One model call's claim on a turn, which the first call that takes it spends.
+
+    It is spent on the object rather than by clearing `_current`: ADK may run the
+    model in a copy of the context, where clearing the variable leaves it set for
+    the callbacks that follow.
+    """
+
+    current: _Turn | None
 
 
 def _text(content: types.Content | None, *, message: bool = False) -> str:
@@ -229,11 +241,17 @@ class _Nucleus(BaseLlm):
     async def generate_content_async(
         self, llm_request: LlmRequest, stream: bool = False
     ) -> AsyncGenerator[LlmResponse, None]:
-        current = _current.get()
-        if current is None or current.nucleus is not self or current.turn.finished:
+        hand_off = _current.get()
+        current = None if hand_off is None else hand_off.current
+        if (
+            hand_off is None
+            or current is None
+            or current.nucleus is not self
+            or current.turn.finished
+        ):
             raise ChatomonConfigError(_OUTSIDE_THE_APP)
         # One hand-off, one model call: whoever calls again without ADK finds no turn.
-        _current.set(None)
+        hand_off.current = None
         engine: Engine = self.engine
         turn, decision = current.turn, current.decision
         if decision.kind == "reply":
@@ -415,7 +433,7 @@ class _ChatomonPlugin(BasePlugin):
     async def before_model_callback(
         self, *, callback_context: Any, llm_request: LlmRequest
     ) -> LlmResponse | None:
-        _current.set(self._turns.get(callback_context.invocation_id))
+        _current.set(_HandOff(self._turns.get(callback_context.invocation_id)))
         return None
 
     async def after_agent_callback(
