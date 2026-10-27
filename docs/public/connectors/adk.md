@@ -2,7 +2,7 @@
 
 ## Overview
 
-`ADKConnector` (`src/chatomon/connectors/adk.py`) builds an atom into a `google.adk.apps.App`. The nucleus is the app's root `LlmAgent`; chatomon's checks are the app's first plugin and a wrapper around the nucleus model. It needs the `adk` extra (`pip install 'chatomon[adk]'`), which installs Google ADK 2.10 to 2.12.
+`ADKConnector` (`src/chatomon/connectors/adk.py`) builds an atom into a `google.adk.apps.App`. The nucleus is the app's root `LlmAgent`; chatomon's checks are the app's first plugin and a wrapper around the nucleus model. It needs the `adk` extra (`pip install 'chatomon[adk]'`), which installs Google ADK 2.10 or later.
 
 ## Building the App
 
@@ -93,12 +93,12 @@ A `JudgeOrbital` without its own connector makes one direct call to an ADK model
 
 ## Observability
 
-chatomon's spans join ADK's trace with no configuration: `chatomon.input` nests under ADK's `invocation` span and `chatomon.output` under its `call_llm` span.
+chatomon's spans join ADK's trace with no configuration: `chatomon.input` nests under the span of ADK's run and `chatomon.output` under the `generate_content` span of the model call. The names of ADK's spans depend on the format it emits. In the format aligned with OpenTelemetry's GenAI conventions, the default from ADK 2.13, the run's span is `invoke_workflow`. In the legacy format, the only one before 2.13 and still available with `ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN=1`, it is `invocation`, and a `call_llm` span wraps `generate_content`.
 
 ADK also traces and logs by itself, under its own rules:
 
-- **ADK's spans hold content by default.** The system instruction, the messages and the accepted reply are attributes of ADK's spans unless `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=false`. The atom's `capture_content` governs chatomon's reports, not ADK's spans.
-- **What chatomon stopped does not reach ADK's spans.** A blocked message is replaced before ADK sees it. ADK sees one model call, with the reply that passed, so a rejected reply is not there. The request holds the guidance only while your model works, and ADK records it when a response is back: in ADK's trace the request appears without the `<guidance>` block, and the turn report has the guidance when `capture_content` allows it.
+- **What ADK records of the content depends on its format.** In the legacy format the system instruction, the messages and the accepted reply are attributes of ADK's spans unless `ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS=false`. In the GenAI format ADK records content only when `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` asks for it. That variable also lets ADK emit the content as events through OpenTelemetry's logs API. The atom's `capture_content` governs chatomon's reports, not ADK's telemetry.
+- **What chatomon stopped does not reach ADK's spans or events.** A blocked message is replaced before ADK sees it. ADK sees one model call, with the reply that passed, so a rejected reply is not there. The request holds the guidance only while your model works, and ADK records it when a response is back: in ADK's trace the request appears without the `<guidance>` block, and the turn report has the guidance when `capture_content` allows it.
 - **A model class logs what it handles.** With its logger at `DEBUG`, ADK's `Gemini` class logs every request and response, those of a rejected attempt and the guidance included. An instrumentation of the client under your model records the same calls.
 - **ADK counts the tokens of the reply that passed.** ADK sees one model call for each step, so the usage on its events and in its metrics is that of the last attempt. The attempts the output orbitals rejected are not counted there.
 - **ADK logs a run that fails.** When your model or a tool raises, ADK logs the error with its traceback through its own loggers and puts its message on its spans, before the exception reaches your code.
@@ -115,7 +115,7 @@ A run that pauses for a long-running tool, a confirmation or credentials ends wi
 - **Thoughts are not checked.** What a thinking model returns as a thought is not part of the reply: the output orbitals do not see it, and it travels with a reply they accepted.
 - **ADK does not see the class of your model.** The agent's model is chatomon's wrapper, which forwards the name and the declared capabilities of yours. Where ADK looks at the class instead, it does not find it: Gemini's Interactions API is not chained from one call to the next, and for Anthropic, LiteLLM and OpenAI Responses models ADK does not keep its own fallback ids of tool calls, which matters only for a provider that returns calls without an id.
 - **One agent.** An atom is one `LlmAgent` with its tools. Sub-agents and ADK's workflow agents are not supported.
-- **ADK 2.10 to 2.12.** Earlier 2.x versions call the model even when a plugin has already answered, or store that answer as the words of another agent; 2.13 is not supported yet. The 1.x line is not supported.
+- **ADK 2.10 or later.** Earlier 2.x versions call the model even when a plugin has already answered, or store that answer as the words of another agent. The 1.x line is not supported.
 
 ## Related Documentation
 

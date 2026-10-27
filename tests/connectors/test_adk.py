@@ -1147,7 +1147,8 @@ async def test_the_request_holds_the_guidance_only_while_the_model_works():
     assert all("<guidance>" in system for system in while_the_model_works[:-1])
 
 
-def test_adks_own_spans_and_logs_hold_no_blocked_message_rejected_reply_or_guidance():
+@pytest.mark.parametrize("schema", ["1", "2"], ids=["legacy schema", "semconv schema"])
+def test_adks_own_spans_and_logs_hold_no_blocked_message_rejected_reply_or_guidance(schema):
     """ADK traces and logs by itself; a process of its own gives it a real tracer provider."""
     done = subprocess.run(
         [sys.executable, "-m", "tests.connectors.adk_telemetry"],
@@ -1156,8 +1157,16 @@ def test_adks_own_spans_and_logs_hold_no_blocked_message_rejected_reply_or_guida
         check=True,
         timeout=120,
         cwd=Path(__file__).resolve().parents[2],
-        # ADK's own capture of content is on, whatever the environment of the suite says.
-        env={**os.environ, "ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS": "true"},
+        env={
+            **os.environ,
+            # ADK 2.13 chose its format from this; earlier versions have only the legacy one.
+            "ADK_TELEMETRY_SCHEMA_VERSION_OPT_IN": schema,
+            # ADK's own capture of content is on in spans and events, whatever the
+            # environment of the suite says: the legacy format reads the first, the
+            # semconv one the second.
+            "ADK_CAPTURE_MESSAGE_CONTENT_IN_SPANS": "true",
+            "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT": "SPAN_AND_EVENT",
+        },
     )
     found = json.loads(done.stdout.splitlines()[-1])
     assert found["leaks"] == {
@@ -1166,9 +1175,12 @@ def test_adks_own_spans_and_logs_hold_no_blocked_message_rejected_reply_or_guida
         "guidance": [],
         "guidance of a stream that broke": [],
     }
-    # ADK does record what was accepted: the check above is not looking at an empty trace.
+    # ADK does record what was accepted, in a span and in an event: the check above
+    # is not looking at an empty trace.
     assert any(place.startswith("span ") for place in found["accepted reply"])
+    assert any(place.startswith("event ") for place in found["accepted reply"])
     # chatomon's spans are part of ADK's trace, under the run and under the model call.
-    assert "invocation" in found["ancestors"]["chatomon.input"]
-    assert "call_llm" in found["ancestors"]["chatomon.output"]
+    assert found["ancestors"]["chatomon.input"][-1] in {"invocation", "invoke_workflow speedypack"}
+    assert "generate_content scripted" in found["ancestors"]["chatomon.output"]
+    assert "generate_content scripted" not in found["ancestors"]["chatomon.input"]
     assert {"chatomon.input", "chatomon.output"} <= set(found["spans in the trace of a turn"])
