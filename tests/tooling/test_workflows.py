@@ -80,11 +80,16 @@ def test_dependabot_never_raises_the_declared_lower_bounds():
     assert uv.get("versioning-strategy") == "widen"
 
 
-def test_the_browser_cache_outlives_a_change_of_the_lockfile():
-    # Every Dependabot pull request changes uv.lock: a key made from it downloads
-    # the browsers again, which can take most of the e2e job's time limit.
-    e2e = load(ROOT / ".github" / "workflows" / "ci.yml")["jobs"]["e2e"]
-    cache = next(step for step in e2e["steps"] if step.get("uses", "").startswith("actions/cache@"))
-    key = cache["with"]["key"]
-    assert "uv.lock" not in key
-    assert "steps.playwright.outputs.version" in key
+def test_the_e2e_job_runs_where_the_browsers_and_their_system_packages_already_are():
+    # Installing Chromium and its system packages on the runner goes through apt
+    # and a download, which on a slow mirror took most of the job's time limit.
+    jobs = load(ROOT / ".github" / "workflows" / "ci.yml")["jobs"]
+    e2e = jobs["e2e"]
+    assert e2e["container"]["image"] == (
+        "mcr.microsoft.com/playwright/python:v${{ needs.playwright.outputs.version }}-noble"
+    )
+    # The image follows the Playwright of uv.lock, which Dependabot moves.
+    assert e2e["needs"] == "playwright"
+    assert all("playwright install" not in step.get("run", "") for step in e2e["steps"])
+    # A failure that skips the e2e job still fails the required check.
+    assert "playwright" in jobs["ci-success"]["needs"]
