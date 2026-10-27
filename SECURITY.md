@@ -19,7 +19,7 @@ Report them privately through either channel:
 - **GitHub Security Advisories** (preferred): the
   [*Report a vulnerability*](https://github.com/zazza123/chatomon/security/advisories/new)
   button in the Security tab of this repository.
-- **Email**: `andrea.za94@gmail.com`, with the subject
+- **Email**: `andrea.zanini@andromedalabs.io`, with the subject
   `[chatomon][security] <short description>`.
 
 Please include:
