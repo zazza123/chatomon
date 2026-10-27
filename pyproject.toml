@@ -10,18 +10,31 @@ readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
-authors = [{ name = "Andrea Zanini" }]
+authors = [{ name = "Andrea Zanini", email = "andrea.zanini@andromedalabs.io" }]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Typing :: Typed",
 ]
+keywords = ["agents", "guardrails", "llm", "pydantic-ai", "langchain", "agent-framework", "google-adk"]
 dependencies = [
     "pydantic>=2.10",
     "opentelemetry-api>=1.28",
 ]
+
+[project.urls]
+Homepage = "https://chatomon.andromedalabs.io/"
+Documentation = "https://chatomon.andromedalabs.io/"
+Repository = "https://github.com/zazza123/chatomon"
+Issues = "https://github.com/zazza123/chatomon/issues"
+Changelog = "https://github.com/zazza123/chatomon/releases"
 
 [project.optional-dependencies]
 pydantic-ai = ["pydantic-ai-slim>=2.14,<3"]
