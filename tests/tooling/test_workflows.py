@@ -78,3 +78,13 @@ def test_dependabot_never_raises_the_declared_lower_bounds():
     config = load(ROOT / ".github" / "dependabot.yml")
     uv = next(update for update in config["updates"] if update["package-ecosystem"] == "uv")
     assert uv.get("versioning-strategy") == "widen"
+
+
+def test_the_browser_cache_outlives_a_change_of_the_lockfile():
+    # Every Dependabot pull request changes uv.lock: a key made from it downloads
+    # the browsers again, which can take most of the e2e job's time limit.
+    e2e = load(ROOT / ".github" / "workflows" / "ci.yml")["jobs"]["e2e"]
+    cache = next(step for step in e2e["steps"] if step.get("uses", "").startswith("actions/cache@"))
+    key = cache["with"]["key"]
+    assert "uv.lock" not in key
+    assert "steps.playwright.outputs.version" in key
