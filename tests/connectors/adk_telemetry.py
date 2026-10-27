@@ -1,8 +1,8 @@
 """Run two turns under a real tracer provider and print what ADK traced and logged.
 
 `test_adk.py` runs this module in a process of its own: OpenTelemetry's global
-tracer provider can be set only once, and ADK traces through it. The last line
-printed is a JSON object.
+tracer and logger providers can be set only once, and ADK traces and emits its
+events through them. The last line printed is a JSON object.
 """
 
 from __future__ import annotations
@@ -85,7 +85,9 @@ async def _turns() -> None:
 
 def main() -> None:
     """Trace and log two turns, then print where each marked text was found."""
-    from opentelemetry import trace
+    from opentelemetry import _logs, trace
+    from opentelemetry.sdk._logs import LoggerProvider
+    from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter, SimpleLogRecordProcessor
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -94,6 +96,10 @@ def main() -> None:
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
     trace.set_tracer_provider(provider)
+    events = InMemoryLogRecordExporter()
+    emitter = LoggerProvider()
+    emitter.add_log_record_processor(SimpleLogRecordProcessor(events))
+    _logs.set_logger_provider(emitter)
     keep = _Keep()
     logging.getLogger().addHandler(keep)
     logging.getLogger().setLevel(logging.DEBUG)
@@ -113,6 +119,10 @@ def main() -> None:
         for record in keep.records:
             if marker in record.getMessage() or marker in str(record.__dict__):
                 found.add(f"log {record.name}")
+        for event in events.get_finished_logs():
+            emitted = (event.log_record.body, dict(event.log_record.attributes or {}))
+            if marker in str(emitted):
+                found.add(f"event {event.log_record.event_name}")
         return sorted(found)
 
     def ancestors(name: str) -> list[str]:
