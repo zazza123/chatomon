@@ -114,11 +114,42 @@ jobs:
       - run: uv sync --locked
       - run: uv run zensical build --strict
 
+  # The Playwright version in uv.lock, which picks the e2e job's image: Dependabot
+  # moves the one, and the other follows with nothing to edit by hand.
+  playwright:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.lock.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - id: lock
+        run: |
+          python3 - >> "$GITHUB_OUTPUT" <<'EOF'
+          import tomllib
+
+          with open("uv.lock", "rb") as file:
+              packages = tomllib.load(file)["package"]
+          print("version=" + next(p["version"] for p in packages if p["name"] == "playwright"))
+          EOF
+
+  # Runs in Playwright's own image, which holds the browsers of that version and
+  # their system packages: installing them on the runner goes through apt and a
+  # download, and on a slow mirror took most of the job's time limit.
   e2e:
+    needs: playwright
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
+    container:
+      image: mcr.microsoft.com/playwright/python:v${{ needs.playwright.outputs.version }}-noble
+      # Chromium needs more shared memory than a container gets by default.
+      options: --ipc=host
     steps:
       - uses: actions/checkout@v7
         with:
@@ -126,25 +157,13 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - run: uv sync --locked
-      # The browsers depend on the Playwright version and the runner image, not
-      # on the rest of uv.lock, which every dependency update changes.
-      - id: playwright
-        run: |
-          version="$(uv run python -c 'import importlib.metadata as m; print(m.version("playwright"))')"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "image=$ImageOS" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ steps.playwright.outputs.image }}-${{ steps.playwright.outputs.version }}
-      - run: uv run playwright install --with-deps chromium
       - run: uv run pytest -m e2e
         env:
           CHATOMON_E2E: "1"
 
   ci-success:
     if: always()
-    needs: [lint, types, test, lowest, docs, e2e]
+    needs: [lint, types, test, lowest, docs, playwright, e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
