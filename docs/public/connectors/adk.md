@@ -2,7 +2,7 @@
 
 ## Overview
 
-`ADKConnector` (`src/chatomon/connectors/adk.py`) builds an atom into a `google.adk.apps.App`. The nucleus is the app's root `LlmAgent`; chatomon's checks are the app's first plugin and a wrapper around the nucleus model. It needs the `adk` extra (`pip install 'chatomon[adk]'`), which installs Google ADK 2.10 or later.
+`ADKConnector` (`src/chatomon/connectors/adk.py`) builds an atom into a `google.adk.apps.App`. The nucleus is the app's root `LlmAgent`; chatomon's checks are the app's first plugin and a wrapper around the nucleus model. It needs the `adk` extra (`pip install 'chatomon[adk]'`), which installs Google ADK 2.10 to 2.12.
 
 ## Building the App
 
@@ -115,7 +115,7 @@ A run that pauses for a long-running tool, a confirmation or credentials ends wi
 - **Thoughts are not checked.** What a thinking model returns as a thought is not part of the reply: the output orbitals do not see it, and it travels with a reply they accepted.
 - **ADK does not see the class of your model.** The agent's model is chatomon's wrapper, which forwards the name and the declared capabilities of yours. Where ADK looks at the class instead, it does not find it: Gemini's Interactions API is not chained from one call to the next, and for Anthropic, LiteLLM and OpenAI Responses models ADK does not keep its own fallback ids of tool calls, which matters only for a provider that returns calls without an id.
 - **One agent.** An atom is one `LlmAgent` with its tools. Sub-agents and ADK's workflow agents are not supported.
-- **ADK 2.10 or later.** Earlier 2.x versions call the model even when a plugin has already answered, or store that answer as the words of another agent. The 1.x line is not supported.
+- **ADK 2.10 to 2.12.** Earlier 2.x versions call the model even when a plugin has already answered, or store that answer as the words of another agent; 2.13 is not supported yet. The 1.x line is not supported.
 
 ## Related Documentation
 

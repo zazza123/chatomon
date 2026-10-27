@@ -7,7 +7,7 @@
 
 Declare a chat agent once — its instructions, its knowledge and the **orbitals** (input/output guardrails) around it — and build it into a native agent of the framework you already use: PydanticAI, LangChain/LangGraph, Microsoft Agent Framework, or Google ADK.
 
-> Status: pre-alpha, under active development.
+> Status: alpha. The API can still change between minor versions (`0.x`).
 
 ## Install
 
@@ -15,13 +15,13 @@ Declare a chat agent once — its instructions, its knowledge and the **orbitals
 pip install 'chatomon[pydantic-ai]'   # or 'chatomon[langchain]'
 pip install 'chatomon[maf]'           # MAF core; add your provider's MAF client package
 pip install 'chatomon[maf-foundry]'   # FoundryChatClient and FoundryAgent
-pip install 'chatomon[adk]'           # Google ADK 2.10 or later
+pip install 'chatomon[adk]'           # Google ADK 2.10 to 2.12
 pip install 'chatomon[principled]'    # Principled Intelligence ScopeGuard / ClaimExtractor orbitals
 pip install 'chatomon[studio,pydantic-ai]'  # the local studio: chatomon studio module:atom
 pip install 'chatomon[spectral,pydantic-ai]'  # the studio with its Spectral add-on: evaluation at scale
 ```
 
-Both MAF connectors support input and output orbitals on non-streaming runs. The [MAF guide](docs/public/connectors/maf.md) covers local Foundry sessions and connector configuration.
+Both MAF connectors support input and output orbitals on non-streaming runs. The [MAF guide](https://chatomon.andromedalabs.io/connectors/maf/) covers local Foundry sessions and connector configuration.
 
 ## Quickstart
 
@@ -56,10 +56,10 @@ To try an atom in the browser, run `chatomon studio speedypack.app:atom` and ope
 
 ## Documentation
 
-The documentation site is built with Zensical from `docs/public/`: run `uv run zensical serve` and open http://localhost:8000. It covers concepts, orbitals, [connectors including MAF](docs/public/connectors/maf.md), observability and deployment, plus the API reference generated from the code.
+The documentation is at [chatomon.andromedalabs.io](https://chatomon.andromedalabs.io/). It covers concepts, orbitals, [connectors](https://chatomon.andromedalabs.io/connectors/), the studio, observability and deployment, plus the API reference generated from the code.
 
 ## Contributing
 
 Bug reports, ideas and pull requests are welcome — start with
-[`CONTRIBUTING.md`](CONTRIBUTING.md). Security issues: see
-[`SECURITY.md`](SECURITY.md).
+[`CONTRIBUTING.md`](https://github.com/zazza123/chatomon/blob/main/CONTRIBUTING.md). Security issues: see
+[`SECURITY.md`](https://github.com/zazza123/chatomon/blob/main/SECURITY.md).
